@@ -1,0 +1,13 @@
+population_size = 1000
+p_initial_incidence = 0.01
+p_initial_recovered = 0.0
+max_time = 100.0
+seed = 42
+
+[infection_rate]
+shape = 2.0
+rate = 0.25
+
+[infection_duration]
+shape = 3.0
+rate = 1.0

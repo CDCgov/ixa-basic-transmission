@@ -1,0 +1,5 @@
+/target
+output/
+!output/index.html
+/.vite/
+node_modules/

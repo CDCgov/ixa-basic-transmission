@@ -1,0 +1,23 @@
+[package]
+name = "ixa-basic-transmission"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.100"
+ixa = { rev = "ce7e0224ffc234525e09058c2309ee705bb53e0c", git = "https://github.com/CDCgov/ixa.git" }
+log = "0.4"
+env_logger = "0.11"
+log4rs = { version = "1.4.0", features = ["console_appender", "file_appender"] }
+paste = "1.0.15"
+rand = "0.9.2"
+rand_distr = "0.5.1"
+seq-macro = "0.3.6"
+serde = "1.0.228"
+statrs = { rev = "5da34705b80781b907b2d14905e05f45b0b7a8ae", git = "https://github.com/statrs-dev/statrs.git" }
+toml = "0.9.8"
+serde_json = "1.0.128"
+
+[dev-dependencies]
+approx = "0.5.1"
+anyhow = "1.0.100"
