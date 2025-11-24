@@ -2,6 +2,13 @@ name: Run Cloud Operations
 
 on:
   workflow_dispatch:
+    inputs:
+      model:
+        description: "Model to run"
+        type: choice
+        options: [default, large_pop]
+        default: "default"
+        required: true
 
 jobs:
   run-cloudops:
@@ -37,4 +44,4 @@ jobs:
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
           AZURE_RESOURCE_GROUP_NAME: ${{ secrets.AZURE_RESOURCE_GROUP_NAME }}
-        run: uv run main.py
+        run: uv run main.py --model ${{ inputs.model }}

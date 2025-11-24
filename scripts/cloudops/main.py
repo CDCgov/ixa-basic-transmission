@@ -1,5 +1,6 @@
 from cfa.cloudops import CloudClient
 from datetime import datetime
+import argparse
 
 '''
 This script needs the following in action secrets
@@ -29,6 +30,12 @@ POOL_NAME = "ixa-basic-transmission-pool1"
 JOB_NAME = "ixa-basic-transmission-job-" + datetime.now().strftime("%Y%m%d-%H%M%S") 
 
 def main():
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description='Run ixa-basic-transmission on Azure Batch')
+    parser.add_argument('--model', type=str, default='default', 
+                        help='Model parameter to use (default: default)')
+    args = parser.parse_args()
+    
     # initialize
     cc = CloudClient(use_federated=True)
 
@@ -57,7 +64,7 @@ def main():
 
     cc.add_task(
         job_name = JOB_NAME,
-        command_line = "/input-test/ixa-basic-transmission/docker_setup.sh"
+        command_line = f"/input-test/ixa-basic-transmission/docker_setup.sh {args.model}"
     )
 
     # cc.monitor_job(
