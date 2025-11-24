@@ -1,0 +1,40 @@
+name: Run Cloud Operations
+
+on:
+  workflow_dispatch:
+
+jobs:
+  run-cloudops:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Install uv
+        run: curl -LsSf https://astral.sh/uv/install.sh | sh
+      
+      - name: Add uv to PATH
+        run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      
+      - name: Install dependencies
+        working-directory: scripts/cloudops
+        run: uv sync
+      
+      - name: Run main.py
+        working-directory: scripts/cloudops
+        env:
+          AZURE_BATCH_ACCOUNT: ${{ secrets.AZURE_BATCH_ACCOUNT }}
+          AZURE_BATCH_LOCATION: ${{ secrets.AZURE_BATCH_LOCATION }}
+          AZURE_USER_ASSIGNED_IDENTITY: ${{ secrets.AZURE_USER_ASSIGNED_IDENTITY }}
+          AZURE_SUBNET_ID: ${{ secrets.AZURE_SUBNET_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_KEYVAULT_NAME: ${{ secrets.AZURE_KEYVAULT_NAME }}
+          AZURE_KEYVAULT_SP_SECRET_ID: ${{ secrets.AZURE_KEYVAULT_SP_SECRET_ID }}
+          AZURE_BLOB_STORAGE_ACCOUNT: ${{ secrets.AZURE_BLOB_STORAGE_ACCOUNT }}
+          AZURE_CONTAINER_REGISTRY_ACCOUNT: ${{ secrets.AZURE_CONTAINER_REGISTRY_ACCOUNT }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_RESOURCE_GROUP_NAME: ${{ secrets.AZURE_RESOURCE_GROUP_NAME }}
+        run: uv run main.py
