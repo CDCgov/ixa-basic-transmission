@@ -51,7 +51,7 @@ pub trait InfectionManagerExt: PluginContext {
 
         let forecasted_total_infectiousness = total_rate_fn.rate(next_time_diff);
 
-        if !(forecasted_total_infectiousness > 0.0) {
+        if forecasted_total_infectiousness <= 0.0 {
             // The person is no longer infectious, exit the loop
             return Ok(());
         }

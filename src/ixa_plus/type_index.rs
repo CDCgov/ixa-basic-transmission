@@ -86,6 +86,12 @@ pub struct TypeIndexMap<C: TypeIndexCategory, T> {
     store: Vec<Option<T>>,
 }
 
+impl<C: TypeIndexCategory, V> Default for TypeIndexMap<C, V> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<C: TypeIndexCategory, V> TypeIndexMap<C, V> {
     /// Creates an empty TypeIndexMap and registers the category if needed.
     pub fn new() -> Self {

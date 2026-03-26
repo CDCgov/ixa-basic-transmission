@@ -11,19 +11,11 @@ pub trait RateFnGenerator<C: PluginContext>: Clone {
     fn name(&self) -> &'static str;
     fn assign(&self, context: &C, person_id: PersonId) -> RateFn;
 }
+#[derive(Default)]
 pub struct RateFnDataContainer {
     // TODO: When we have access to PersonId index, we can make this a PersonVec
     per_person_rates: TypeIndexMap<RateFn, HashMap<PersonId, usize>>,
     rate_instances: Vec<RateFn>,
-}
-
-impl Default for RateFnDataContainer {
-    fn default() -> Self {
-        Self {
-            per_person_rates: TypeIndexMap::new(),
-            rate_instances: Vec::new(),
-        }
-    }
 }
 
 impl RateFnDataContainer {
@@ -96,7 +88,7 @@ macro_rules! define_rate {
                 &self,
                 $ctx: &C,
                 $person_id: $crate::infection_status::PersonId,
-            ) -> crate::ixa_plus::rate_fn::RateFn {
+            ) -> $crate::ixa_plus::rate_fn::RateFn {
                 $body
             }
         }
