@@ -27,6 +27,9 @@ const cumulativeSeries = computed<Series[]>(() => {
   return [{ data: Array.from(outputs.value.daily_incidence.column("cumulative_incidence")), color: "#2980b9" }];
 });
 
+const infectionRateMean = computed(() => params.infection_rate.shape / params.infection_rate.rate);
+const infectionDurationMean = computed(() => params.infection_duration.shape / params.infection_duration.rate);
+
 const statsColumns: Record<string, ColumnConfig> = {
   total_infections: { label: "Total Infections" },
   attack_rate: { label: "Attack Rate" },
@@ -43,19 +46,26 @@ const statsColumns: Record<string, ColumnConfig> = {
       <NumberInput v-model="params.initial_infections" label="Initial Infections" />
       <NumberInput v-model="params.max_time" label="Max Time" />
       <NumberInput v-model="params.seed" label="Seed" />
-      <h2>Infection Rates</h2>
-      <p class="note">Each person's rate is drawn from a Gamma distribution with shape k and rate λ.</p>
+      <h2>Infection Rate Distribution</h2>
+      <p class="note">The distribution of the rate of infections/day across the population as a Gamma distribution
+        with
+        shape k and rate λ.
+      </p>
       <div class="row">
         <NumberInput v-model="params.infection_rate.shape" label="Shape (k)" :step="0.1" />
         <NumberInput v-model="params.infection_rate.rate" label="Rate (λ)" :step="0.05" />
       </div>
-      <h2>Infection Durations</h2>
-      <p class="note">Each person's duration of infection (i.e., time from infection to recovery) is drawn from a Gamma
+      <p class="note">Mean: {{ infectionRateMean.toFixed(2) }}</p>
+      <h2>Infection Duration Distribution</h2>
+      <p class="note">The distribution of the duration of infection (i.e., time from infection to recovery) across the
+        population as a Gamma
         distribution with shape k and rate λ.</p>
       <div class="row">
         <NumberInput v-model="params.infection_duration.shape" label="Shape (k)" :step="0.1" />
         <NumberInput v-model="params.infection_duration.rate" label="Rate (λ)" :step="0.1" />
       </div>
+      <p class="note">Mean: {{ infectionDurationMean.toFixed(2) }}</p>
+
     </template>
     <p v-if="loading">Running simulation...</p>
     <template v-else-if="outputs?.daily_incidence">
