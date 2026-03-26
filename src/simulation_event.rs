@@ -1,4 +1,5 @@
-use ixa::{IxaEvent, PersonId};
+use crate::infection_status::PersonId;
+use ixa::IxaEvent;
 use serde::Serialize;
 
 #[derive(Debug, Clone, Copy, Serialize)]

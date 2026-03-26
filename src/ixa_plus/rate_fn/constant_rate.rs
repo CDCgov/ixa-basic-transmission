@@ -1,6 +1,17 @@
 use super::InfectiousnessRateFn;
-use ixa::IxaError;
 use serde::{Deserialize, Serialize};
+use std::fmt;
+
+#[derive(Debug)]
+pub struct RateFnError(pub String);
+
+impl fmt::Display for RateFnError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl std::error::Error for RateFnError {}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ConstantRateParams {
@@ -15,7 +26,7 @@ pub struct ConstantRate {
 }
 
 impl ConstantRate {
-    pub fn new(rate: f64, infection_duration: f64) -> Result<Self, IxaError> {
+    pub fn new(rate: f64, infection_duration: f64) -> Result<Self, RateFnError> {
         ConstantRate::try_from(ConstantRateParams {
             r: rate,
             infection_duration,
@@ -24,15 +35,15 @@ impl ConstantRate {
 }
 
 impl TryFrom<ConstantRateParams> for ConstantRate {
-    type Error = IxaError;
-    fn try_from(parameters: ConstantRateParams) -> Result<Self, IxaError> {
+    type Error = RateFnError;
+    fn try_from(parameters: ConstantRateParams) -> Result<Self, RateFnError> {
         if parameters.r < 0.0 {
-            return Err(IxaError::IxaError(
+            return Err(RateFnError(
                 "The rate of infection must be non-negative.".to_string(),
             ));
         }
         if parameters.infection_duration < 0.0 {
-            return Err(IxaError::IxaError(
+            return Err(RateFnError(
                 "The duration of infection must be non-negative.".to_string(),
             ));
         }
@@ -66,25 +77,21 @@ impl InfectiousnessRateFn for ConstantRate {
 #[cfg(test)]
 mod test {
     use approx::assert_abs_diff_eq;
-    use ixa::IxaError;
 
     use super::ConstantRate;
     use super::InfectiousnessRateFn;
+    use super::RateFnError;
 
     #[test]
     fn test_constant_rate_errors_r_negative() {
         let e = ConstantRate::new(-1.0, 10.0).err();
         match e {
-            Some(IxaError::IxaError(msg)) => {
+            Some(RateFnError(msg)) => {
                 assert_eq!(
                     msg,
                     "The rate of infection must be non-negative.".to_string()
                 );
             }
-            Some(ue) => panic!(
-                "Expected an error that the rate of infection must be non-negative. Instead got {:?}",
-                ue.to_string()
-            ),
             None => {
                 panic!("Expected an error. Instead, created a constant rate struct with no errors.")
             }
@@ -95,16 +102,12 @@ mod test {
     fn test_constant_rate_errors_infection_duration_negative() {
         let e = ConstantRate::new(1.0, -1.0).err();
         match e {
-            Some(IxaError::IxaError(msg)) => {
+            Some(RateFnError(msg)) => {
                 assert_eq!(
                     msg,
                     "The duration of infection must be non-negative.".to_string()
                 );
             }
-            Some(ue) => panic!(
-                "Expected an error that the duration of infection must be non-negative. Instead got {:?}",
-                ue.to_string()
-            ),
             None => {
                 panic!("Expected an error. Instead, created a constant rate struct with no errors.")
             }

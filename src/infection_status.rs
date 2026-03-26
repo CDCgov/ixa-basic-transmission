@@ -2,7 +2,9 @@ use anyhow::Result;
 use ixa::prelude::*;
 use serde::{Deserialize, Serialize};
 
-define_person_property_with_default!(InfectionStatus, Status, Status::Susceptible);
+// Define the Person entity - this creates PersonId = EntityId<Person>
+define_entity!(Person);
+
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone, Copy)]
 pub struct InfectionData {
     pub infection_time: Option<f64>,
@@ -10,8 +12,9 @@ pub struct InfectionData {
     pub recovery_time: Option<f64>,
 }
 
+// In ixa 2.0, the value type IS the property type (single type, not two)
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone, Copy)]
-pub enum Status {
+pub enum InfectionStatus {
     Susceptible,
     #[allow(private_interfaces)]
     Infectious(InfectionData),
@@ -19,47 +22,54 @@ pub enum Status {
     Recovered(InfectionData),
 }
 
+// Declare InfectionStatus as a Property<Person> with a default value
+impl_property!(
+    InfectionStatus,
+    Person,
+    default_const = InfectionStatus::Susceptible
+);
+
 #[allow(dead_code)]
-impl Status {
+impl InfectionStatus {
     pub fn is_susceptible(&self) -> bool {
-        self == &Status::Susceptible
+        self == &InfectionStatus::Susceptible
     }
     pub fn is_incidence(&self) -> bool {
         self.is_infectious() && self.infection_time().is_some()
     }
     pub fn infection_time(&self) -> Option<f64> {
         match self {
-            Status::Infectious(InfectionData { infection_time, .. }) => *infection_time,
-            Status::Recovered(InfectionData { infection_time, .. }) => *infection_time,
-            Status::Susceptible => None,
+            InfectionStatus::Infectious(InfectionData { infection_time, .. }) => *infection_time,
+            InfectionStatus::Recovered(InfectionData { infection_time, .. }) => *infection_time,
+            InfectionStatus::Susceptible => None,
         }
     }
     pub fn infected_by(&self) -> Option<PersonId> {
         match self {
-            Status::Infectious(InfectionData { infected_by, .. }) => *infected_by,
-            Status::Recovered(InfectionData { infected_by, .. }) => *infected_by,
-            Status::Susceptible => None,
+            InfectionStatus::Infectious(InfectionData { infected_by, .. }) => *infected_by,
+            InfectionStatus::Recovered(InfectionData { infected_by, .. }) => *infected_by,
+            InfectionStatus::Susceptible => None,
         }
     }
     pub fn is_infectious(&self) -> bool {
-        matches!(self, Status::Infectious { .. })
+        matches!(self, InfectionStatus::Infectious { .. })
     }
     pub fn is_recovered(&self) -> bool {
-        matches!(self, Status::Recovered { .. })
+        matches!(self, InfectionStatus::Recovered { .. })
     }
     pub fn to_recovered(self, recovery_time: f64) -> Result<Self> {
         match self {
-            Status::Infectious(InfectionData {
+            InfectionStatus::Infectious(InfectionData {
                 infection_time,
                 infected_by,
                 ..
-            }) => Ok(Status::Recovered(InfectionData {
+            }) => Ok(InfectionStatus::Recovered(InfectionData {
                 infection_time,
                 infected_by,
                 recovery_time: Some(recovery_time),
             })),
-            Status::Recovered { .. } => anyhow::bail!("Person is already recovered"),
-            Status::Susceptible => anyhow::bail!("Person is not infectious"),
+            InfectionStatus::Recovered { .. } => anyhow::bail!("Person is already recovered"),
+            InfectionStatus::Susceptible => anyhow::bail!("Person is not infectious"),
         }
     }
 }

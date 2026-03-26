@@ -123,7 +123,7 @@ macro_rules! define_parameters {
                 fn build(self) -> Result<$name, anyhow::Error> {
                     Ok($name {
                         $(
-                            $field_name: Self::[<build_ $field_name>](self.$field_name).map_err(|e| $crate::IxaError::IxaError(e.to_string()))?,
+                            $field_name: Self::[<build_ $field_name>](self.$field_name)?,
                         )*
                     })
                 }

@@ -1,6 +1,7 @@
 use super::InfectiousnessRateFn;
 use super::RateFn;
 use crate::ixa_plus::type_index::{TypeIndex, TypeIndexCategory, TypeIndexMap};
+use crate::infection_status::PersonId;
 use ixa::HashMap;
 use ixa::prelude::*;
 
@@ -94,7 +95,7 @@ macro_rules! define_rate {
             fn assign(
                 &self,
                 $ctx: &C,
-                $person_id: ixa::people::PersonId,
+                $person_id: crate::infection_status::PersonId,
             ) -> crate::ixa_plus::rate_fn::RateFn {
                 $body
             }

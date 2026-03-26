@@ -2,7 +2,7 @@ use crate::ext::ParametersExt;
 use crate::infection_status::*;
 use crate::simulation_event::SimulationEvent;
 use anyhow::Result;
-use ixa::{PersonPropertyChangeEvent, prelude::*};
+use ixa::prelude::*;
 use std::io::BufWriter;
 use std::io::Write;
 use std::path::PathBuf;
@@ -35,7 +35,7 @@ impl Counts {
     fn add_forecast_rejection(&mut self) {
         self.forecasts_rejected += 1;
     }
-    fn add_infection(&mut self, status: Status) {
+    fn add_infection(&mut self, status: InfectionStatus) {
         self.total_infections += 1;
         if let Some(infection_time) = status.infection_time() {
             let day_index = infection_time.floor() as usize;
@@ -87,7 +87,7 @@ pub trait OutputManagerExt: PluginContext {
     fn capture_output(&mut self) {
         // Send infection events
         self.subscribe_to_event(
-            |context, event: PersonPropertyChangeEvent<InfectionStatus>| {
+            |context, event: PropertyChangeEvent<Person, InfectionStatus>| {
                 if !event.current.is_infectious() {
                     return;
                 }
@@ -98,7 +98,7 @@ pub trait OutputManagerExt: PluginContext {
 
                     let output = SimulationEvent::Infection {
                         t: event.current.infection_time().unwrap(),
-                        person_id: event.person_id,
+                        person_id: event.entity_id,
                     };
                     context.write_event(output).expect("Failed to write event");
                 }
@@ -129,7 +129,7 @@ pub trait OutputManagerExt: PluginContext {
         );
         log::info!("Total infections: {}", data.counts.total_infections);
         let attack_rate =
-            data.counts.total_infections as f64 / self.get_current_population() as f64;
+            data.counts.total_infections as f64 / self.get_entity_count::<Person>() as f64;
         log::info!("Attack rate: {:.3}", attack_rate);
         let total_infections = data.counts.total_infections as f64;
         let rejected_forecasts = data.counts.forecasts_rejected as f64;

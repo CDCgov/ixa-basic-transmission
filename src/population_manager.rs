@@ -1,4 +1,5 @@
 use crate::format_iter;
+use crate::infection_status::{Person, PersonId};
 use crate::ixa_plus::log;
 use anyhow::Result;
 use ixa::prelude::*;
@@ -35,7 +36,7 @@ pub trait PopulationManagerExt: PluginContext {
             .map(|(label, _)| (label, 0usize))
             .collect::<Vec<_>>();
         for _ in 0..population_size {
-            let person_id = self.add_person(())?;
+            let person_id = self.add_entity(Person).map_err(|e| anyhow::anyhow!("{e}"))?;
             let index = self.sample_distr(PopulationRng, &dist);
             if let Some((_, apply)) = assign_fns.get(index) {
                 apply(self, person_id)?;

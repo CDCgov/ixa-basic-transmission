@@ -9,10 +9,10 @@ pub trait TransmissionManagerExt: PluginContext + OutputManagerExt {
     fn get_next_contact(&self, person_id: PersonId) -> Option<PersonId> {
         let mut contact_id = None;
         // Ensure we don't return the same id
-        let total_people = self.get_current_population();
+        let total_people = self.get_entity_count::<Person>();
         if total_people > 1 {
             loop {
-                contact_id = self.sample_person(ContactRng, ());
+                contact_id = self.sample_entity(ContactRng, ());
                 if contact_id != Some(person_id) {
                     break;
                 }
@@ -32,10 +32,8 @@ pub trait TransmissionManagerExt: PluginContext + OutputManagerExt {
         });
 
         // if the person is not susceptible, fail the attempt.
-        if !self
-            .get_person_property(next_contact, InfectionStatus)
-            .is_susceptible()
-        {
+        let status: InfectionStatus = self.get_property(next_contact);
+        if !status.is_susceptible() {
             return None;
         }
 

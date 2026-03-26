@@ -1,3 +1,4 @@
+use crate::infection_status::PersonId;
 use ixa::prelude::*;
 
 /// Calculate the maximum possible scaling factor for total infectiousness
