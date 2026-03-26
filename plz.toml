@@ -10,6 +10,14 @@ run = "cargo check"
 [tasks.dev]
 run = "cargo run"
 
+# Small population
+[taskgroup.run.default]
+run = "cargo run --release -- --params params/default.toml"
+
+# 10 million people
+[taskgroup.run.large]
+run = "cargo run --release -- --params params/large_pop.toml"
+
 # Build, development mode
 [tasks.build]
 run = "cargo build"
