@@ -3,34 +3,34 @@
 # Show the schema for this file: plz plz schema
 
 # Faster way to check for errors
-[taskgroup.rust.check]
+[tasks.check]
 run = "cargo check"
 
 # Run, development mode
-[taskgroup.rust.dev]
+[tasks.dev]
 run = "cargo run"
 
 # Build, development mode
-[taskgroup.rust.build]
+[tasks.build]
 run = "cargo build"
 
 # Run tests
-[taskgroup.rust.test]
+[tasks.test]
 run = "cargo test"
 git_hook = "pre-push"
 
 # Check linting and formatting
-[taskgroup.rust.lint]
+[tasks.lint]
 run_serial = ["cargo clippy", "cargo fmt --check"]
-fail_hook = { suggest_command = "plz rust fix" }
+fail_hook = { suggest_command = "plz fix" }
 git_hook = "pre-commit"
 
 # Fix lint and formatting issues
-[taskgroup.rust.fix]
+[tasks.fix]
 run_serial = ["cargo fmt", "cargo clippy --fix --allow-dirty"]
 
 # Build, release mode
-[taskgroup.rust.release]
+[tasks.release]
 run = "cargo build --release"
 
 [taskgroup.ui.extends]

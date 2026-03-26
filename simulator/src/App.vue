@@ -43,12 +43,15 @@ const statsColumns: Record<string, ColumnConfig> = {
       <NumberInput v-model="params.initial_infections" label="Initial Infections" />
       <NumberInput v-model="params.max_time" label="Max Time" />
       <NumberInput v-model="params.seed" label="Seed" />
-      <h2>Infection Rate</h2>
+      <h2>Infection Rates</h2>
+      <p class="note">Each person's rate is drawn from a Gamma distribution with shape k and rate λ.</p>
       <div class="row">
         <NumberInput v-model="params.infection_rate.shape" label="Shape (k)" :step="0.1" />
         <NumberInput v-model="params.infection_rate.rate" label="Rate (λ)" :step="0.05" />
       </div>
-      <h2>Infection Duration</h2>
+      <h2>Infection Durations</h2>
+      <p class="note">Each person's duration of infection (i.e., time from infection to recovery) is drawn from a Gamma
+        distribution with shape k and rate λ.</p>
       <div class="row">
         <NumberInput v-model="params.infection_duration.shape" label="Shape (k)" :step="0.1" />
         <NumberInput v-model="params.infection_duration.rate" label="Rate (λ)" :step="0.1" />
@@ -65,6 +68,10 @@ const statsColumns: Record<string, ColumnConfig> = {
 </template>
 
 <style scoped>
+.note {
+  margin-top: 0;
+}
+
 .row {
   display: flex;
   gap: 8px;
