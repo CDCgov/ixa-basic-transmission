@@ -1,0 +1,56 @@
+# Run tasks with: plz [taskname]
+# Docs: https://plzplz.org/reference.html
+# Show the schema for this file: plz plz schema
+
+# Faster way to check for errors
+[taskgroup.rust.check]
+run = "cargo check"
+
+# Run, development mode
+[taskgroup.rust.dev]
+run = "cargo run"
+
+# Build, development mode
+[taskgroup.rust.build]
+run = "cargo build"
+
+# Run tests
+[taskgroup.rust.test]
+run = "cargo test"
+
+# Check linting and formatting
+[taskgroup.rust.lint]
+run_serial = ["cargo clippy", "cargo fmt --check"]
+fail_hook = { suggest_command = "plz rust fix" }
+
+# Fix lint and formatting issues
+[taskgroup.rust.fix]
+run_serial = ["cargo fmt", "cargo clippy --fix --allow-dirty"]
+
+# Build, release mode
+[taskgroup.rust.release]
+run = "cargo build --release"
+
+[taskgroup.ui.extends]
+env = "pnpm"
+dir = "simulator"
+
+# Start development server
+[taskgroup.ui.setup]
+run = "pnpm install"
+
+
+# Start development server
+[taskgroup.ui.dev]
+depends = ["ui.setup"]
+run = "vite"
+
+# Build for production
+[taskgroup.ui.build]
+depends = ["ui.setup"]
+run = "vite build"
+
+# Preview production build
+[taskgroup.ui.preview]
+depends = ["ui.setup"]
+run = "vite preview"
