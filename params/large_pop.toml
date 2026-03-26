@@ -1,3 +1,3 @@
 # Extends default.toml
 
-population_size = 100_000
+population_size = 1_000_000

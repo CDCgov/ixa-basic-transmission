@@ -178,6 +178,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "cfasim-model"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4de049de035b461f2fe80446c60166be2f9697a03b58e503e6f907e0bf47718e"
+dependencies = [
+ "js-sys",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "cfg-if"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1376,6 +1386,15 @@ dependencies = [
  "num-traits",
  "paste",
  "wide",
+]
+
+[[package]]
+name = "simulator"
+version = "0.1.0"
+dependencies = [
+ "cfasim-model",
+ "ixa-basic-transmission",
+ "wasm-bindgen",
 ]
 
 [[package]]

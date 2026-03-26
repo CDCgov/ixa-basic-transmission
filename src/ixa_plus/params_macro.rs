@@ -181,23 +181,24 @@ pub trait IxaParameters: Sized + serde::Serialize + serde::de::DeserializeOwned 
     fn builder() -> Self::Builder {
         Self::Builder::default()
     }
+
+    #[cfg(not(target_arch = "wasm32"))]
     fn from_args() -> Option<Self> {
         let args = std::env::args().collect::<Vec<_>>();
-        // File --params <path>
         let mut prev_arg: Option<&str> = None;
         for arg in &args[1..] {
-            if let Some(prev) = prev_arg {
-                if prev == "--params" {
+            if let Some(prev) = prev_arg
+                && prev == "--params" {
                     return Some(
                         Self::try_from_file(arg).expect("Could not parse parameters from file"),
                     );
                 }
-            }
             prev_arg = Some(arg);
         }
         None
     }
-    // Parse parameters from toml or json
+
+    #[cfg(not(target_arch = "wasm32"))]
     fn try_from_file<P: AsRef<std::path::Path>>(path: P) -> anyhow::Result<Self> {
         let contents = std::fs::read_to_string(&path)
             .map_err(|e| anyhow::anyhow!("{}: {}", path.as_ref().display(), e))?;
@@ -212,9 +213,8 @@ pub trait IxaParameters: Sized + serde::Serialize + serde::de::DeserializeOwned 
                 anyhow::bail!("Unsupported config file format. Use .toml or .json");
             };
 
-        // File params should extend default params
         let params = file_params.extend_from(Self::Builder::default());
 
-        Ok(params.build()?)
+        params.build()
     }
 }

@@ -3,3 +3,8 @@ declare module "*.vue" {
   const component: DefineComponent<{}, {}, any>;
   export default component;
 }
+
+declare module "*.toml" {
+  const value: Record<string, unknown>;
+  export default value;
+}

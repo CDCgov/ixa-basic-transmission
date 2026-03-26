@@ -2,6 +2,7 @@ import { execSync } from "node:child_process";
 import { basename, resolve } from "node:path";
 import { defineConfig, type Plugin } from "vite";
 import vue from "@vitejs/plugin-vue";
+import { ViteToml as toml } from "vite-plugin-toml";
 
 function cfasimWasm(modelDir = "model"): Plugin {
   return {
@@ -18,5 +19,5 @@ function cfasimWasm(modelDir = "model"): Plugin {
 }
 
 export default defineConfig({
-  plugins: [vue(), cfasimWasm()],
+  plugins: [vue(), toml(), cfasimWasm()],
 });

@@ -1,9 +1,11 @@
-use ixa_basic_transmission::ixa_plus::params_macro::IxaParameters;
 use ixa_basic_transmission::ext::OutputManagerExt;
+use ixa_basic_transmission::ixa_plus::params_macro::IxaParameters;
 
 fn main() {
     #[cfg(debug_assertions)]
-    ixa_basic_transmission::ixa_plus::log::set_log_level(ixa_basic_transmission::ixa_plus::log::LevelFilter::Debug);
+    ixa_basic_transmission::ixa_plus::log::set_log_level(
+        ixa_basic_transmission::ixa_plus::log::LevelFilter::Debug,
+    );
 
     #[cfg(not(debug_assertions))]
     ixa_basic_transmission::ixa_plus::log::init_default();

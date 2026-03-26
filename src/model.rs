@@ -19,9 +19,11 @@ pub fn setup(params_override: Option<Params>) -> Result<Context> {
         seed,
         population_size,
         p_initial_recovered,
-        p_initial_incidence,
+        initial_infections,
         ..
     } = params;
+
+    let p_initial_incidence = initial_infections as f64 / population_size as f64;
 
     // Set the random seed.
     context.init_random(seed);

@@ -1,14 +1,21 @@
 use crate::ext::ParametersExt;
 use crate::infection_status::*;
 use crate::simulation_event::SimulationEvent;
+#[cfg(not(target_arch = "wasm32"))]
 use anyhow::Result;
 use ixa::prelude::*;
+
+#[cfg(not(target_arch = "wasm32"))]
 use std::io::BufWriter;
+#[cfg(not(target_arch = "wasm32"))]
 use std::io::Write;
+#[cfg(not(target_arch = "wasm32"))]
 use std::path::PathBuf;
 
+#[cfg(not(target_arch = "wasm32"))]
 const OUTPUT_DIR: &str = "output";
 
+#[cfg(not(target_arch = "wasm32"))]
 fn create_output_file(filename: &str) -> Result<std::fs::File> {
     std::fs::create_dir_all(OUTPUT_DIR)
         .and_then(|_| {
@@ -47,17 +54,23 @@ impl Counts {
     }
 }
 
-// Store writers in a plugin data container
+#[cfg(not(target_arch = "wasm32"))]
 struct OutputDataContainer {
     counts: Counts,
     json_writer: BufWriter<std::fs::File>,
     daily_incidence_writer: ixa::csv::Writer<std::fs::File>,
 }
 
+#[cfg(target_arch = "wasm32")]
+struct OutputDataContainer {
+    counts: Counts,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 impl OutputDataContainer {
     fn write_daily_incidence(&mut self) {
         self.daily_incidence_writer
-            .write_record(&["t", "incidence"])
+            .write_record(["t", "incidence"])
             .expect("Failed to write header");
         for (day, incidence) in self.counts.daily_incidence.iter().enumerate() {
             self.daily_incidence_writer
@@ -67,6 +80,7 @@ impl OutputDataContainer {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 define_data_plugin!(OutputPlugin, OutputDataContainer, |context| {
     let events_file = create_output_file("events.jsonl").unwrap();
     let events_writer = BufWriter::new(events_file);
@@ -83,9 +97,16 @@ define_data_plugin!(OutputPlugin, OutputDataContainer, |context| {
     }
 });
 
+#[cfg(target_arch = "wasm32")]
+define_data_plugin!(OutputPlugin, OutputDataContainer, |context| {
+    let max_time = context.param_max_time();
+    OutputDataContainer {
+        counts: Counts::new(*max_time),
+    }
+});
+
 pub trait OutputManagerExt: PluginContext {
     fn capture_output(&mut self) {
-        // Send infection events
         self.subscribe_to_event(
             |context, event: PropertyChangeEvent<Person, InfectionStatus>| {
                 if !event.current.is_infectious() {
@@ -96,25 +117,41 @@ pub trait OutputManagerExt: PluginContext {
                 if event.current.is_incidence() {
                     data.counts.add_infection(event.current);
 
-                    let output = SimulationEvent::Infection {
-                        t: event.current.infection_time().unwrap(),
-                        person_id: event.entity_id,
-                    };
-                    context.write_event(output).expect("Failed to write event");
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        let output = SimulationEvent::Infection {
+                            t: event.current.infection_time().unwrap(),
+                            person_id: event.entity_id,
+                        };
+                        context.write_event(output).expect("Failed to write event");
+                    }
                 }
             },
         );
 
-        // Send forecast rejected events
         self.subscribe_to_event(move |context, event: SimulationEvent| {
             if let SimulationEvent::ForecastRejected { .. } = event {
                 let data = context.get_data_mut(OutputPlugin);
                 data.counts.add_forecast_rejection();
             }
-            context.write_event(event).expect("Failed to write event")
+            #[cfg(not(target_arch = "wasm32"))]
+            context.write_event(event).expect("Failed to write event");
         });
     }
 
+    fn get_daily_incidence(&self) -> &[usize] {
+        &self.get_data(OutputPlugin).counts.daily_incidence
+    }
+
+    fn get_total_infections(&self) -> usize {
+        self.get_data(OutputPlugin).counts.total_infections
+    }
+
+    fn get_forecasts_rejected(&self) -> usize {
+        self.get_data(OutputPlugin).counts.forecasts_rejected
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
     fn log_stats(&mut self) {
         self.get_data_mut(OutputPlugin).write_daily_incidence();
         let data = self.get_data(OutputPlugin);
@@ -141,6 +178,7 @@ pub trait OutputManagerExt: PluginContext {
         log::info!("Forecast efficiency: {:.3}", forecast_efficiency);
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn write_event(&mut self, event: SimulationEvent) -> Result<()> {
         let plugin_data = self.get_data_mut(OutputPlugin);
         serde_json::to_writer(&mut plugin_data.json_writer, &event)?;

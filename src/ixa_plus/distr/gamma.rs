@@ -52,14 +52,14 @@ impl Gamma {
         let params = GammaParams::Rate { shape, rate };
         Ok(Self {
             params,
-            distr: params.clone().try_into()?,
+            distr: params.try_into()?,
         })
     }
     pub fn from_shape_scale(shape: f64, scale: f64) -> Result<Self, sd::GammaError> {
         let params = GammaParams::Scale { shape, scale };
         Ok(Self {
             params,
-            distr: params.clone().try_into()?,
+            distr: params.try_into()?,
         })
     }
     pub fn rate(&self) -> f64 {

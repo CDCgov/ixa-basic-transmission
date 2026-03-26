@@ -1,5 +1,5 @@
-population_size = 1000
-p_initial_incidence = 0.01
+population_size = 100_000
+initial_infections = 10
 p_initial_recovered = 0.0
 max_time = 100.0
 seed = 42

@@ -1,7 +1,7 @@
 use super::InfectiousnessRateFn;
 use super::RateFn;
-use crate::ixa_plus::type_index::{TypeIndex, TypeIndexCategory, TypeIndexMap};
 use crate::infection_status::PersonId;
+use crate::ixa_plus::type_index::{TypeIndex, TypeIndexCategory, TypeIndexMap};
 use ixa::HashMap;
 use ixa::prelude::*;
 
@@ -68,10 +68,10 @@ pub trait RateFnExt: PluginContext {
         _generator: G,
     ) -> &impl InfectiousnessRateFn {
         let data = self.get_data(RateFnPlugin);
-        let rate_fn = data
+        
+        (data
             .get_rate_fn::<G>(person_id)
-            .expect("Rate function not found");
-        rate_fn
+            .expect("Rate function not found")) as _
     }
 }
 
@@ -88,7 +88,7 @@ macro_rules! define_rate {
 
         $crate::type_index!($crate::ixa_plus::rate_fn::RateFn, $name);
 
-        impl<C: PluginContext> crate::ixa_plus::rate_fn::RateFnGenerator<C> for $name {
+        impl<C: PluginContext> $crate::ixa_plus::rate_fn::RateFnGenerator<C> for $name {
             fn name(&self) -> &'static str {
                 stringify!($name)
             }

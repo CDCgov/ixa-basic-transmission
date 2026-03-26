@@ -16,15 +16,8 @@ define_parameters! {
             }
         },
 
-        /// Number of initial infections as a proportion of the population
-        /// E.g., 0.1 means 10% of the population are initially infected
-        p_initial_incidence: f64 {
-            validate(value) {
-                if *value < 0.0 || *value > 1.0 {
-                    bail!("initial_incidence must be between 0 and 1");
-                }
-            }
-        },
+        /// Number of initially infected individuals
+        initial_infections: usize,
 
         /// The proportion of people that are initially recovered (fully immune to disease)
         /// E.g., 0.1 means 10% of the population are initially recovered
