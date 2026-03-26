@@ -74,7 +74,7 @@ mod native {
     }
 
     pub fn set_log_level(level: log::LevelFilter) {
-        LOG_LEVEL.set(level).unwrap_or({});
+        LOG_LEVEL.set(level).unwrap_or(());
         init();
     }
 

@@ -17,11 +17,13 @@ run = "cargo build"
 # Run tests
 [taskgroup.rust.test]
 run = "cargo test"
+git_hook = "pre-push"
 
 # Check linting and formatting
 [taskgroup.rust.lint]
 run_serial = ["cargo clippy", "cargo fmt --check"]
 fail_hook = { suggest_command = "plz rust fix" }
+git_hook = "pre-commit"
 
 # Fix lint and formatting issues
 [taskgroup.rust.fix]
@@ -49,6 +51,7 @@ run = "vite"
 [taskgroup.ui.build]
 depends = ["ui.setup"]
 run = "vite build"
+git_hook = "pre-push"
 
 # Preview production build
 [taskgroup.ui.preview]

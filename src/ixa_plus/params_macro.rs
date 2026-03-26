@@ -188,11 +188,12 @@ pub trait IxaParameters: Sized + serde::Serialize + serde::de::DeserializeOwned 
         let mut prev_arg: Option<&str> = None;
         for arg in &args[1..] {
             if let Some(prev) = prev_arg
-                && prev == "--params" {
-                    return Some(
-                        Self::try_from_file(arg).expect("Could not parse parameters from file"),
-                    );
-                }
+                && prev == "--params"
+            {
+                return Some(
+                    Self::try_from_file(arg).expect("Could not parse parameters from file"),
+                );
+            }
             prev_arg = Some(arg);
         }
         None

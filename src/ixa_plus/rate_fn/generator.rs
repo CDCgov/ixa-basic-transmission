@@ -68,7 +68,7 @@ pub trait RateFnExt: PluginContext {
         _generator: G,
     ) -> &impl InfectiousnessRateFn {
         let data = self.get_data(RateFnPlugin);
-        
+
         (data
             .get_rate_fn::<G>(person_id)
             .expect("Rate function not found")) as _
@@ -95,7 +95,7 @@ macro_rules! define_rate {
             fn assign(
                 &self,
                 $ctx: &C,
-                $person_id: crate::infection_status::PersonId,
+                $person_id: $crate::infection_status::PersonId,
             ) -> crate::ixa_plus::rate_fn::RateFn {
                 $body
             }
