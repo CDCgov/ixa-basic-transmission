@@ -1,89 +1,47 @@
 <script setup lang="ts">
-import { reactive, computed } from "vue";
-import { SidebarLayout, NumberInput } from "@cfasim-ui/components";
-import { LineChart, DataTable } from "@cfasim-ui/charts";
-import type { Series, ColumnConfig } from "@cfasim-ui/charts";
-import { useModel } from "@cfasim-ui/wasm";
-import defaults from "../../params/default.toml";
-
-const params = reactive({
-  population_size: defaults.population_size as number,
-  initial_infections: defaults.initial_infections as number,
-  max_time: defaults.max_time as number,
-  seed: defaults.seed as number,
-  infection_rate: { ...(defaults.infection_rate as { shape: number; rate: number }) },
-  infection_duration: { ...(defaults.infection_duration as { shape: number; rate: number }) },
-});
-const { useOutputs } = useModel("simulator");
-const { outputs, loading } = useOutputs("simulate", params);
-
-const incidenceSeries = computed<Series[]>(() => {
-  if (!outputs.value?.daily_incidence) return [];
-  return [{ data: Array.from(outputs.value.daily_incidence.column("incidence")), color: "#e74c3c" }];
-});
-
-const cumulativeSeries = computed<Series[]>(() => {
-  if (!outputs.value?.daily_incidence) return [];
-  return [{ data: Array.from(outputs.value.daily_incidence.column("cumulative_incidence")), color: "#2980b9" }];
-});
-
-const infectionRateMean = computed(() => params.infection_rate.shape / params.infection_rate.rate);
-const infectionDurationMean = computed(() => params.infection_duration.shape / params.infection_duration.rate);
-
-const statsColumns: Record<string, ColumnConfig> = {
-  total_infections: { label: "Total Infections" },
-  attack_rate: { label: "Attack Rate" },
-  forecasts_rejected: { label: "Forecasts Rejected" },
-  forecast_efficiency: { label: "Forecast Efficiency" },
-};
+import { RouterView } from "vue-router";
+import { SidebarLayout } from "@cfasim-ui/components";
 </script>
 
 <template>
   <SidebarLayout>
     <template #sidebar>
-      <h2>Basic Transmission</h2>
-      <NumberInput v-model="params.population_size" label="Population Size" />
-      <NumberInput v-model="params.initial_infections" label="Initial Infections" />
-      <NumberInput v-model="params.max_time" label="Max Time" />
-      <NumberInput v-model="params.seed" label="Seed" />
-      <h2>Infection Rate Distribution</h2>
-      <p class="note">The distribution of the rate of infections/day across the population as a Gamma distribution
-        with
-        shape k and rate λ.
-      </p>
-      <div class="row">
-        <NumberInput v-model="params.infection_rate.shape" label="Shape (k)" :step="0.1" />
-        <NumberInput v-model="params.infection_rate.rate" label="Rate (λ)" :step="0.05" />
-      </div>
-      <p class="note">Mean: {{ infectionRateMean.toFixed(2) }}</p>
-      <h2>Infection Duration Distribution</h2>
-      <p class="note">The distribution of the duration of infection (i.e., time from infection to recovery) across the
-        population as a Gamma
-        distribution with shape k and rate λ.</p>
-      <div class="row">
-        <NumberInput v-model="params.infection_duration.shape" label="Shape (k)" :step="0.1" />
-        <NumberInput v-model="params.infection_duration.rate" label="Rate (λ)" :step="0.1" />
-      </div>
-      <p class="note">Mean: {{ infectionDurationMean.toFixed(2) }}</p>
-
+      <div id="model-sidebar" class="model-sidebar"></div>
     </template>
-    <p v-if="loading">Running simulation...</p>
-    <template v-else-if="outputs?.daily_incidence">
-      <LineChart :series="incidenceSeries" title="Daily Incidence" xLabel="Day" yLabel="New Infections" :height="300" />
-      <LineChart :series="cumulativeSeries" title="Cumulative Incidence" xLabel="Day" yLabel="Total Infections"
-        :height="300" />
-      <DataTable v-if="outputs?.stats" :data="outputs.stats" :columnConfig="statsColumns" />
+    <template #topbar>
+      <a
+        href="https://github.com/CDCgov/ixa-basic-transmission"
+        class="topbar-link"
+        target="_blank"
+        rel="noopener"
+      >
+        <svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor">
+          <path
+            d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"
+          />
+        </svg>
+      </a>
     </template>
+    <RouterView />
   </SidebarLayout>
 </template>
 
 <style scoped>
-.note {
-  margin-top: 0;
-}
-
-.row {
+.model-sidebar {
   display: flex;
-  gap: 8px;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.topbar-link {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.375rem 0.5rem;
+  border-radius: 6px;
+  font-size: var(--font-size-sm);
+  text-decoration: none;
+  color: var(--color-text-secondary);
+}
+.topbar-link:hover {
+  color: var(--color-text);
 }
 </style>

@@ -1,25 +1,23 @@
 # Ixa Basic Transmission
 
-This repository is a basic implementation of an infectious disease transmission
-model written in Rust, it is in early development and not ready for use.
+A stochastic SIR transmission model written in Rust with [ixa](https://github.com/CDCgov/ixa),
+compiled to WebAssembly and explored through a Vue frontend. Early development;
+not ready for use.
 
-To get started:
-
-```sh
-cargo run
-```
-
-To run the model with some parameter set:
+Tasks are run with [plz](https://plzplz.org/). Common commands:
 
 ```sh
-cargo run -- --params params/default.toml
+plz check       # cargo check (wasm32 target)
+plz test        # cargo test
+plz lint        # clippy + fmt --check
+plz fix         # auto-format and auto-fix lints
+plz ui dev      # start the dev server (builds the wasm model, watches the UI)
+plz ui build    # production build to simulator/dist/
+plz ui preview  # preview the production build
 ```
 
-To run tests
-
-```sh
-cargo test
-```
+Run `plz` with no arguments to pick a task interactively, or see
+[`plz.toml`](./plz.toml) for the full list.
 
 **General disclaimer** This repository was created for use by CDC programs to
 collaborate on public health related projects in support of the
