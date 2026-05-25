@@ -9,13 +9,13 @@
     "@cfasim-ui/theme": "^0.4.11",
     "@cfasim-ui/wasm": "^0.4.11",
     "vue": "^3.5.30",
-    "vue-router": "^4.5.1"
+    "vue-router": "^5.0.7"
   },
   "devDependencies": {
     "@playwright/test": "^1.60.0",
     "@vitejs/plugin-vue": "^6.0.5",
     "smol-toml": "^1.6.1",
-    "typescript": "^5.9.3",
+    "typescript": "^6.0.3",
     "vite": "^8.0.5"
   }
 }
