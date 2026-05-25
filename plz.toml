@@ -49,3 +49,8 @@ git_hook = "pre-push"
 [taskgroup.ui.preview]
 depends = ["ui.setup"]
 run = "vite preview"
+
+# End-to-end browser tests (Playwright). Spins up its own vite dev server.
+[taskgroup.ui.e2e]
+depends = ["ui.setup"]
+run = "playwright test"

@@ -6,13 +6,15 @@ import {
   Button,
   Toggle,
   ParamEditor,
+  SelectBox,
 } from "@cfasim-ui/components";
-import type { ParamEditorValue } from "@cfasim-ui/components";
+import type { ParamEditorValue, SelectOption } from "@cfasim-ui/components";
 import { LineChart, DataTable } from "@cfasim-ui/charts";
 import type { ChartAnnotation } from "@cfasim-ui/charts";
 import { runWasm, cancelWasm } from "@cfasim-ui/wasm";
 import { useUrlParams, ModelOutput } from "@cfasim-ui/shared";
 import type { ColumnDescriptor, TypedColumn } from "@cfasim-ui/shared";
+import presets from "virtual:presets";
 
 const defaults = {
   infectionRate: 0.5,
@@ -33,6 +35,43 @@ const { reset } = useUrlParams(params, defaults, {
 // instead of the per-field NumberInput form. Both views share the same
 // underlying `params` so users can flip back and forth.
 const useEditor = ref(false);
+
+// Presets are loaded at build time from `config/*.toml` via the
+// `virtual:presets` Vite plugin. Selection is derived from `params`: if
+// they match a preset exactly, that preset is shown as selected;
+// otherwise the picker shows "Custom".
+const presetOptions: SelectOption[] = presets.map((p) => ({
+  value: p.id,
+  label: p.name,
+}));
+
+function paramsMatchPreset(preset: (typeof presets)[number]): boolean {
+  for (const key of Object.keys(defaults) as (keyof typeof defaults)[]) {
+    const target = preset.parameters[key];
+    if (target === undefined) return false;
+    if ((params as Record<string, unknown>)[key] !== target) return false;
+  }
+  return true;
+}
+
+const selectedPresetId = computed<string>(
+  () => presets.find(paramsMatchPreset)?.id ?? "",
+);
+
+const selectedPresetDescription = computed<string | undefined>(
+  () => presets.find((p) => p.id === selectedPresetId.value)?.description,
+);
+
+function applyPreset(id: string) {
+  const preset = presets.find((p) => p.id === id);
+  if (!preset) return;
+  for (const key of Object.keys(defaults) as (keyof typeof defaults)[]) {
+    const v = preset.parameters[key];
+    if (typeof v === "number" && Number.isFinite(v)) {
+      (params as Record<string, unknown>)[key] = v;
+    }
+  }
+}
 
 function applyParamUpdate(next: ParamEditorValue) {
   // Only assign keys we know about, coercing each one to its default's
@@ -389,6 +428,17 @@ const summary = computed(() => {
   <Teleport to="#model-sidebar">
     <div class="sidebar-header">
       <h2>Parameters</h2>
+      <SelectBox
+        v-if="presetOptions.length"
+        label="Preset"
+        :options="presetOptions"
+        :model-value="selectedPresetId"
+        placeholder="Custom"
+        @update:model-value="applyPreset"
+      />
+      <p v-if="selectedPresetDescription" class="preset-description">
+        {{ selectedPresetDescription }}
+      </p>
       <div class="sidebar-controls">
         <Toggle v-model="useEditor" label="Edit as code" />
         <Button variant="secondary" @click="reset">Reset</Button>
@@ -503,6 +553,11 @@ const summary = computed(() => {
   align-items: center;
   justify-content: space-between;
   gap: 0.5em;
+}
+.preset-description {
+  margin: 0;
+  font-size: var(--font-size-sm, 0.875rem);
+  color: var(--cfa-color-text-muted, #666);
 }
 .error {
   color: red;

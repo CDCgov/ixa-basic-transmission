@@ -1,0 +1,11 @@
+name = "Fast outbreak"
+description = "High transmissibility (R₀ ≈ 3) — sharp peak, large attack rate."
+
+[parameters]
+infectionRate = 0.6
+infectiousPeriod = 5.0
+population = 10000
+initialInfections = 5
+seed = 0
+maxTime = 60
+nSimulations = 20
