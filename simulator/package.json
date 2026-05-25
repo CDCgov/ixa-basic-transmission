@@ -1,22 +1,19 @@
 {
-  "name": "simulator",
+  "name": "ixa-basic-transmission-simulator",
   "private": true,
   "type": "module",
-  "scripts": {
-    "dev": "vite",
-    "build": "vite build"
-  },
   "dependencies": {
-    "@cfasim-ui/charts": "^0.1.4",
-    "@cfasim-ui/components": "^0.1.4",
-    "@cfasim-ui/theme": "^0.1.4",
-    "@cfasim-ui/wasm": "^0.1.4",
-    "vue": "^3.5.30"
+    "@cfasim-ui/charts": "^0.4.11",
+    "@cfasim-ui/components": "^0.4.11",
+    "@cfasim-ui/shared": "^0.4.11",
+    "@cfasim-ui/theme": "^0.4.11",
+    "@cfasim-ui/wasm": "^0.4.11",
+    "vue": "^3.5.30",
+    "vue-router": "^4.5.1"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^6.0.5",
     "typescript": "^5.9.3",
-    "vite": "^8.0.1",
-    "vite-plugin-toml": "^0.8.7"
+    "vite": "^8.0.5"
   }
 }

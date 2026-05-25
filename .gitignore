@@ -1,5 +1,7 @@
 target/
-output/
-!output/index.html
-/.vite/
 node_modules/
+simulator/dist/
+simulator/public/wasm/
+.vite/
+.DS_Store
+CLAUDE.md
