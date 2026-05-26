@@ -237,6 +237,98 @@ const libraryYMax = computed(() => {
   return m > 0 ? m * 1.1 : 1;
 });
 
+// Two display modes for the library: a "mean" view that draws all
+// curves on one chart with a red mean curve on top (default — good
+// for spotting outliers and seeing the population profile at a
+// glance), or the original paginated 2×2 "grid" of mini charts.
+type LibraryView = "mean" | "grid";
+const libraryView = ref<LibraryView>("mean");
+const libraryViewOptions: SelectOption[] = [
+  { value: "mean", label: "Mean" },
+  { value: "grid", label: "Grid" },
+];
+
+// Linear interp of a single curve at τ. Zero outside the anchor range
+// (matches the model semantics).
+function rateAt(curve: [number, number][], t: number): number {
+  if (!curve.length) return 0;
+  const first = curve[0][0];
+  const last = curve[curve.length - 1][0];
+  if (t < first || t > last) return 0;
+  for (let i = 1; i < curve.length; i++) {
+    const [t0, r0] = curve[i - 1];
+    const [t1, r1] = curve[i];
+    if (t <= t1) {
+      const span = t1 - t0;
+      if (span === 0) return r1;
+      const alpha = (t - t0) / span;
+      return r0 + alpha * (r1 - r0);
+    }
+  }
+  return 0;
+}
+
+// Pointwise mean across the library, sampled on a fixed τ grid that
+// spans 0 → max curve support. Used for the red "mean" overlay; the
+// grid resolution (101 points) is plenty for the ~30-day τ axis we
+// typically see.
+const meanCurveSamples = 101;
+const meanCurve = computed<{ x: number[]; data: number[] }>(() => {
+  if (!libraryRates.value.length) return { x: [], data: [] };
+  let tMax = 0;
+  for (const c of libraryRates.value) {
+    const last = c[c.length - 1]?.[0] ?? 0;
+    if (last > tMax) tMax = last;
+  }
+  if (tMax <= 0) return { x: [], data: [] };
+  const x: number[] = new Array(meanCurveSamples);
+  const data: number[] = new Array(meanCurveSamples);
+  for (let i = 0; i < meanCurveSamples; i++) {
+    const t = (tMax * i) / (meanCurveSamples - 1);
+    x[i] = t;
+    let sum = 0;
+    for (const c of libraryRates.value) sum += rateAt(c, t);
+    data[i] = sum / libraryRates.value.length;
+  }
+  return { x, data };
+});
+
+const overlaySeries = computed(() => {
+  // The mean is series[0] **on purpose**: cfasim-ui's LineChart binds
+  // tooltip nearest-point lookups to series[0]'s `data` array, so any
+  // other choice would clamp the tooltip to that curve's x range
+  // (some library curves end at τ≈12, others at τ≈28 — the mean spans
+  // the full range). Drawing it first means it renders behind the
+  // blue fan, but the fan is at opacity 0.25 so the red still reads
+  // through clearly.
+  const series: Array<{
+    x: number[];
+    data: number[];
+    color: string;
+    opacity?: number;
+    strokeWidth?: number;
+  }> = [];
+  const mean = meanCurve.value;
+  if (mean.x.length) {
+    series.push({
+      x: mean.x,
+      data: mean.data,
+      color: "#dc2626",
+      strokeWidth: 2,
+    });
+  }
+  for (const curve of libraryRates.value) {
+    series.push({
+      x: curve.map((p) => p[0]),
+      data: curve.map((p) => p[1]),
+      color: "#2563eb",
+      opacity: 0.25,
+      strokeWidth: 1,
+    });
+  }
+  return series;
+});
+
 // If the library shrinks after a CSV swap, snap back to a valid page.
 function watchSize() {
   clampPage();
@@ -360,54 +452,92 @@ function formatRate(v: unknown): string {
       />
     </div>
     <p v-if="uploadError" class="library-error">{{ uploadError }}</p>
-    <div v-if="libraryCount" class="library-grid" @vue:mounted="watchSize">
-      <div
-        v-for="(curve, i) in pagedCurves"
-        :key="pageStart + i"
-        class="library-cell"
+    <SelectBox
+      v-if="libraryCount"
+      label="View"
+      :options="libraryViewOptions"
+      :model-value="libraryView"
+      @update:model-value="(v) => (libraryView = v as LibraryView)"
+    />
+    <div
+      v-if="libraryCount && libraryView === 'mean'"
+      class="library-overlay"
+    >
+      <LineChart
+        :series="overlaySeries"
+        :height="160"
+        :y-min="0"
+        :y-max="libraryYMax"
+        :menu="false"
+        x-label="τ (days since infected)"
+        y-label="rate"
+        :axis-label-style="{ fontSize: 10 }"
+        :tick-label-style="{ fontSize: 10 }"
+        tooltip-trigger="hover"
       >
-        <div class="library-cell-label">#{{ pageStart + i + 1 }}</div>
-        <LineChart
-          :series="curveSeries(curve)"
-          :height="100"
-          :y-min="0"
-          :y-max="libraryYMax"
-          :menu="false"
-          :axis-label-style="{ fontSize: 9 }"
-          :tick-label-style="{ fontSize: 9 }"
-          tooltip-trigger="hover"
-        >
-          <template #tooltip="{ xLabel, values }">
-            <div class="curve-tooltip">
-              <div v-if="xLabel != null" class="curve-tooltip-label">
-                τ = {{ formatTau(xLabel) }}
-              </div>
-              <div class="curve-tooltip-row">
-                <span>rate</span>
-                <span>{{ formatRate(values[0]?.value) }}</span>
-              </div>
+        <template #tooltip="{ xLabel, values }">
+          <div class="curve-tooltip">
+            <div v-if="xLabel != null" class="curve-tooltip-label">
+              τ = {{ formatTau(xLabel) }}
             </div>
-          </template>
-        </LineChart>
+            <div class="curve-tooltip-row">
+              <span class="curve-tooltip-mean">mean</span>
+              <span>{{ formatRate(values[0]?.value) }}</span>
+            </div>
+          </div>
+        </template>
+      </LineChart>
+    </div>
+    <template v-if="libraryCount && libraryView === 'grid'">
+      <div class="library-grid" @vue:mounted="watchSize">
+        <div
+          v-for="(curve, i) in pagedCurves"
+          :key="pageStart + i"
+          class="library-cell"
+        >
+          <div class="library-cell-label">#{{ pageStart + i + 1 }}</div>
+          <LineChart
+            :series="curveSeries(curve)"
+            :height="100"
+            :y-min="0"
+            :y-max="libraryYMax"
+            :menu="false"
+            :axis-label-style="{ fontSize: 9 }"
+            :tick-label-style="{ fontSize: 9 }"
+            tooltip-trigger="hover"
+          >
+            <template #tooltip="{ xLabel, values }">
+              <div class="curve-tooltip">
+                <div v-if="xLabel != null" class="curve-tooltip-label">
+                  τ = {{ formatTau(xLabel) }}
+                </div>
+                <div class="curve-tooltip-row">
+                  <span>rate</span>
+                  <span>{{ formatRate(values[0]?.value) }}</span>
+                </div>
+              </div>
+            </template>
+          </LineChart>
+        </div>
       </div>
-    </div>
-    <div v-if="pageCount > 1" class="library-pager">
-      <Button
-        variant="secondary"
-        :disabled="page === 0"
-        @click="prevPage"
-        >‹ Prev</Button
-      >
-      <span class="library-page-info"
-        >Page {{ page + 1 }} / {{ pageCount }}</span
-      >
-      <Button
-        variant="secondary"
-        :disabled="page >= pageCount - 1"
-        @click="nextPage"
-        >Next ›</Button
-      >
-    </div>
+      <div v-if="pageCount > 1" class="library-pager">
+        <Button
+          variant="secondary"
+          :disabled="page === 0"
+          @click="prevPage"
+          >‹ Prev</Button
+        >
+        <span class="library-page-info"
+          >Page {{ page + 1 }} / {{ pageCount }}</span
+        >
+        <Button
+          variant="secondary"
+          :disabled="page >= pageCount - 1"
+          @click="nextPage"
+          >Next ›</Button
+        >
+      </div>
+    </template>
   </template>
   <div v-if="modelValue.type !== 'library'" class="rate-preview">
     <LineChart
@@ -520,5 +650,11 @@ function formatRate(v: unknown): string {
   display: flex;
   justify-content: space-between;
   gap: 0.5em;
+}
+.curve-tooltip-mean {
+  color: #dc2626;
+}
+.library-overlay {
+  margin-top: 0.4em;
 }
 </style>

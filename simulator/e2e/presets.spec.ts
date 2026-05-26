@@ -93,7 +93,7 @@ test.describe("Parameter presets", () => {
     ).toBeVisible();
   });
 
-  test("Library preset switches the editor into Library mode and shows the grid", async ({
+  test("Library preset switches the editor into Library mode and shows the mean chart", async ({
     page,
   }) => {
     await page.goto("/");
@@ -108,7 +108,11 @@ test.describe("Parameter presets", () => {
     await expect(
       page.getByText(/Library of 10 per-person curves/i),
     ).toBeVisible();
-    await expect(page.getByText(/Page 1 \/ 3/)).toBeVisible();
+    // The default view is "Mean" — a single chart with all curves and
+    // a red mean overlay. Pagination is hidden in this view.
+    const view = page.getByRole("combobox", { name: "View" });
+    await expect(view).toHaveText(/Mean/);
+    await expect(page.getByText(/Page \d+ \/ \d+/)).toHaveCount(0);
   });
 
   test("simulation runs end-to-end in Library mode and shows summary stats", async ({
@@ -170,11 +174,17 @@ test.describe("Parameter presets", () => {
     await rateType.click();
     await page.getByRole("option", { name: "Library" }).click();
 
-    // The bundled default library has 10 curves; with 4 per page that's
-    // 3 pages of 4-4-2.
+    // Default view is "Overlay" (single chart with all curves + red
+    // mean). Switch to "Grid" to test pagination.
     await expect(
       page.getByText(/Library of 10 per-person curves/i),
     ).toBeVisible();
+    const view = page.getByRole("combobox", { name: "View" });
+    await view.click();
+    await page.getByRole("option", { name: "Grid" }).click();
+
+    // The bundled default library has 10 curves; with 4 per page that's
+    // 3 pages of 4-4-2.
     await expect(page.getByText(/Page 1 \/ 3/)).toBeVisible();
 
     // Forward through pages.
