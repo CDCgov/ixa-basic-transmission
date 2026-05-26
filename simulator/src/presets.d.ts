@@ -3,7 +3,7 @@ declare module "virtual:presets" {
     id: string;
     name: string;
     description: string;
-    parameters: Record<string, number>;
+    parameters: Record<string, unknown>;
   }
   const presets: Preset[];
   export default presets;

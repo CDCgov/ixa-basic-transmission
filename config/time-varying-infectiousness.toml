@@ -1,0 +1,15 @@
+name = "Time-varying infectiousness"
+description = "Viral-load-shaped intrinsic curve: ramp up over 2 days, peak, fade by day 8. Recovery is at the end of the curve."
+
+[parameters]
+population = 10000
+initialInfections = 5
+seed = 0
+maxTime = 100
+nSimulations = 20
+
+# Times are days since the person became infectious. Rate is 0 outside
+# the anchor range. Recovery is deterministic at τ = 8.
+[parameters.infectionRate]
+type = "empirical"
+points = [[0.0, 0.0], [2.0, 1.0], [4.0, 1.2], [6.0, 0.4], [8.0, 0.0]]

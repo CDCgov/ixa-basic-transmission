@@ -1,5 +1,7 @@
 mod model;
 mod parameters;
+mod person;
+mod rate;
 mod stats;
 
 use cfasim_model::{model_outputs, ModelOutput};
@@ -7,6 +9,7 @@ use serde::Deserialize;
 use wasm_bindgen::prelude::*;
 
 use crate::parameters::Parameters;
+use crate::rate::InfectionRate;
 
 /// Arguments accepted by `simulate`. JS passes these as a single JSON string
 /// (see `Page.vue`); `serde(rename_all = "camelCase")` bridges the JS field
@@ -14,8 +17,7 @@ use crate::parameters::Parameters;
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SimulateArgs {
-    infection_rate: f64,
-    infectious_period: f64,
+    infection_rate: InfectionRate,
     population: u32,
     initial_infections: u32,
     seed: u32,
@@ -30,8 +32,7 @@ struct SimulateArgs {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SimulateBatchArgs {
-    infection_rate: f64,
-    infectious_period: f64,
+    infection_rate: InfectionRate,
     population: u32,
     initial_infections: u32,
     seed: u32,
@@ -80,7 +81,6 @@ pub fn simulate(args: &str) -> JsValue {
     let args: SimulateArgs = serde_json::from_str(args).expect("invalid simulate args");
     let base_params = Parameters {
         infection_rate: args.infection_rate,
-        infectious_period: args.infectious_period,
         population: args.population as usize,
         initial_infections: args.initial_infections as usize,
         seed: args.seed as u64,
@@ -118,7 +118,6 @@ pub fn simulate_batch(args: &str) -> JsValue {
     let args: SimulateBatchArgs = serde_json::from_str(args).expect("invalid simulate_batch args");
     let base_params = Parameters {
         infection_rate: args.infection_rate,
-        infectious_period: args.infectious_period,
         population: args.population as usize,
         initial_infections: args.initial_infections as usize,
         seed: args.seed as u64,

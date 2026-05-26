@@ -24,15 +24,16 @@ test.describe("Parameter presets", () => {
       "Baseline",
       "Fast outbreak",
       "Slow spread",
+      "Time-varying infectiousness",
       "Tiny town",
     ]);
 
     await page.getByRole("option", { name: "Fast outbreak" }).click();
 
     // URL only carries values that differ from defaults; Fast outbreak
-    // bumps infectionRate, infectiousPeriod, and maxTime.
-    await expect(page).toHaveURL(/infectionRate=0\.6/);
-    await expect(page).toHaveURL(/infectiousPeriod=5/);
+    // bumps maxTime. `infectionRate` is excluded from URL sync (it's an
+    // object now, holding both rate value and duration); the preset
+    // selection itself is the source of truth for that field.
     await expect(page).toHaveURL(/maxTime=60/);
     await expect(preset).toHaveText(/Fast outbreak/);
 
@@ -47,5 +48,65 @@ test.describe("Parameter presets", () => {
     await seed.fill("7");
     await seed.blur();
     await expect(preset).toHaveText(/Custom/);
+  });
+
+  test("Infectiousness selector switches between Constant and Time-varying", async ({
+    page,
+  }) => {
+    await page.goto("/");
+    const rateType = page.getByRole("combobox", { name: "Infectiousness" });
+    await expect(rateType).toHaveText(/Constant/);
+    // Constant-mode labels for the rate value and the recovery period.
+    await expect(page.getByText("Infection rate")).toBeVisible();
+    await expect(page.getByText("Infectious period")).toBeVisible();
+
+    // Switch to time-varying: those slider labels are gone, the curve
+    // summary appears (default 5-anchor viral-load curve), and the
+    // points editor is rendered.
+    await rateType.click();
+    await page.getByRole("option", { name: "Time-varying" }).click();
+    await expect(page.getByText("Infection rate")).toHaveCount(0);
+    await expect(
+      page.getByText(/Time-varying curve, recovery at τ =/i),
+    ).toBeVisible();
+    await expect(page.getByRole("button", { name: "Add point" })).toBeVisible();
+
+    // Switch back to constant: sliders return.
+    await rateType.click();
+    await page.getByRole("option", { name: "Constant" }).click();
+    await expect(page.getByText("Infection rate")).toBeVisible();
+  });
+
+  test("empirical schedule preset shows curve summary", async ({ page }) => {
+    await page.goto("/");
+    const preset = page.getByRole("combobox", { name: "Preset" });
+    await preset.click();
+    await page
+      .getByRole("option", { name: "Time-varying infectiousness" })
+      .click();
+
+    const rateType = page.getByRole("combobox", { name: "Infectiousness" });
+    await expect(rateType).toHaveText(/Time-varying/);
+    await expect(
+      page.getByText(/Time-varying curve, recovery at τ =/i),
+    ).toBeVisible();
+  });
+
+  test("points editor adds and removes anchor points", async ({ page }) => {
+    await page.goto("/");
+    const rateType = page.getByRole("combobox", { name: "Infectiousness" });
+    await rateType.click();
+    await page.getByRole("option", { name: "Time-varying" }).click();
+
+    // Default seeded curve has 5 anchor rows in the editor.
+    await expect(page.getByRole("button", { name: "×" })).toHaveCount(5);
+
+    // Add a point → 6 rows.
+    await page.getByRole("button", { name: "Add point" }).click();
+    await expect(page.getByRole("button", { name: "×" })).toHaveCount(6);
+
+    // Remove (the first × button) → back to 5.
+    await page.getByRole("button", { name: "×" }).first().click();
+    await expect(page.getByRole("button", { name: "×" })).toHaveCount(5);
   });
 });

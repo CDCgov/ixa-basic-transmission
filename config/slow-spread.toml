@@ -2,10 +2,13 @@ name = "Slow spread"
 description = "Sub-epidemic transmissibility (R₀ ≈ 1.05) — many runs fizzle."
 
 [parameters]
-infectionRate = 0.35
-infectiousPeriod = 3.0
 population = 10000
 initialInfections = 5
 seed = 0
 maxTime = 200
 nSimulations = 20
+
+[parameters.infectionRate]
+type = "constant"
+value = 0.35
+duration = 3.0

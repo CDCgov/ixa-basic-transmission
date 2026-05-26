@@ -2,10 +2,13 @@ name = "Baseline"
 description = "Default scenario: R₀ ≈ 1.5 in a population of 10,000."
 
 [parameters]
-infectionRate = 0.5
-infectiousPeriod = 3.0
 population = 10000
 initialInfections = 5
 seed = 0
 maxTime = 100
 nSimulations = 20
+
+[parameters.infectionRate]
+type = "constant"
+value = 0.5
+duration = 3.0
