@@ -7,10 +7,10 @@ import {
   Toggle,
   ParamEditor,
   SelectBox,
-} from "@cfasim-ui/components";
-import type { ParamEditorValue, SelectOption } from "@cfasim-ui/components";
-import { LineChart, DataTable } from "@cfasim-ui/charts";
-import { useUrlParams } from "@cfasim-ui/shared";
+} from "cfasim-ui/components";
+import type { ParamEditorValue, SelectOption } from "cfasim-ui/components";
+import { LineChart, DataTable } from "cfasim-ui/charts";
+import { useUrlParams } from "cfasim-ui/shared";
 import presets from "virtual:presets";
 import RateEditor from "./components/RateEditor.vue";
 import {

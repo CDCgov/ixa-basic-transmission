@@ -1,6 +1,6 @@
 import { defineConfig, type Plugin } from "vite";
 import vue from "@vitejs/plugin-vue";
-import { cfasimWasm } from "@cfasim-ui/wasm/vite";
+import { cfasimWasm } from "cfasim-ui/wasm/vite";
 import { readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { parse as parseToml } from "smol-toml";

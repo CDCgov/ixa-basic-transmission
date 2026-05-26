@@ -1,7 +1,7 @@
 import { ref, watch, onScopeDispose, computed, type Ref } from "vue";
-import { runWasm, cancelWasm } from "@cfasim-ui/wasm";
-import { ModelOutput } from "@cfasim-ui/shared";
-import type { ColumnDescriptor, TypedColumn } from "@cfasim-ui/shared";
+import { runWasm, cancelWasm } from "cfasim-ui/wasm";
+import { ModelOutput } from "cfasim-ui/shared";
+import type { ColumnDescriptor, TypedColumn } from "cfasim-ui/shared";
 
 // Per-batch target workload (population × sims-in-batch). Roughly chosen
 // so each batch finishes in ~100–200ms on a default-ish machine. Smaller

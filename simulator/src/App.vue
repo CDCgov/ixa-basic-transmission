@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { RouterView } from "vue-router";
-import { SidebarLayout } from "@cfasim-ui/components";
+import { SidebarLayout } from "cfasim-ui/components";
 </script>
 
 <template>

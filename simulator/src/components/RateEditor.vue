@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { NumberInput, Button, SelectBox } from "@cfasim-ui/components";
-import type { SelectOption } from "@cfasim-ui/components";
+import { NumberInput, Button, SelectBox } from "cfasim-ui/components";
+import type { SelectOption } from "cfasim-ui/components";
 import {
   type InfectionRate,
   empiricalDuration,

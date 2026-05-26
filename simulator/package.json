@@ -3,11 +3,7 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "@cfasim-ui/charts": "^0.4.11",
-    "@cfasim-ui/components": "^0.4.11",
-    "@cfasim-ui/shared": "^0.4.11",
-    "@cfasim-ui/theme": "^0.4.11",
-    "@cfasim-ui/wasm": "^0.4.11",
+    "cfasim-ui": "^0.4.12",
     "vue": "^3.5.30",
     "vue-router": "^5.0.7"
   },

@@ -1,7 +1,7 @@
 import { computed, type Ref } from "vue";
-import { ModelOutput } from "@cfasim-ui/shared";
-import type { TypedColumn } from "@cfasim-ui/shared";
-import type { ChartAnnotation } from "@cfasim-ui/charts";
+import { ModelOutput } from "cfasim-ui/shared";
+import type { TypedColumn } from "cfasim-ui/shared";
+import type { ChartAnnotation } from "cfasim-ui/charts";
 import { expectedR0, type InfectionRate } from "./infectionRate";
 
 // Chart layers, in render order:
