@@ -4,7 +4,7 @@ use rand_distr::{Exp, Gamma};
 
 use crate::parameters::Parameters;
 use crate::person::{DrawnDuration, DrawnRate, InfectionStatus, InfectionTime, Person, PersonId};
-use crate::rate::{empirical_curve_duration, EffectiveRate, InfectionRate};
+use crate::rate::{empirical_curve_duration, Curve, EffectiveRate, InfectionRate};
 use crate::rate_library::{AssignedRate, Rate, RateLibraryData};
 use crate::stats::ModelStats;
 
@@ -88,8 +88,7 @@ impl InfectionLoop for Context {
             }
             InfectionRate::Library { .. } => {
                 let rate_id = self.get_property::<_, AssignedRate>(p);
-                let curve = self.get_data(RateLibraryPlugin).curve(rate_id);
-                empirical_curve_duration(curve)
+                self.get_data(RateLibraryPlugin).curve(rate_id).duration()
             }
             InfectionRate::Gamma { .. } => self.get_property::<_, DrawnDuration>(p).0,
         };
@@ -108,7 +107,7 @@ impl InfectionLoop for Context {
         match &self.get_params().infection_rate {
             InfectionRate::Constant { value, .. } => EffectiveRate::Constant { value: *value },
             InfectionRate::Empirical { points, scale } => EffectiveRate::Empirical {
-                curve: points,
+                curve: self.get_data(RateLibraryPlugin).empirical_or_build(points),
                 scale: *scale,
             },
             InfectionRate::Library { scale, .. } => {
@@ -179,13 +178,15 @@ impl InfectionLoop for Context {
             },
         );
 
-        // For `Library` mode, instantiate one `Rate` entity per curve and
-        // populate the EntityMap. Cloning the curves once at setup is
-        // fine — the hot path borrows from the EntityMap and doesn't
-        // allocate.
+        // For `Library` mode, instantiate one `Rate` entity per curve
+        // and populate the EntityMap with precomputed-cum `Curve`s.
+        // Cloning the points once at setup is fine — the hot path
+        // borrows from the EntityMap and doesn't allocate. (The
+        // single-curve `Empirical` variant is lazily built on first
+        // access by `RateLibraryData::empirical_or_build`.)
         let library_size: usize =
             if let InfectionRate::Library { rates, .. } = &self.get_params().infection_rate {
-                let curves: Vec<Vec<[f64; 2]>> = rates.clone();
+                let curves: Vec<Curve> = rates.iter().map(|r| Curve::new(r.clone())).collect();
                 let mut ids: Vec<crate::rate_library::RateId> = Vec::with_capacity(curves.len());
                 for _ in 0..curves.len() {
                     ids.push(self.add_entity(Rate).unwrap());

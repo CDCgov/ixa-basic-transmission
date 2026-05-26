@@ -32,7 +32,9 @@ use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criteri
 
 use ixa_basic_transmission::model;
 use ixa_basic_transmission::parameters::Parameters;
-use ixa_basic_transmission::rate::{empirical_cum_rate, empirical_inverse_cum_rate, InfectionRate};
+use ixa_basic_transmission::rate::{
+    empirical_cum_rate, empirical_inverse_cum_rate, Curve, InfectionRate,
+};
 
 const POPULATION: usize = 2_000;
 const INITIAL_INFECTIONS: usize = 5;
@@ -183,12 +185,18 @@ fn bench_setup_only(c: &mut Criterion) {
 
 fn bench_curve_eval(c: &mut Criterion) {
     let library = load_bundled_library();
-    let long_curve = library
+    let long_points = library
         .iter()
         .max_by_key(|c| c.len())
         .expect("library has at least one curve")
         .clone();
-    let short = short_curve();
+    let short_points = short_curve();
+    // Pre-build the Curves (with precomputed cum) once — same shape as
+    // the model's hot path, which holds `&Curve` borrowed from a data
+    // plugin populated at setup.
+    let short = Curve::new(short_points.clone());
+    let long_curve = Curve::new(long_points.clone());
+    let long_len = long_curve.points.len();
 
     let mut g = c.benchmark_group("curve_eval");
     g.throughput(Throughput::Elements(1));
@@ -200,21 +208,41 @@ fn bench_curve_eval(c: &mut Criterion) {
 
     g.bench_function(BenchmarkId::from_parameter("short_5pt"), |b| {
         b.iter(|| {
-            let cum = empirical_cum_rate(black_box(&short), black_box(elapsed));
+            let cum = black_box(&short).cum_rate(black_box(elapsed));
+            black_box(black_box(&short).inverse_cum_rate(black_box(cum + e_sample)));
+        });
+    });
+
+    g.bench_function(
+        BenchmarkId::from_parameter(format!("long_{long_len}pt")),
+        |b| {
+            b.iter(|| {
+                let cum = black_box(&long_curve).cum_rate(black_box(elapsed));
+                black_box(black_box(&long_curve).inverse_cum_rate(black_box(cum + e_sample)));
+            });
+        },
+    );
+
+    // Reference path (no precomputed cum) — same math the slice-based
+    // helpers and `InfectionRate::cum_rate` use. Lets the diff measure
+    // the precompute savings on its own.
+    g.bench_function(BenchmarkId::from_parameter("short_5pt_no_cum"), |b| {
+        b.iter(|| {
+            let cum = empirical_cum_rate(black_box(&short_points), black_box(elapsed));
             black_box(empirical_inverse_cum_rate(
-                black_box(&short),
+                black_box(&short_points),
                 black_box(cum + e_sample),
             ));
         });
     });
 
     g.bench_function(
-        BenchmarkId::from_parameter(format!("long_{}pt", long_curve.len())),
+        BenchmarkId::from_parameter(format!("long_{long_len}pt_no_cum")),
         |b| {
             b.iter(|| {
-                let cum = empirical_cum_rate(black_box(&long_curve), black_box(elapsed));
+                let cum = empirical_cum_rate(black_box(&long_points), black_box(elapsed));
                 black_box(empirical_inverse_cum_rate(
-                    black_box(&long_curve),
+                    black_box(&long_points),
                     black_box(cum + e_sample),
                 ));
             });

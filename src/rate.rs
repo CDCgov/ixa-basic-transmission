@@ -143,6 +143,98 @@ pub fn empirical_curve_duration(points: &[[f64; 2]]) -> f64 {
     points.last().map_or(0.0, |p| p[0])
 }
 
+/// Piecewise-linear empirical curve with precomputed cumulative hazard
+/// at each anchor (`cum[i] = Λ(points[i].0)`, `cum[0] = 0`). Built once
+/// at setup; the hot path uses `cum_rate`/`inverse_cum_rate` on this
+/// type so it skips the per-segment trapezoid multiply-add accumulation
+/// the slice-based helpers do every call.
+#[derive(Clone, Debug)]
+pub struct Curve {
+    pub points: Vec<[f64; 2]>,
+    pub cum: Vec<f64>,
+}
+
+impl Curve {
+    pub fn new(points: Vec<[f64; 2]>) -> Self {
+        let mut cum = Vec::with_capacity(points.len());
+        cum.push(0.0);
+        let mut acc = 0.0;
+        for i in 1..points.len() {
+            let [ti, ri] = points[i - 1];
+            let [tj, rj] = points[i];
+            acc += 0.5 * (ri + rj) * (tj - ti);
+            cum.push(acc);
+        }
+        Self { points, cum }
+    }
+
+    #[inline]
+    pub fn duration(&self) -> f64 {
+        empirical_curve_duration(&self.points)
+    }
+
+    /// `Λ(τ)`. Walks segments to find the one containing `t`, then adds
+    /// one partial trapezoid — same as `empirical_cum_rate` but skips
+    /// the running accumulation since each anchor's cumulative is
+    /// already in `cum`.
+    #[inline]
+    pub fn cum_rate(&self, t: f64) -> f64 {
+        let points = &self.points;
+        if t <= 0.0 || points.is_empty() {
+            return 0.0;
+        }
+        if t <= points[0][0] {
+            return 0.0;
+        }
+        for i in 0..points.len() - 1 {
+            let [ti, ri] = points[i];
+            let [tj, rj] = points[i + 1];
+            if t < tj {
+                let dt = t - ti;
+                let slope = (rj - ri) / (tj - ti);
+                let r_at_t = ri + slope * dt;
+                return self.cum[i] + 0.5 * (ri + r_at_t) * dt;
+            }
+        }
+        *self.cum.last().unwrap()
+    }
+
+    /// Solves `cum_rate(τ) = c`. Walks segments until `c` lands in
+    /// `[cum[i], cum[i+1]]`, then solves the per-segment quadratic on
+    /// the leftover — same math as `empirical_inverse_cum_rate` but
+    /// without re-summing per-segment trapezoids.
+    #[inline]
+    pub fn inverse_cum_rate(&self, c: f64) -> Option<f64> {
+        if c < 0.0 {
+            return None;
+        }
+        if c == 0.0 {
+            return Some(0.0);
+        }
+        let points = &self.points;
+        if points.is_empty() {
+            return None;
+        }
+        for i in 0..points.len() - 1 {
+            if c > self.cum[i + 1] {
+                continue;
+            }
+            let [ti, ri] = points[i];
+            let [tj, rj] = points[i + 1];
+            let extra = c - self.cum[i];
+            let span = tj - ti;
+            let slope = (rj - ri) / span;
+            if slope == 0.0 {
+                return Some(ti + extra / ri);
+            }
+            let disc = (ri * ri + 2.0 * slope * extra).max(0.0);
+            let u = (-ri + disc.sqrt()) / slope;
+            return Some(ti + u);
+        }
+        None
+    }
+}
+
 /// Linear interpolation of a piecewise-linear curve at τ. Zero outside
 /// the anchor range. Mainly used by tests / display code.
 #[inline]
@@ -180,7 +272,7 @@ pub fn rate_at_curve(points: &[[f64; 2]], t: f64) -> f64 {
 #[derive(Debug, Clone, Copy)]
 pub enum EffectiveRate<'a> {
     Constant { value: f64 },
-    Empirical { curve: &'a [[f64; 2]], scale: f64 },
+    Empirical { curve: &'a Curve, scale: f64 },
 }
 
 impl EffectiveRate<'_> {
@@ -195,7 +287,7 @@ impl EffectiveRate<'_> {
                     0.0
                 }
             }
-            EffectiveRate::Empirical { curve, scale } => scale * empirical_cum_rate(curve, t),
+            EffectiveRate::Empirical { curve, scale } => scale * curve.cum_rate(t),
         }
     }
 
@@ -222,7 +314,7 @@ impl EffectiveRate<'_> {
                 if !scale.is_finite() || scale <= 0.0 {
                     return None;
                 }
-                empirical_inverse_cum_rate(curve, c / scale)
+                curve.inverse_cum_rate(c / scale)
             }
         }
     }
@@ -835,5 +927,118 @@ mod tests {
         );
         let back: InfectionRate = serde_json::from_str(&json).unwrap();
         assert_eq!(r, back);
+    }
+
+    // --- Curve (precomputed-cum) tests --------------------------------
+    // The model's hot path runs cum_rate / inverse_cum_rate through
+    // `Curve` rather than the slice-based helpers, so these lock in
+    // bit-equivalence with the reference path plus the plateau/zero-
+    // rate edge cases ixa-epi-isolation's EmpiricalRate covers.
+
+    #[test]
+    fn curve_new_builds_cumulative_trapezoid() {
+        // cum[i] is the running trapezoid integral up to anchor i.
+        // Tent shape: areas are 0.5, 1.5, 1.5, 0.5 → cum [0, 0.5, 2, 3.5, 4].
+        let curve = Curve::new(vec![
+            [0.0, 0.0],
+            [1.0, 1.0],
+            [2.0, 2.0],
+            [3.0, 1.0],
+            [4.0, 0.0],
+        ]);
+        assert_eq!(curve.cum, vec![0.0, 0.5, 2.0, 3.5, 4.0]);
+    }
+
+    #[test]
+    fn curve_cum_rate_matches_slice_helper() {
+        // Curve::cum_rate must agree exactly with the slice-based
+        // helper at every point — both use the same trapezoid math.
+        let points = vec![[0.0, 0.0], [1.0, 1.0], [2.0, 2.0], [3.0, 1.0], [4.0, 0.0]];
+        let curve = Curve::new(points.clone());
+        for t in [-0.1, 0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.7, 4.0, 5.0] {
+            assert_eq!(
+                curve.cum_rate(t),
+                empirical_cum_rate(&points, t),
+                "mismatch at t={t}"
+            );
+        }
+    }
+
+    #[test]
+    fn curve_inverse_cum_rate_matches_slice_helper() {
+        let points = vec![[0.0, 0.0], [1.0, 1.0], [2.0, 2.0], [3.0, 1.0], [4.0, 0.0]];
+        let curve = Curve::new(points.clone());
+        for c in [-0.1, 0.0, 0.1, 0.5, 1.125, 2.0, 2.875, 3.5, 4.0, 5.0] {
+            assert_eq!(
+                curve.inverse_cum_rate(c),
+                empirical_inverse_cum_rate(&points, c),
+                "mismatch at c={c}"
+            );
+        }
+    }
+
+    #[test]
+    fn curve_inverse_cum_rate_walks_through_plateau() {
+        // Mirrors ixa-epi-isolation's `test_inverse_cum_rate_plateaus`:
+        // a zero-rate stretch in the middle keeps `cum` constant; an
+        // inverse query exactly at the plateau value must return the
+        // *earliest* time it's reached, and just above it must land
+        // past the plateau on the next ramp.
+        let curve = Curve::new(vec![
+            [0.0, 1.0],
+            [1.0, 1.0],
+            [2.0, 0.0],
+            [3.0, 0.0],
+            [4.0, 1.0],
+        ]);
+        assert_eq!(curve.cum, vec![0.0, 1.0, 1.5, 1.5, 2.0]);
+        let t_at_15 = curve.inverse_cum_rate(1.5).unwrap();
+        assert!(
+            (t_at_15 - 2.0).abs() < 1e-12,
+            "expected t=2.0 at plateau start, got {t_at_15}"
+        );
+        let t_above = curve.inverse_cum_rate(1.6).unwrap();
+        assert!(t_above > 3.0, "expected past plateau, got {t_above}");
+    }
+
+    #[test]
+    fn curve_inverse_cum_rate_walks_through_leading_zero_segment() {
+        // Curve starts with a zero-rate segment, then rate restarts.
+        // Small c must land in the [1, 2] segment, not in the zero
+        // prefix.
+        let curve = Curve::new(vec![[0.0, 0.0], [1.0, 0.0], [2.0, 1.0]]);
+        assert_eq!(curve.cum, vec![0.0, 0.0, 0.5]);
+        let t = curve.inverse_cum_rate(0.01).unwrap();
+        assert!(t > 1.0 && t < 2.0, "expected t in (1, 2), got {t}");
+    }
+
+    #[test]
+    fn curve_cum_rate_zero_below_first_anchor() {
+        // Anchor times need not start at 0; rate is 0 outside the
+        // anchor range. (Same contract as ixa-epi-isolation's
+        // `test_cum_rate_below_zero_rate`.)
+        let curve = Curve::new(vec![[1.0, 1.0], [2.0, 3.0], [3.0, 5.0]]);
+        assert_eq!(curve.cum_rate(0.0), 0.0);
+        assert_eq!(curve.cum_rate(0.5), 0.0);
+        assert_eq!(curve.cum, vec![0.0, 2.0, 6.0]);
+    }
+
+    #[test]
+    fn curve_cum_rate_saturates_above_last_anchor() {
+        // Past the curve's support, `cum_rate` equals the total
+        // integral; `inverse_cum_rate` past that returns None.
+        let curve = Curve::new(vec![[0.0, 0.0], [1.0, 1.0], [2.0, 2.0]]);
+        let total = *curve.cum.last().unwrap();
+        assert_eq!(total, 2.0);
+        assert_eq!(curve.cum_rate(10.0), total);
+        assert_eq!(curve.inverse_cum_rate(total + 0.1), None);
+    }
+
+    #[test]
+    fn curve_duration_matches_last_anchor() {
+        let curve = Curve::new(vec![[0.0, 0.5], [2.5, 0.5], [7.3, 0.2]]);
+        assert_eq!(curve.duration(), 7.3);
+        let empty = Curve::new(vec![]);
+        assert_eq!(empty.duration(), 0.0);
     }
 }
