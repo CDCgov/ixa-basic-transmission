@@ -10,8 +10,9 @@ import {
 } from "cfasim-ui/components";
 import type { ParamEditorValue, SelectOption } from "cfasim-ui/components";
 import { LineChart, DataTable } from "cfasim-ui/charts";
-import { useUrlParams } from "cfasim-ui/shared";
+import { useUrlParams, type ParamCodec } from "cfasim-ui/shared";
 import presets from "virtual:presets";
+import defaultLibrary from "virtual:rateLibrary";
 import RateEditor from "./components/RateEditor.vue";
 import {
   type InfectionRate,
@@ -30,16 +31,38 @@ const defaults = {
 };
 const params = reactive(structuredClone(defaults));
 
-// `infectionRate` is a tagged union (Constant | Empirical). `useUrlParams`
-// builds its leaf set from `defaults`, which can only represent one variant
-// at a time — so the other variant's fields (e.g. `points` for Empirical)
-// would silently fall off the URL. Keep it out of sync entirely until
-// upstream supports variant-shaped fields. Presets / the rate editor /
-// the JSON editor are the supported ways to set a schedule.
+// `infectionRate` is a tagged union — useUrlParams needs a codec to
+// round-trip variants whose shape differs from the default. We JSON-
+// encode Constant and Empirical in full, but for Library we elide the
+// (potentially huge) `rates` payload and rehydrate it from the bundled
+// `virtual:rateLibrary` on the way back in. A user-uploaded CSV is
+// session-local and doesn't round-trip — which is the expected
+// behavior for an upload.
+const infectionRateCodec: ParamCodec = {
+  serialize: (value) => {
+    const r = value as InfectionRate;
+    if (r.type === "library") return JSON.stringify({ type: "library" });
+    return JSON.stringify(r);
+  },
+  deserialize: (raw) => {
+    const parsed = JSON.parse(raw) as Partial<InfectionRate> & {
+      type: string;
+    };
+    if (parsed.type === "library") {
+      return {
+        type: "library",
+        rates: defaultLibrary.map(
+          (c) => c.map((p) => [...p]) as [number, number][],
+        ),
+      } as InfectionRate;
+    }
+    return parsed as InfectionRate;
+  },
+};
 const { reset } = useUrlParams(params, defaults, {
   router: useRouter(),
   route: useRoute(),
-  ignore: ["infectionRate"],
+  codecs: { infectionRate: infectionRateCodec },
 });
 
 // When `useEditor` is on, the sidebar shows a JSON/TOML/YAML editor

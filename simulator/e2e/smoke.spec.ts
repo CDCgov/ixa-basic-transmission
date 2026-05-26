@@ -80,6 +80,34 @@ test.describe("Simulator smoke", () => {
     ).toHaveValue("500");
   });
 
+  test("infectionRate round-trips through the URL across variants", async ({
+    page,
+  }) => {
+    await page.goto("/");
+    // Switching from Constant → Time-varying should write
+    // `infectionRate=<json>` into the URL (the tagged-union codec).
+    const rateType = page.getByRole("combobox", { name: "Infectiousness" });
+    await rateType.click();
+    await page.getByRole("option", { name: "Time-varying" }).click();
+    await expect(page).toHaveURL(/infectionRate=.*empirical/);
+
+    // Library mode serializes a compact `{"type":"library"}` tag — the
+    // bundled curves are restored on deserialize, so the URL stays short.
+    await rateType.click();
+    await page.getByRole("option", { name: "Library" }).click();
+    await expect(page).toHaveURL(/infectionRate=.*library/);
+    const libraryUrl = page.url();
+    expect(libraryUrl.length).toBeLessThan(500);
+
+    // Reload the page with that URL → editor comes back in Library mode
+    // and the 10-curve grid is restored from the bundled default.
+    await page.goto(libraryUrl);
+    await expect(rateType).toHaveText(/Library/);
+    await expect(
+      page.getByText(/Library of 10 per-person curves/i),
+    ).toBeVisible();
+  });
+
   test("Edit-as-code toggle reveals the JSON editor and round-trips a change", async ({
     page,
   }) => {
