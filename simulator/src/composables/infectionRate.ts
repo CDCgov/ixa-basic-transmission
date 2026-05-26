@@ -1,12 +1,17 @@
 // Tagged enum mirroring the Rust `InfectionRate` shape carried over the
 // wasm boundary:
 //   { type: "constant", value, duration }
-//   { type: "empirical", points: [[τ, rate], ...] }    (duration = points.last().τ)
-//   { type: "library", rates: [[[τ, rate], ...], ...] } (per-person curves)
+//   { type: "empirical", points: [[τ, rate], ...], scale }
+//   { type: "library", rates: [[[τ, rate], ...], ...], scale }
+//
+// For Empirical and Library the point values are **relative hazards** —
+// `scale` converts them to absolute rates by multiplication. Defaults
+// to 1.0 (the Rust side has `#[serde(default)]` so old JSON without a
+// scale field still deserializes).
 export type InfectionRate =
   | { type: "constant"; value: number; duration: number }
-  | { type: "empirical"; points: [number, number][] }
-  | { type: "library"; rates: [number, number][][] };
+  | { type: "empirical"; points: [number, number][]; scale: number }
+  | { type: "library"; rates: [number, number][][]; scale: number };
 
 // Used when switching Constant → Empirical from a UI with no curve yet.
 export const DEFAULT_EMPIRICAL_POINTS: [number, number][] = [
@@ -22,6 +27,11 @@ export const DEFAULT_CONSTANT: InfectionRate = {
   value: 0.5,
   duration: 3.0,
 };
+
+/// Calibration factor for the bundled library curves (from
+/// ixa-epi-isolation's production config). The CSV values are relative
+/// hazards; multiplied by this they land at a realistic mean R₀ ≈ 3.
+export const DEFAULT_LIBRARY_SCALE = 0.05;
 
 /// Trapezoidal area under one piecewise-linear curve.
 function curveArea(points: [number, number][]): number {
@@ -40,8 +50,8 @@ export function empiricalDuration(rate: InfectionRate): number {
   return rate.points[rate.points.length - 1][0];
 }
 
-/// Expected R₀: value · duration for Constant; trapezoidal area under
-/// the curve for Empirical; mean area across the library for Library.
+/// Expected R₀: value · duration for Constant; scale · area-under-curve
+/// for Empirical; scale · mean-area-across-curves for Library.
 export function expectedR0(rate: InfectionRate): number {
   if (rate.type === "constant") {
     return rate.value * rate.duration;
@@ -49,9 +59,9 @@ export function expectedR0(rate: InfectionRate): number {
   if (rate.type === "library") {
     if (!rate.rates.length) return 0;
     const total = rate.rates.reduce((sum, c) => sum + curveArea(c), 0);
-    return total / rate.rates.length;
+    return rate.scale * (total / rate.rates.length);
   }
-  return curveArea(rate.points);
+  return rate.scale * curveArea(rate.points);
 }
 
 /// Switch variant, preserving as much state as we can. Going to constant
@@ -72,6 +82,12 @@ export function withRateType(
       duration: empiricalDuration(current) || 3.0,
     };
   }
+  // Each curve variant has its own "natural" scale because the underlying
+  // data differs: the editor's seeded Empirical curve is already at
+  // absolute-rate scale (1.0), while the bundled Library curves are
+  // relative hazards calibrated against ixa-epi-isolation
+  // (DEFAULT_LIBRARY_SCALE = 0.05). Switching variants therefore swaps
+  // the scale too — preserving the old one would give the wrong R₀.
   if (next === "library") {
     const rates =
       defaultLibrary && defaultLibrary.length
@@ -79,11 +95,12 @@ export function withRateType(
         : [
             DEFAULT_EMPIRICAL_POINTS.map((p) => [...p]) as [number, number][],
           ];
-    return { type: "library", rates };
+    return { type: "library", rates, scale: DEFAULT_LIBRARY_SCALE };
   }
   return {
     type: "empirical",
     points: DEFAULT_EMPIRICAL_POINTS.map((p) => [...p]) as [number, number][],
+    scale: 1.0,
   };
 }
 
@@ -104,7 +121,7 @@ export function withPointUpdated(
         : [...p]) as [number, number],
   );
   points.sort((a, b) => a[0] - b[0]);
-  return { type: "empirical", points };
+  return { type: "empirical", points, scale: rate.scale };
 }
 
 /// Append a new point 1 time unit past the current last, with the same
@@ -118,7 +135,7 @@ export function withPointAdded(rate: InfectionRate): InfectionRate {
     newPoint,
   ];
   points.sort((a, b) => a[0] - b[0]);
-  return { type: "empirical", points };
+  return { type: "empirical", points, scale: rate.scale };
 }
 
 /// Remove the point at index `i`. No-op if it would leave fewer than 2
@@ -129,7 +146,22 @@ export function withPointRemoved(rate: InfectionRate, i: number): InfectionRate 
   const points = rate.points
     .filter((_, idx) => idx !== i)
     .map((p) => [...p] as [number, number]);
-  return { type: "empirical", points };
+  return { type: "empirical", points, scale: rate.scale };
+}
+
+/// Defensive normalizer for InfectionRate values that crossed an
+/// external boundary (URL deserialization, preset load, hand-written
+/// JSON in the code editor). Older payloads may not include `scale`;
+/// the Rust side defaults to 1.0 via `#[serde(default)]`, so we mirror
+/// that here so all downstream code can assume `scale` is a finite
+/// number.
+export function normalizeInfectionRate(rate: InfectionRate): InfectionRate {
+  if (rate.type === "constant") return rate;
+  const scale = Number.isFinite(rate.scale) ? rate.scale : 1.0;
+  if (rate.type === "empirical") {
+    return { type: "empirical", points: rate.points, scale };
+  }
+  return { type: "library", rates: rate.rates, scale };
 }
 
 /// Parse a CSV string of the shape produced by R's `write.csv` / the

@@ -12,6 +12,11 @@ nSimulations = 20
 # the bundled `config/rates/library_empirical_rate_fns.csv` at build/dev
 # time. The frontend's RateEditor can then page through the curves and
 # users can swap in their own CSV.
+#
+# `scale` matches ixa-epi-isolation's production calibration: the CSV
+# values are relative hazards, and this factor converts them to absolute
+# transmission rates (mean R₀ across the library lands near 3).
 [parameters.infectionRate]
 type = "library"
 rates = []
+scale = 0.05

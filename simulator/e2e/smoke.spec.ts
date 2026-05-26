@@ -91,11 +91,16 @@ test.describe("Simulator smoke", () => {
     await page.getByRole("option", { name: "Time-varying" }).click();
     await expect(page).toHaveURL(/infectionRate=.*empirical/);
 
-    // Library mode serializes a compact `{"type":"library"}` tag — the
-    // bundled curves are restored on deserialize, so the URL stays short.
+    // Library mode serializes a compact `{"type":"library","scale":…}`
+    // tag — the bundled curves are restored on deserialize, so the URL
+    // stays short while `scale` (the calibration) round-trips.
     await rateType.click();
     await page.getByRole("option", { name: "Library" }).click();
     await expect(page).toHaveURL(/infectionRate=.*library/);
+    // The default library scale (0.05, matching ixa-epi-isolation) must
+    // appear in the encoded URL so it doesn't fall back to 1.0 on
+    // reload.
+    await expect(page).toHaveURL(/scale.*0\.05/);
     const libraryUrl = page.url();
     expect(libraryUrl.length).toBeLessThan(500);
 

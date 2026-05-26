@@ -7,13 +7,18 @@ use serde::{Deserialize, Serialize};
 /// curve's support.
 ///
 /// - `Constant { value, duration }`: fixed rate, recovery is
-///   `Exp(1/duration)`.
-/// - `Empirical { points }`: piecewise-linear infectiousness curve in
-///   τ-space. Rate is 0 outside the anchor range; recovery is
-///   deterministic at τ = `points.last().0`.
-/// - `Library { rates }`: population of empirical curves. Each person
-///   gets one assigned at setup and keeps it for their whole infectious
-///   period (per-person heterogeneity). Empty curves are rejected.
+///   `Exp(1/duration)`. `value` is an absolute hazard rate.
+/// - `Empirical { points, scale }`: piecewise-linear infectiousness curve
+///   in τ-space. Rate is 0 outside the anchor range; recovery is
+///   deterministic at τ = `points.last().0`. **The point values are
+///   relative hazards** (in the ixa-epi-isolation sense) — `scale`
+///   converts them to absolute rates by multiplication. Defaults to 1.0
+///   so simple curves act as absolute rates if the modeler hasn't
+///   calibrated.
+/// - `Library { rates, scale }`: population of empirical curves with a
+///   single shared scale. Each person gets one curve assigned at setup
+///   and keeps it for their whole infectious period (per-person
+///   heterogeneity). Empty curve list is rejected.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(
     tag = "type",
@@ -21,9 +26,24 @@ use serde::{Deserialize, Serialize};
     rename_all_fields = "camelCase"
 )]
 pub enum InfectionRate {
-    Constant { value: f64, duration: f64 },
-    Empirical { points: Vec<[f64; 2]> },
-    Library { rates: Vec<Vec<[f64; 2]>> },
+    Constant {
+        value: f64,
+        duration: f64,
+    },
+    Empirical {
+        points: Vec<[f64; 2]>,
+        #[serde(default = "default_scale")]
+        scale: f64,
+    },
+    Library {
+        rates: Vec<Vec<[f64; 2]>>,
+        #[serde(default = "default_scale")]
+        scale: f64,
+    },
+}
+
+fn default_scale() -> f64 {
+    1.0
 }
 
 /// Cumulative hazard `Λ(τ)` for a single piecewise-linear empirical
@@ -126,6 +146,15 @@ pub fn rate_at_curve(points: &[[f64; 2]], t: f64) -> f64 {
     lo[1] + alpha * (hi[1] - lo[1])
 }
 
+fn validate_scale(scale: f64) -> Result<(), String> {
+    if !scale.is_finite() || scale < 0.0 {
+        return Err(format!(
+            "infection_rate scale must be a finite non-negative number, got {scale}"
+        ));
+    }
+    Ok(())
+}
+
 fn validate_empirical_points(points: &[[f64; 2]]) -> Result<(), String> {
     if points.is_empty() {
         return Err("infection_rate empirical schedule must have at least one point".to_string());
@@ -166,7 +195,7 @@ impl InfectionRate {
     pub fn rate_at(&self, t: f64) -> f64 {
         match self {
             InfectionRate::Constant { value, .. } => *value,
-            InfectionRate::Empirical { points } => rate_at_curve(points, t),
+            InfectionRate::Empirical { points, scale } => scale * rate_at_curve(points, t),
             InfectionRate::Library { .. } => 0.0,
         }
     }
@@ -181,7 +210,7 @@ impl InfectionRate {
         match self {
             InfectionRate::Constant { value, .. } if t > 0.0 => value * t,
             InfectionRate::Constant { .. } => 0.0,
-            InfectionRate::Empirical { points } => empirical_cum_rate(points, t),
+            InfectionRate::Empirical { points, scale } => scale * empirical_cum_rate(points, t),
             InfectionRate::Library { .. } => {
                 panic!("cum_rate called on Library variant; use the per-person curve")
             }
@@ -207,7 +236,12 @@ impl InfectionRate {
                     Some(c / value)
                 }
             }
-            InfectionRate::Empirical { points } => empirical_inverse_cum_rate(points, c),
+            InfectionRate::Empirical { points, scale } => {
+                if *scale <= 0.0 {
+                    return None;
+                }
+                empirical_inverse_cum_rate(points, c / scale)
+            }
             InfectionRate::Library { .. } => {
                 panic!("inverse_cum_rate called on Library variant; use the per-person curve")
             }
@@ -222,8 +256,8 @@ impl InfectionRate {
     pub fn duration(&self) -> f64 {
         match self {
             InfectionRate::Constant { duration, .. } => *duration,
-            InfectionRate::Empirical { points } => empirical_curve_duration(points),
-            InfectionRate::Library { rates } => {
+            InfectionRate::Empirical { points, .. } => empirical_curve_duration(points),
+            InfectionRate::Library { rates, .. } => {
                 if rates.is_empty() {
                     return 0.0;
                 }
@@ -247,8 +281,11 @@ impl InfectionRate {
                     ));
                 }
             }
-            InfectionRate::Empirical { points } => validate_empirical_points(points)?,
-            InfectionRate::Library { rates } => {
+            InfectionRate::Empirical { points, scale } => {
+                validate_empirical_points(points)?;
+                validate_scale(*scale)?;
+            }
+            InfectionRate::Library { rates, scale } => {
                 if rates.is_empty() {
                     return Err(
                         "infection_rate library must contain at least one curve".to_string()
@@ -258,6 +295,7 @@ impl InfectionRate {
                     validate_empirical_points(curve)
                         .map_err(|e| format!("infection_rate library curve #{i}: {e}"))?;
                 }
+                validate_scale(*scale)?;
             }
         }
         Ok(())
@@ -315,7 +353,10 @@ mod tests {
 
     #[test]
     fn empirical_must_be_non_empty() {
-        let r = InfectionRate::Empirical { points: vec![] };
+        let r = InfectionRate::Empirical {
+            points: vec![],
+            scale: 1.0,
+        };
         assert!(r.validate().is_err());
     }
 
@@ -323,6 +364,7 @@ mod tests {
     fn empirical_must_be_sorted() {
         let r = InfectionRate::Empirical {
             points: vec![[0.0, 0.5], [10.0, 0.2], [5.0, 0.1]],
+            scale: 1.0,
         };
         assert!(r.validate().is_err());
     }
@@ -331,6 +373,7 @@ mod tests {
     fn empirical_rejects_negative_first_time() {
         let r = InfectionRate::Empirical {
             points: vec![[-1.0, 0.5], [10.0, 0.5]],
+            scale: 1.0,
         };
         assert!(r.validate().is_err());
     }
@@ -339,6 +382,7 @@ mod tests {
     fn empirical_rejects_negative_rate() {
         let r = InfectionRate::Empirical {
             points: vec![[0.0, 0.5], [10.0, -0.1]],
+            scale: 1.0,
         };
         assert!(r.validate().is_err());
     }
@@ -357,6 +401,7 @@ mod tests {
     fn rate_at_empirical_interpolates() {
         let r = InfectionRate::Empirical {
             points: vec![[0.0, 0.2], [10.0, 0.8], [20.0, 0.4]],
+            scale: 1.0,
         };
         // Outside the anchor range: rate is 0 (latent / recovered).
         assert_eq!(r.rate_at(-5.0), 0.0);
@@ -386,6 +431,7 @@ mod tests {
         // λ(τ) = τ/10 on [0, 10] (linear ramp 0 → 1), then 0 afterwards.
         let r = InfectionRate::Empirical {
             points: vec![[0.0, 0.0], [10.0, 1.0]],
+            scale: 1.0,
         };
         // ∫₀⁵ (τ/10) dτ = 25/20 = 1.25
         assert!((r.cum_rate(5.0) - 1.25).abs() < 1e-12);
@@ -411,6 +457,7 @@ mod tests {
     fn inverse_cum_rate_roundtrips_empirical_linear() {
         let r = InfectionRate::Empirical {
             points: vec![[0.0, 0.0], [10.0, 2.0]],
+            scale: 1.0,
         };
         for c in [0.1, 1.0, 5.0, 9.0] {
             let t = r.inverse_cum_rate(c).unwrap();
@@ -423,6 +470,7 @@ mod tests {
         // High rate then low rate; tests segment-walking.
         let r = InfectionRate::Empirical {
             points: vec![[0.0, 2.0], [5.0, 2.0], [5.001, 0.5], [20.0, 0.5]],
+            scale: 1.0,
         };
         // Total integral ≈ 2·5 + (2+0.5)/2·0.001 + 0.5·15 ≈ 17.5; check
         // values within that range.
@@ -441,6 +489,7 @@ mod tests {
         // ramp-up and ramp-down sides.
         let r = InfectionRate::Empirical {
             points: vec![[0.0, 0.0], [1.0, 1.0], [2.0, 2.0], [3.0, 1.0], [4.0, 0.0]],
+            scale: 1.0,
         };
         // cum_rate(1.5): full segment [0,1] = 0.5, partial [1,1.5] with
         // λ(1.5)=1.5 → trapezoid (1+1.5)/2 · 0.5 = 0.625. Total 1.125.
@@ -460,6 +509,7 @@ mod tests {
         // the plateau.
         let r = InfectionRate::Empirical {
             points: vec![[0.0, 1.0], [1.0, 1.0], [2.0, 0.0], [3.0, 0.0], [4.0, 1.0]],
+            scale: 1.0,
         };
         // cum at anchors: 0, 1.0, 1.5, 1.5, 2.0
         assert!((r.cum_rate(2.0) - 1.5).abs() < 1e-12);
@@ -484,6 +534,7 @@ mod tests {
 
         let trailing_zero = InfectionRate::Empirical {
             points: vec![[0.0, 1.0], [5.0, 0.0]],
+            scale: 1.0,
         };
         // Total area on [0, 5] = 0.5 · 1.0 · 5.0 = 2.5; anything beyond is unreachable.
         assert_eq!(trailing_zero.inverse_cum_rate(3.0), None);
@@ -491,9 +542,65 @@ mod tests {
     }
 
     #[test]
+    fn empirical_scale_multiplies_cum_rate() {
+        // λ(τ) = 1 on [0, 10], scale = 0.5 → effective rate 0.5,
+        // cum_rate(5) = 0.5 · 5 = 2.5 (raw cum is 5.0, halved).
+        let r = InfectionRate::Empirical {
+            points: vec![[0.0, 1.0], [10.0, 1.0]],
+            scale: 0.5,
+        };
+        assert!((r.cum_rate(5.0) - 2.5).abs() < 1e-12);
+        // Inverse-CDF: target c = 2.5 ⇒ τ = 5.0 (since raw_cum(τ) =
+        // c/scale = 5.0 ⇒ τ=5).
+        let t = r.inverse_cum_rate(2.5).unwrap();
+        assert!((t - 5.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn empirical_scale_zero_makes_curve_unreachable() {
+        let r = InfectionRate::Empirical {
+            points: vec![[0.0, 1.0], [10.0, 1.0]],
+            scale: 0.0,
+        };
+        assert_eq!(r.cum_rate(5.0), 0.0);
+        // Any positive target is unreachable when scale=0.
+        assert_eq!(r.inverse_cum_rate(0.1), None);
+    }
+
+    #[test]
+    fn empirical_rejects_negative_scale() {
+        let r = InfectionRate::Empirical {
+            points: vec![[0.0, 0.5], [10.0, 0.5]],
+            scale: -0.1,
+        };
+        assert!(r.validate().is_err());
+    }
+
+    #[test]
+    fn library_rejects_negative_scale() {
+        let r = InfectionRate::Library {
+            rates: vec![vec![[0.0, 0.5], [10.0, 0.5]]],
+            scale: -1.0,
+        };
+        assert!(r.validate().is_err());
+    }
+
+    #[test]
+    fn empirical_serde_default_scale_is_one() {
+        // Wire shape without `scale` should deserialize with scale=1.0.
+        let json = r#"{"type":"empirical","points":[[0.0,0.5],[10.0,0.5]]}"#;
+        let r: InfectionRate = serde_json::from_str(json).unwrap();
+        match r {
+            InfectionRate::Empirical { scale, .. } => assert_eq!(scale, 1.0),
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
     fn empirical_serde_roundtrip_json() {
         let r = InfectionRate::Empirical {
             points: vec![[0.0, 0.5], [20.0, 0.1]],
+            scale: 1.0,
         };
         let json = serde_json::to_string(&r).unwrap();
         let back: InfectionRate = serde_json::from_str(&json).unwrap();

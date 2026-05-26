@@ -29,6 +29,12 @@ pub struct RateLibraryData {
     pub curves: EntityMap<Rate, Vec<[f64; 2]>>,
 }
 
+impl Default for RateLibraryData {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RateLibraryData {
     pub fn new() -> Self {
         Self {

@@ -62,7 +62,10 @@ mod tests {
         // Sanity: an invalid rate makes Parameters invalid too. Detailed
         // rate-validation cases live in `rate::tests`.
         let p = Parameters {
-            infection_rate: InfectionRate::Empirical { points: vec![] },
+            infection_rate: InfectionRate::Empirical {
+                points: vec![],
+                scale: 1.0,
+            },
             ..Parameters::default()
         };
         assert!(p.validate().is_err());

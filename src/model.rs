@@ -77,7 +77,10 @@ impl InfectionLoop for Context {
         // person's assigned curve.
         let t_inf = self.get_property::<_, InfectionTime>(p).0;
         let recovery_dt = match self.get_params().infection_rate {
-            InfectionRate::Empirical { ref points } => empirical_curve_duration(points),
+            // Recovery time is determined by the curve's support — the
+            // `scale` factor multiplies the rate at each anchor, not the
+            // anchor times, so it doesn't shift the recovery boundary.
+            InfectionRate::Empirical { ref points, .. } => empirical_curve_duration(points),
             InfectionRate::Constant { duration, .. } => {
                 self.sample_distr(RecoveryRng, Exp::new(1.0 / duration).unwrap())
             }
@@ -111,11 +114,22 @@ impl InfectionLoop for Context {
             InfectionRate::Library { .. }
         );
         let next_elapsed: Option<f64> = if is_library {
+            // `scale` converts the library's relative hazards into
+            // absolute rates: cum_rate is multiplied by scale, so to
+            // invert we divide the target back out. A zero scale means
+            // no transmission — bail.
+            let scale = match &self.get_params().infection_rate {
+                InfectionRate::Library { scale, .. } => *scale,
+                _ => unreachable!(),
+            };
+            if scale <= 0.0 {
+                return;
+            }
             let assigned = self.get_property::<_, AssignedRate>(infector);
             let curve = self.get_data(RateLibraryPlugin).curve(assigned);
-            let cum_now = empirical_cum_rate(curve, elapsed);
+            let cum_now = scale * empirical_cum_rate(curve, elapsed);
             let e: f64 = self.sample_distr(InfectionRng, Exp::new(1.0).unwrap());
-            empirical_inverse_cum_rate(curve, cum_now + e)
+            empirical_inverse_cum_rate(curve, (cum_now + e) / scale)
         } else {
             let rate = &self.get_params().infection_rate;
             let cum_now = rate.cum_rate(elapsed);
@@ -165,7 +179,7 @@ impl InfectionLoop for Context {
         // fine — the hot path borrows from the EntityMap and doesn't
         // allocate.
         let library_size: usize =
-            if let InfectionRate::Library { rates } = &self.get_params().infection_rate {
+            if let InfectionRate::Library { rates, .. } = &self.get_params().infection_rate {
                 let curves: Vec<Vec<[f64; 2]>> = rates.clone();
                 let mut ids: Vec<crate::rate_library::RateId> = Vec::with_capacity(curves.len());
                 for _ in 0..curves.len() {
@@ -216,6 +230,19 @@ pub fn run(params: Parameters) -> ModelStats {
     ctx.setup();
     ctx.execute();
     ctx.get_stats().clone()
+}
+
+/// Bench-only helper: build a `Context` and run `setup` but **not**
+/// `execute`. Splitting this out lets the benchmark harness isolate
+/// per-person rate assignment + entity creation from the transmission
+/// loop's cost.
+#[doc(hidden)]
+pub fn setup_only(params: Parameters) {
+    params.validate().expect("invalid Parameters");
+    let mut ctx = Context::new();
+    ctx.set_global_property_value(Params, params).unwrap();
+    ctx.setup();
+    drop(ctx);
 }
 
 #[cfg(test)]
@@ -362,6 +389,7 @@ mod tests {
             let params = Parameters {
                 infection_rate: InfectionRate::Empirical {
                     points: vec![[0.0, a], [max_time, a + b * max_time]],
+                    scale: 1.0,
                 },
                 population: 2,
                 initial_infections: 1,
@@ -597,6 +625,7 @@ mod tests {
             let params = Parameters {
                 infection_rate: InfectionRate::Empirical {
                     points: vec![[0.0, lambda], [max_time, lambda]],
+                    scale: 1.0,
                 },
                 population,
                 initial_infections: 1,
@@ -653,6 +682,7 @@ mod tests {
                         [switch + eps, lambda_lo],
                         [max_time, lambda_lo],
                     ],
+                    scale: 1.0,
                 },
                 population,
                 initial_infections: 1,
@@ -691,6 +721,7 @@ mod tests {
             // Recovery is at the last anchor's time (t=1.0).
             infection_rate: InfectionRate::Empirical {
                 points: vec![[0.0, 1.5], [1.0, 1.5]],
+                scale: 1.0,
             },
             population: 2000,
             initial_infections: 5,
@@ -741,6 +772,7 @@ mod tests {
             let p_lib = Parameters {
                 infection_rate: InfectionRate::Library {
                     rates: vec![curve.clone()],
+                    scale: 1.0,
                 },
                 population: 200,
                 initial_infections: 3,
@@ -750,6 +782,7 @@ mod tests {
             let p_emp = Parameters {
                 infection_rate: InfectionRate::Empirical {
                     points: curve.clone(),
+                    scale: 1.0,
                 },
                 ..p_lib.clone()
             };
@@ -776,6 +809,7 @@ mod tests {
         let params = Parameters {
             infection_rate: InfectionRate::Library {
                 rates: library.clone(),
+                scale: 1.0,
             },
             population: 50,
             initial_infections: 0,
@@ -806,6 +840,7 @@ mod tests {
         let params = Parameters {
             infection_rate: InfectionRate::Library {
                 rates: vec![short.clone(), long.clone()],
+                scale: 1.0,
             },
             population: 200,
             initial_infections: 200,

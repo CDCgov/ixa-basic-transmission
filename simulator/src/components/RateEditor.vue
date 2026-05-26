@@ -12,6 +12,7 @@ import {
   withPointAdded,
   withPointRemoved,
   parseRateLibraryCsv,
+  DEFAULT_LIBRARY_SCALE,
 } from "../composables/infectionRate";
 
 const props = defineProps<{
@@ -63,6 +64,22 @@ const empiricalPoints = computed<[number, number][]>(() =>
 );
 
 const empiricalRecoveryAt = computed(() => empiricalDuration(props.modelValue));
+
+// Shared `scale` two-way binding for both Empirical and Library variants
+// (Constant has no scale — the slider isn't mounted there).
+const rateScale = computed<number>({
+  get: () =>
+    props.modelValue.type === "empirical" || props.modelValue.type === "library"
+      ? props.modelValue.scale
+      : 1,
+  set: (s) => {
+    if (props.modelValue.type === "empirical") {
+      emit("update:modelValue", { ...props.modelValue, scale: s });
+    } else if (props.modelValue.type === "library") {
+      emit("update:modelValue", { ...props.modelValue, scale: s });
+    }
+  },
+});
 
 const libraryRates = computed<[number, number][][]>(() =>
   props.modelValue.type === "library" ? props.modelValue.rates : [],
@@ -142,7 +159,9 @@ async function onFile(event: Event) {
       throw new Error("library is empty after parsing");
     }
     page.value = 0;
-    emit("update:modelValue", { type: "library", rates });
+    const scale =
+      props.modelValue.type === "library" ? props.modelValue.scale : 1.0;
+    emit("update:modelValue", { type: "library", rates, scale });
   } catch (e) {
     uploadError.value = (e as Error).message || "failed to parse CSV";
   } finally {
@@ -151,6 +170,8 @@ async function onFile(event: Event) {
 }
 
 function restoreDefaultLibrary() {
+  // "Restore default" resets the curves AND the calibration to the
+  // bundled ixa-epi-isolation values.
   page.value = 0;
   uploadError.value = null;
   emit("update:modelValue", {
@@ -158,6 +179,7 @@ function restoreDefaultLibrary() {
     rates: defaultLibrary.map((c) =>
       c.map((p) => [...p] as [number, number]),
     ),
+    scale: DEFAULT_LIBRARY_SCALE,
   });
 }
 
@@ -219,6 +241,19 @@ const libraryYMax = computed(() => {
 function watchSize() {
   clampPage();
 }
+
+// Tooltip formatters: τ shows up to 2 decimal places; rate shows up to
+// 3 (curves often have values < 0.1 so we want enough resolution).
+function formatTau(v: unknown): string {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return "—";
+  return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
+}
+function formatRate(v: unknown): string {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return "—";
+  return n.toLocaleString(undefined, { maximumFractionDigits: 3 });
+}
 </script>
 
 <template>
@@ -251,7 +286,18 @@ function watchSize() {
   <template v-else-if="modelValue.type === 'empirical'">
     <p class="schedule-hint">
       Time-varying curve, recovery at τ = {{ empiricalRecoveryAt }}.
+      Point values are relative hazards; multiply by Scale for the
+      absolute rate.
     </p>
+    <NumberInput
+      v-model="rateScale"
+      label="Scale"
+      slider
+      :live="live"
+      :min="0"
+      :max="2"
+      :step="0.01"
+    />
     <div class="points-editor">
       <div class="points-header">
         <span>τ (time since infected)</span>
@@ -288,8 +334,18 @@ function watchSize() {
   <template v-else>
     <p class="schedule-hint">
       Library of {{ libraryCount }} per-person curves. Each person draws
-      one uniformly at setup.
+      one uniformly at setup. Curve values are relative hazards;
+      multiply by Scale for the absolute rate.
     </p>
+    <NumberInput
+      v-model="rateScale"
+      label="Scale"
+      slider
+      :live="live"
+      :min="0"
+      :max="0.2"
+      :step="0.001"
+    />
     <div class="library-actions">
       <Button variant="secondary" @click="triggerUpload">Upload CSV</Button>
       <Button variant="secondary" @click="restoreDefaultLibrary"
@@ -319,7 +375,20 @@ function watchSize() {
           :menu="false"
           :axis-label-style="{ fontSize: 9 }"
           :tick-label-style="{ fontSize: 9 }"
-        />
+          tooltip-trigger="hover"
+        >
+          <template #tooltip="{ xLabel, values }">
+            <div class="curve-tooltip">
+              <div v-if="xLabel != null" class="curve-tooltip-label">
+                τ = {{ formatTau(xLabel) }}
+              </div>
+              <div class="curve-tooltip-row">
+                <span>rate</span>
+                <span>{{ formatRate(values[0]?.value) }}</span>
+              </div>
+            </div>
+          </template>
+        </LineChart>
       </div>
     </div>
     <div v-if="pageCount > 1" class="library-pager">
@@ -350,7 +419,20 @@ function watchSize() {
       y-label="rate"
       :axis-label-style="{ fontSize: 10 }"
       :tick-label-style="{ fontSize: 10 }"
-    />
+      tooltip-trigger="hover"
+    >
+      <template #tooltip="{ xLabel, values }">
+        <div class="curve-tooltip">
+          <div v-if="xLabel != null" class="curve-tooltip-label">
+            τ = {{ formatTau(xLabel) }}
+          </div>
+          <div class="curve-tooltip-row">
+            <span>rate</span>
+            <span>{{ formatRate(values[0]?.value) }}</span>
+          </div>
+        </div>
+      </template>
+    </LineChart>
   </div>
 </template>
 
@@ -422,5 +504,21 @@ function watchSize() {
 .library-page-info {
   font-size: var(--font-size-sm, 0.875rem);
   color: var(--cfa-color-text-muted, #666);
+}
+.curve-tooltip {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  font-size: 0.6875rem;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+.curve-tooltip-label {
+  font-weight: 500;
+}
+.curve-tooltip-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5em;
 }
 </style>

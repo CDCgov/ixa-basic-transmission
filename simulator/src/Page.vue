@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { reactive, computed, ref, toRef } from "vue";
+import { shallowReactive, computed, ref, toRef } from "vue";
 import { useRouter, useRoute } from "vue-router";
 import {
   NumberInput,
@@ -17,6 +17,7 @@ import RateEditor from "./components/RateEditor.vue";
 import {
   type InfectionRate,
   DEFAULT_CONSTANT,
+  normalizeInfectionRate,
 } from "./composables/infectionRate";
 import { useSimulationRunner } from "./composables/useSimulationRunner";
 import { useChartData } from "./composables/useChartData";
@@ -29,7 +30,25 @@ const defaults = {
   maxTime: 100,
   nSimulations: 20,
 };
-const params = reactive(structuredClone(defaults));
+type Params = typeof defaults;
+
+// `shallowReactive` (not `reactive`) so nested values like
+// `params.infectionRate.rates` stay as plain arrays. Otherwise Vue
+// wraps them in deep reactive Proxies and `useUrlParams`'s internal
+// `structuredClone(toRaw(params))` throws DataCloneError on Library
+// payloads.
+//
+// **Rule**: only ever replace whole top-level keys — never mutate a
+// nested field in place (`params.infectionRate.scale = 0.05` is a
+// silent no-op for reactivity and a footgun for the shape above). The
+// allowed write paths are:
+//   1. `v-model="params.foo"` in the template (top-level keys only).
+//   2. `setParam(key, newValue)` below — one grep target for all
+//      non-v-model writes.
+const params = shallowReactive(structuredClone(defaults));
+function setParam<K extends keyof Params>(key: K, value: Params[K]): void {
+  params[key] = value;
+}
 
 // `infectionRate` is a tagged union — useUrlParams needs a codec to
 // round-trip variants whose shape differs from the default. We JSON-
@@ -41,22 +60,28 @@ const params = reactive(structuredClone(defaults));
 const infectionRateCodec: ParamCodec = {
   serialize: (value) => {
     const r = value as InfectionRate;
-    if (r.type === "library") return JSON.stringify({ type: "library" });
+    // For Library, drop the (potentially huge) `rates` payload but
+    // keep `scale` so a user's calibration round-trips through the URL.
+    if (r.type === "library") {
+      return JSON.stringify({ type: "library", scale: r.scale });
+    }
     return JSON.stringify(r);
   },
   deserialize: (raw) => {
     const parsed = JSON.parse(raw) as Partial<InfectionRate> & {
       type: string;
+      scale?: number;
     };
     if (parsed.type === "library") {
-      return {
+      return normalizeInfectionRate({
         type: "library",
         rates: defaultLibrary.map(
           (c) => c.map((p) => [...p]) as [number, number][],
         ),
-      } as InfectionRate;
+        scale: parsed.scale ?? 1.0,
+      });
     }
-    return parsed as InfectionRate;
+    return normalizeInfectionRate(parsed as InfectionRate);
   },
 };
 const { reset } = useUrlParams(params, defaults, {
@@ -118,14 +143,20 @@ const selectedPresetDescription = computed<string | undefined>(
 function applyPreset(id: string) {
   const preset = presets.find((p) => p.id === id);
   if (!preset) return;
-  for (const key of Object.keys(defaults) as (keyof typeof defaults)[]) {
+  for (const key of Object.keys(defaults) as (keyof Params)[]) {
     const v = preset.parameters[key];
     if (v === undefined) continue;
     if (typeof v === "number") {
-      if (Number.isFinite(v)) (params as Record<string, unknown>)[key] = v;
+      if (Number.isFinite(v)) setParam(key, v as Params[typeof key]);
     } else if (typeof v === "object" && v !== null) {
-      // Clone so subsequent edits don't mutate the preset.
-      (params as Record<string, unknown>)[key] = structuredClone(v);
+      // Clone so subsequent edits don't mutate the preset. Normalize
+      // infectionRate so older presets without `scale` get scale=1.0.
+      const cloned = structuredClone(v);
+      const next =
+        key === "infectionRate"
+          ? normalizeInfectionRate(cloned as InfectionRate)
+          : cloned;
+      setParam(key, next as Params[typeof key]);
     }
   }
 }
@@ -135,14 +166,19 @@ function applyParamUpdate(next: ParamEditorValue) {
   // type so a string "0.5" from a hand-typed JSON value still flows
   // through to the wasm model as a number. Object-shaped fields (like
   // `infectionRate`) are accepted as-is when the JSON shape is valid.
-  for (const key of Object.keys(defaults) as (keyof typeof defaults)[]) {
+  for (const key of Object.keys(defaults) as (keyof Params)[]) {
     if (!(key in next)) continue;
     const raw = next[key];
     if (typeof defaults[key] === "number") {
       const n = Number(raw);
-      if (Number.isFinite(n)) (params as Record<string, unknown>)[key] = n;
+      if (Number.isFinite(n)) setParam(key, n as Params[typeof key]);
     } else if (typeof raw === "object" && raw !== null) {
-      (params as Record<string, unknown>)[key] = structuredClone(raw);
+      const cloned = structuredClone(raw);
+      const nextVal =
+        key === "infectionRate"
+          ? normalizeInfectionRate(cloned as InfectionRate)
+          : cloned;
+      setParam(key, nextVal as Params[typeof key]);
     }
   }
 }

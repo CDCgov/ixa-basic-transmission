@@ -1,9 +1,14 @@
-mod model;
-mod parameters;
-mod person;
-mod rate;
-mod rate_library;
-mod stats;
+// Modules are `pub` so the `benches/` harness can construct
+// `Parameters` and call `model::run` directly. The wasm-exposed surface
+// is still just `simulate` / `simulate_batch` (the `#[wasm_bindgen]`
+// items further down); nothing inside these modules is re-exported via
+// wasm-bindgen.
+pub mod model;
+pub mod parameters;
+pub mod person;
+pub mod rate;
+pub mod rate_library;
+pub mod stats;
 
 use cfasim_model::{model_outputs, ModelOutput};
 use serde::Deserialize;

@@ -4,7 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [lib]
-crate-type = ["cdylib"]
+# `rlib` lets `benches/` link against the crate; the wasm shim is still
+# built from the `cdylib` artifact and is unaffected.
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 ixa = "2.0.0-beta2.4"
@@ -13,3 +15,10 @@ cfasim-model = "0.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 rand_distr = "0.5"
+
+[dev-dependencies]
+criterion = "0.5"
+
+[[bench]]
+name = "run"
+harness = false
