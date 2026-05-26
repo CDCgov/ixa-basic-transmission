@@ -2,6 +2,7 @@
 import { computed } from "vue";
 import { NumberInput, Button, SelectBox } from "cfasim-ui/components";
 import type { SelectOption } from "cfasim-ui/components";
+import { LineChart } from "cfasim-ui/charts";
 import {
   type InfectionRate,
   empiricalDuration,
@@ -76,6 +77,33 @@ function addPoint() {
 function removePoint(i: number) {
   emit("update:modelValue", withPointRemoved(props.modelValue, i));
 }
+
+// Single-series preview tracing λ(τ): a flat segment for Constant,
+// linear interpolation through anchor points for Empirical. The x array
+// is monotonic by construction (empirical helpers auto-sort), so the
+// LineChart draws it directly without resampling.
+const previewSeries = computed(() => {
+  const rate = props.modelValue;
+  if (rate.type === "constant") {
+    return [
+      {
+        x: [0, rate.duration],
+        data: [rate.value, rate.value],
+        color: "#2563eb",
+        strokeWidth: 2,
+      },
+    ];
+  }
+  return [
+    {
+      x: rate.points.map((p) => p[0]),
+      data: rate.points.map((p) => p[1]),
+      color: "#2563eb",
+      strokeWidth: 2,
+      dots: true,
+    },
+  ];
+});
 </script>
 
 <template>
@@ -142,6 +170,18 @@ function removePoint(i: number) {
       <Button variant="secondary" @click="addPoint">Add point</Button>
     </div>
   </template>
+  <div class="rate-preview">
+    <LineChart
+      :series="previewSeries"
+      :height="120"
+      :y-min="0"
+      :menu="false"
+      x-label="τ (days since infected)"
+      y-label="rate"
+      :axis-label-style="{ fontSize: 10 }"
+      :tick-label-style="{ fontSize: 10 }"
+    />
+  </div>
 </template>
 
 <style scoped>
@@ -167,5 +207,8 @@ function removePoint(i: number) {
   grid-template-columns: 1fr 1fr 2em;
   gap: 0.4em;
   align-items: center;
+}
+.rate-preview {
+  margin-top: 0.5em;
 }
 </style>
