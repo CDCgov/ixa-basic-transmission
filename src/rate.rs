@@ -172,6 +172,62 @@ pub fn rate_at_curve(points: &[[f64; 2]], t: f64) -> f64 {
     lo[1] + alpha * (hi[1] - lo[1])
 }
 
+/// Per-person effective rate. Resolved from `InfectionRate` plus any
+/// per-person state (a `Gamma` person's `DrawnRate`, a `Library`
+/// person's assigned curve). Once resolved, inverse-CDF sampling needs
+/// only this primitive — no further variant dispatch — so the
+/// transmission loop is one branch instead of four.
+#[derive(Debug, Clone, Copy)]
+pub enum EffectiveRate<'a> {
+    Constant { value: f64 },
+    Empirical { curve: &'a [[f64; 2]], scale: f64 },
+}
+
+impl EffectiveRate<'_> {
+    /// `Λ(τ)` for the per-person effective rate.
+    #[inline]
+    pub fn cum_rate(&self, t: f64) -> f64 {
+        match *self {
+            EffectiveRate::Constant { value } => {
+                if t > 0.0 {
+                    value * t
+                } else {
+                    0.0
+                }
+            }
+            EffectiveRate::Empirical { curve, scale } => scale * empirical_cum_rate(curve, t),
+        }
+    }
+
+    /// Solves `cum_rate(τ) = c`. `None` for `c < 0`, for a non-positive
+    /// or non-finite constant rate (e.g. a degenerate Gamma draw), or
+    /// when `c` exceeds the empirical curve's total integrated hazard.
+    #[inline]
+    pub fn inverse_cum_rate(&self, c: f64) -> Option<f64> {
+        if c < 0.0 {
+            return None;
+        }
+        if c == 0.0 {
+            return Some(0.0);
+        }
+        match *self {
+            EffectiveRate::Constant { value } => {
+                if !value.is_finite() || value <= 0.0 {
+                    None
+                } else {
+                    Some(c / value)
+                }
+            }
+            EffectiveRate::Empirical { curve, scale } => {
+                if !scale.is_finite() || scale <= 0.0 {
+                    return None;
+                }
+                empirical_inverse_cum_rate(curve, c / scale)
+            }
+        }
+    }
+}
+
 fn validate_scale(scale: f64) -> Result<(), String> {
     if !scale.is_finite() || scale < 0.0 {
         return Err(format!(

@@ -4,9 +4,7 @@ use rand_distr::{Exp, Gamma};
 
 use crate::parameters::Parameters;
 use crate::person::{DrawnDuration, DrawnRate, InfectionStatus, InfectionTime, Person, PersonId};
-use crate::rate::{
-    empirical_cum_rate, empirical_curve_duration, empirical_inverse_cum_rate, InfectionRate,
-};
+use crate::rate::{empirical_curve_duration, EffectiveRate, InfectionRate};
 use crate::rate_library::{AssignedRate, Rate, RateLibraryData};
 use crate::stats::ModelStats;
 
@@ -35,6 +33,7 @@ trait InfectionLoop {
     fn infect_person(&mut self, p: PersonId, t: Option<f64>);
     fn recover_person(&mut self, p: PersonId);
     fn schedule_recovery(&mut self, p: PersonId);
+    fn effective_rate(&self, person: PersonId) -> EffectiveRate<'_>;
     fn schedule_next_infection_attempt(&mut self, infector: PersonId);
     fn setup(&mut self);
 }
@@ -101,6 +100,30 @@ impl InfectionLoop for Context {
             }
         });
     }
+    fn effective_rate(&self, person: PersonId) -> EffectiveRate<'_> {
+        // Resolve `InfectionRate` + per-person state into the primitive
+        // the inverse-CDF math actually needs. Hot path: every variant
+        // is a pair of property/data lookups at most, and the empirical
+        // curve is borrowed (no clone).
+        match &self.get_params().infection_rate {
+            InfectionRate::Constant { value, .. } => EffectiveRate::Constant { value: *value },
+            InfectionRate::Empirical { points, scale } => EffectiveRate::Empirical {
+                curve: points,
+                scale: *scale,
+            },
+            InfectionRate::Library { scale, .. } => {
+                let assigned = self.get_property::<_, AssignedRate>(person);
+                let curve = self.get_data(RateLibraryPlugin).curve(assigned);
+                EffectiveRate::Empirical {
+                    curve,
+                    scale: *scale,
+                }
+            }
+            InfectionRate::Gamma { .. } => EffectiveRate::Constant {
+                value: self.get_property::<_, DrawnRate>(person).0,
+            },
+        }
+    }
     fn schedule_next_infection_attempt(&mut self, infector: PersonId) {
         // Inverse-CDF sampling of the next event time for a person's
         // intrinsic infectiousness profile λ(τ), where τ = time since
@@ -108,45 +131,15 @@ impl InfectionLoop for Context {
         // Λ(τ_next) − Λ(elapsed) = e for τ_next, with elapsed = now − t_inf.
         // `None` from `inverse_cum_rate` means the curve is exhausted —
         // no further attempts for this person.
-        //
-        // Hot path: avoid cloning the curve. For `Library` we hand a
-        // borrowed slice to the empirical helpers.
         let t_inf = self.get_property::<_, InfectionTime>(infector).0;
         let elapsed = self.get_current_time() - t_inf;
-        let next_elapsed: Option<f64> = match &self.get_params().infection_rate {
-            InfectionRate::Library { scale, .. } => {
-                // `scale` converts the library's relative hazards into
-                // absolute rates: cum_rate is multiplied by scale, so to
-                // invert we divide the target back out. A zero scale means
-                // no transmission — bail.
-                let scale = *scale;
-                if scale <= 0.0 {
-                    return;
-                }
-                let assigned = self.get_property::<_, AssignedRate>(infector);
-                let curve = self.get_data(RateLibraryPlugin).curve(assigned);
-                let cum_now = scale * empirical_cum_rate(curve, elapsed);
-                let e: f64 = self.sample_distr(InfectionRng, Exp::new(1.0).unwrap());
-                empirical_inverse_cum_rate(curve, (cum_now + e) / scale)
-            }
-            InfectionRate::Gamma { .. } => {
-                // Per-person constant rate sampled at setup. Same
-                // inverse-CDF math as `Constant`: τ_next = elapsed + e/value.
-                // A zero or NaN draw means no transmission — guard
-                // explicitly so NaN doesn't sneak past `<= 0.0`.
-                let value = self.get_property::<_, DrawnRate>(infector).0;
-                if !value.is_finite() || value <= 0.0 {
-                    return;
-                }
-                let e: f64 = self.sample_distr(InfectionRng, Exp::new(1.0).unwrap());
-                Some(elapsed + e / value)
-            }
-            _ => {
-                let rate = &self.get_params().infection_rate;
-                let cum_now = rate.cum_rate(elapsed);
-                let e: f64 = self.sample_distr(InfectionRng, Exp::new(1.0).unwrap());
-                rate.inverse_cum_rate(cum_now + e)
-            }
+        // Sample `e` before resolving the effective rate so the &mut
+        // borrow on `self` doesn't collide with the &self borrow that
+        // backs the empirical curve in `EffectiveRate::Empirical`.
+        let e: f64 = self.sample_distr(InfectionRng, Exp::new(1.0).unwrap());
+        let next_elapsed = {
+            let eff = self.effective_rate(infector);
+            eff.inverse_cum_rate(eff.cum_rate(elapsed) + e)
         };
         let Some(elapsed_next) = next_elapsed else {
             return;
