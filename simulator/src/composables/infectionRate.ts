@@ -3,15 +3,22 @@
 //   { type: "constant", value, duration }
 //   { type: "empirical", points: [[τ, rate], ...], scale }
 //   { type: "library", rates: [[[τ, rate], ...], ...], scale }
+//   { type: "gamma", rate: { shape, rate }, duration: { shape, rate } }
 //
 // For Empirical and Library the point values are **relative hazards** —
 // `scale` converts them to absolute rates by multiplication. Defaults
 // to 1.0 (the Rust side has `#[serde(default)]` so old JSON without a
 // scale field still deserializes).
+//
+// For Gamma, each person draws their own constant rate and deterministic
+// infectious period from two independent Gamma distributions at setup.
+// `rate` inside `GammaParams` is the gamma rate parameter λ (mean = shape/λ).
+export type GammaParams = { shape: number; rate: number };
 export type InfectionRate =
   | { type: "constant"; value: number; duration: number }
   | { type: "empirical"; points: [number, number][]; scale: number }
-  | { type: "library"; rates: [number, number][][]; scale: number };
+  | { type: "library"; rates: [number, number][][]; scale: number }
+  | { type: "gamma"; rate: GammaParams; duration: GammaParams };
 
 // Used when switching Constant → Empirical from a UI with no curve yet.
 export const DEFAULT_EMPIRICAL_POINTS: [number, number][] = [
@@ -26,6 +33,16 @@ export const DEFAULT_CONSTANT: InfectionRate = {
   type: "constant",
   value: 0.5,
   duration: 3.0,
+};
+
+/// Default Gamma parameters. Picked so the per-person means line up with
+/// `DEFAULT_CONSTANT` (mean rate = 2/4 = 0.5, mean duration = 3/1 = 3.0)
+/// — a meaningful starting point that produces similar dynamics to the
+/// Constant default but with per-person heterogeneity.
+export const DEFAULT_GAMMA: InfectionRate = {
+  type: "gamma",
+  rate: { shape: 2, rate: 4 },
+  duration: { shape: 3, rate: 1 },
 };
 
 /// Calibration factor for the bundled library curves (from
@@ -51,7 +68,9 @@ export function empiricalDuration(rate: InfectionRate): number {
 }
 
 /// Expected R₀: value · duration for Constant; scale · area-under-curve
-/// for Empirical; scale · mean-area-across-curves for Library.
+/// for Empirical; scale · mean-area-across-curves for Library; mean-rate
+/// · mean-duration for Gamma (E[rate]·E[duration] = product of means
+/// since the two draws are independent).
 export function expectedR0(rate: InfectionRate): number {
   if (rate.type === "constant") {
     return rate.value * rate.duration;
@@ -61,6 +80,10 @@ export function expectedR0(rate: InfectionRate): number {
     const total = rate.rates.reduce((sum, c) => sum + curveArea(c), 0);
     return rate.scale * (total / rate.rates.length);
   }
+  if (rate.type === "gamma") {
+    return (rate.rate.shape / rate.rate.rate) *
+      (rate.duration.shape / rate.duration.rate);
+  }
   return rate.scale * curveArea(rate.points);
 }
 
@@ -68,10 +91,12 @@ export function expectedR0(rate: InfectionRate): number {
 /// uses the current curve's duration as the new mean period; going to
 /// empirical seeds a default viral-load-shaped curve; going to library
 /// expects the caller to seed `rates` itself (it has no good default
-/// here — the library payload lives in `virtual:rateLibrary`).
+/// here — the library payload lives in `virtual:rateLibrary`); going to
+/// gamma seeds `DEFAULT_GAMMA` so the new variant has sensible defaults
+/// without dragging in scale/curve state from the previous variant.
 export function withRateType(
   current: InfectionRate,
-  next: "constant" | "empirical" | "library",
+  next: "constant" | "empirical" | "library" | "gamma",
   defaultLibrary?: [number, number][][],
 ): InfectionRate {
   if (next === current.type) return current;
@@ -96,6 +121,13 @@ export function withRateType(
             DEFAULT_EMPIRICAL_POINTS.map((p) => [...p]) as [number, number][],
           ];
     return { type: "library", rates, scale: DEFAULT_LIBRARY_SCALE };
+  }
+  if (next === "gamma") {
+    return {
+      type: "gamma",
+      rate: { ...(DEFAULT_GAMMA as Extract<InfectionRate, { type: "gamma" }>).rate },
+      duration: { ...(DEFAULT_GAMMA as Extract<InfectionRate, { type: "gamma" }>).duration },
+    };
   }
   return {
     type: "empirical",
@@ -156,7 +188,7 @@ export function withPointRemoved(rate: InfectionRate, i: number): InfectionRate 
 /// that here so all downstream code can assume `scale` is a finite
 /// number.
 export function normalizeInfectionRate(rate: InfectionRate): InfectionRate {
-  if (rate.type === "constant") return rate;
+  if (rate.type === "constant" || rate.type === "gamma") return rate;
   const scale = Number.isFinite(rate.scale) ? rate.scale : 1.0;
   if (rate.type === "empirical") {
     return { type: "empirical", points: rate.points, scale };

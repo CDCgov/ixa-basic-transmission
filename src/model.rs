@@ -1,9 +1,9 @@
 use ixa::prelude::*;
 use ixa::{define_data_plugin, define_global_property, define_rng, Context};
-use rand_distr::Exp;
+use rand_distr::{Exp, Gamma};
 
 use crate::parameters::Parameters;
-use crate::person::{InfectionStatus, InfectionTime, Person, PersonId};
+use crate::person::{DrawnDuration, DrawnRate, InfectionStatus, InfectionTime, Person, PersonId};
 use crate::rate::{
     empirical_cum_rate, empirical_curve_duration, empirical_inverse_cum_rate, InfectionRate,
 };
@@ -15,6 +15,7 @@ define_global_property!(Params, Parameters);
 define_rng!(InfectionRng);
 define_rng!(RecoveryRng);
 define_rng!(RateAssignmentRng);
+define_rng!(GammaDrawRng);
 
 define_data_plugin!(ModelStatsPlugin, ModelStats, |context| {
     let params = context.get_global_property_value(Params).unwrap();
@@ -74,7 +75,9 @@ impl InfectionLoop for Context {
         // infectiousness curve. For `Constant`, recovery follows
         // `Exp(1/duration)` (the variant's `duration` field is the mean).
         // For `Library`, recovery is deterministic at the end of the
-        // person's assigned curve.
+        // person's assigned curve. For `Gamma`, deterministic at the
+        // person's pre-drawn `DrawnDuration` (the gamma sample IS the
+        // infectious period).
         let t_inf = self.get_property::<_, InfectionTime>(p).0;
         let recovery_dt = match self.get_params().infection_rate {
             // Recovery time is determined by the curve's support — the
@@ -89,6 +92,7 @@ impl InfectionLoop for Context {
                 let curve = self.get_data(RateLibraryPlugin).curve(rate_id);
                 empirical_curve_duration(curve)
             }
+            InfectionRate::Gamma { .. } => self.get_property::<_, DrawnDuration>(p).0,
         };
         let recovery_time = t_inf + recovery_dt;
         self.add_plan(recovery_time, move |context| {
@@ -109,32 +113,40 @@ impl InfectionLoop for Context {
         // borrowed slice to the empirical helpers.
         let t_inf = self.get_property::<_, InfectionTime>(infector).0;
         let elapsed = self.get_current_time() - t_inf;
-        let is_library = matches!(
-            self.get_params().infection_rate,
-            InfectionRate::Library { .. }
-        );
-        let next_elapsed: Option<f64> = if is_library {
-            // `scale` converts the library's relative hazards into
-            // absolute rates: cum_rate is multiplied by scale, so to
-            // invert we divide the target back out. A zero scale means
-            // no transmission — bail.
-            let scale = match &self.get_params().infection_rate {
-                InfectionRate::Library { scale, .. } => *scale,
-                _ => unreachable!(),
-            };
-            if scale <= 0.0 {
-                return;
+        let next_elapsed: Option<f64> = match &self.get_params().infection_rate {
+            InfectionRate::Library { scale, .. } => {
+                // `scale` converts the library's relative hazards into
+                // absolute rates: cum_rate is multiplied by scale, so to
+                // invert we divide the target back out. A zero scale means
+                // no transmission — bail.
+                let scale = *scale;
+                if scale <= 0.0 {
+                    return;
+                }
+                let assigned = self.get_property::<_, AssignedRate>(infector);
+                let curve = self.get_data(RateLibraryPlugin).curve(assigned);
+                let cum_now = scale * empirical_cum_rate(curve, elapsed);
+                let e: f64 = self.sample_distr(InfectionRng, Exp::new(1.0).unwrap());
+                empirical_inverse_cum_rate(curve, (cum_now + e) / scale)
             }
-            let assigned = self.get_property::<_, AssignedRate>(infector);
-            let curve = self.get_data(RateLibraryPlugin).curve(assigned);
-            let cum_now = scale * empirical_cum_rate(curve, elapsed);
-            let e: f64 = self.sample_distr(InfectionRng, Exp::new(1.0).unwrap());
-            empirical_inverse_cum_rate(curve, (cum_now + e) / scale)
-        } else {
-            let rate = &self.get_params().infection_rate;
-            let cum_now = rate.cum_rate(elapsed);
-            let e: f64 = self.sample_distr(InfectionRng, Exp::new(1.0).unwrap());
-            rate.inverse_cum_rate(cum_now + e)
+            InfectionRate::Gamma { .. } => {
+                // Per-person constant rate sampled at setup. Same
+                // inverse-CDF math as `Constant`: τ_next = elapsed + e/value.
+                // A zero or NaN draw means no transmission — guard
+                // explicitly so NaN doesn't sneak past `<= 0.0`.
+                let value = self.get_property::<_, DrawnRate>(infector).0;
+                if !value.is_finite() || value <= 0.0 {
+                    return;
+                }
+                let e: f64 = self.sample_distr(InfectionRng, Exp::new(1.0).unwrap());
+                Some(elapsed + e / value)
+            }
+            _ => {
+                let rate = &self.get_params().infection_rate;
+                let cum_now = rate.cum_rate(elapsed);
+                let e: f64 = self.sample_distr(InfectionRng, Exp::new(1.0).unwrap());
+                rate.inverse_cum_rate(cum_now + e)
+            }
         };
         let Some(elapsed_next) = next_elapsed else {
             return;
@@ -197,6 +209,18 @@ impl InfectionLoop for Context {
                 0
             };
 
+        // For `Gamma` mode, prebuild the two Gamma distributions (shape,
+        // 1/rate) once and sample per person below. `rand_distr::Gamma`
+        // takes scale = 1/rate; validation already guarantees both
+        // parameters are finite and positive.
+        let gamma_dists: Option<(Gamma<f64>, Gamma<f64>)> = match self.get_params().infection_rate {
+            InfectionRate::Gamma { rate, duration } => Some((
+                Gamma::new(rate.shape, 1.0 / rate.rate).unwrap(),
+                Gamma::new(duration.shape, 1.0 / duration.rate).unwrap(),
+            )),
+            _ => None,
+        };
+
         for _ in 0..population {
             let p = self.add_entity(Person).unwrap();
             if library_size > 0 {
@@ -204,6 +228,12 @@ impl InfectionLoop for Context {
                 let idx: usize = self.sample_range(RateAssignmentRng, 0..library_size);
                 let assigned = self.get_data(RateLibraryPlugin).ids[idx];
                 self.set_property(p, AssignedRate(Some(assigned)));
+            }
+            if let Some((rate_dist, dur_dist)) = gamma_dists {
+                let r: f64 = self.sample_distr(GammaDrawRng, rate_dist);
+                let d: f64 = self.sample_distr(GammaDrawRng, dur_dist);
+                self.set_property(p, DrawnRate(r));
+                self.set_property(p, DrawnDuration(d));
             }
         }
 
@@ -754,6 +784,126 @@ mod tests {
             max_t > 1.5,
             "expected infections past t=1.5 (per-person clock); max observed t={max_t}"
         );
+    }
+
+    #[test]
+    #[allow(clippy::cast_precision_loss)]
+    fn gamma_recovery_times_match_erlang_cdf() {
+        // For integer shape `k`, Gamma(k, scale=1/λ) is Erlang(k, λ) with
+        // closed-form CDF F(t) = 1 − Σ_{i=0..k-1} (λt)^i / i! · exp(−λt).
+        // Recovery is deterministic at t_inf + DrawnDuration, so recovery
+        // times measured from t=0 (everyone infected at seeding) directly
+        // sample the Gamma. Rate set to 0 to suppress chain transmission.
+        use crate::rate::GammaParams;
+        let population: usize = 4_000;
+        let k: u32 = 3;
+        let lambda: f64 = 1.5; // mean = k/λ = 2.0
+        let max_time = 60.0;
+
+        let recovery_times: Rc<RefCell<Vec<f64>>> = Rc::new(RefCell::new(Vec::new()));
+        let clone = Rc::clone(&recovery_times);
+
+        let params = Parameters {
+            infection_rate: InfectionRate::Gamma {
+                rate: GammaParams {
+                    shape: 1.0,
+                    rate: 1e9,
+                }, // mean ≈ 0 → no transmissions
+                duration: GammaParams {
+                    shape: f64::from(k),
+                    rate: lambda,
+                },
+            },
+            population,
+            initial_infections: population,
+            seed: 0,
+            max_time,
+        };
+        let mut ctx = Context::new();
+        ctx.set_global_property_value(Params, params).unwrap();
+        ctx.subscribe_to_event(
+            move |context, event: PropertyChangeEvent<Person, InfectionStatus>| {
+                if event.current == InfectionStatus::Recovered {
+                    clone.borrow_mut().push(context.get_current_time());
+                }
+            },
+        );
+        ctx.setup();
+        ctx.execute();
+
+        let mut samples = recovery_times.borrow().clone();
+        assert!(
+            samples.len() >= population - 50,
+            "expected ~{population} recoveries, got {}",
+            samples.len()
+        );
+
+        // Erlang(k, λ) CDF.
+        let erlang_cdf = |t: f64| -> f64 {
+            if t <= 0.0 {
+                return 0.0;
+            }
+            let lt = lambda * t;
+            let mut tail = 0.0_f64;
+            let mut term = 1.0_f64;
+            for i in 0..k {
+                if i > 0 {
+                    term *= lt / f64::from(i);
+                }
+                tail += term;
+            }
+            1.0 - tail * (-lt).exp()
+        };
+        let n = samples.len();
+        let ks = ks_stat(&mut samples, erlang_cdf);
+        let crit = ks_crit_001(n);
+        assert!(
+            ks < crit,
+            "KS {ks:.4} exceeds 1% critical value {crit:.4} for n={n}"
+        );
+
+        // Sanity: sample mean should be close to k/λ = 2.0 (SE ≈ √(2/N)).
+        let mean: f64 = samples.iter().sum::<f64>() / n as f64;
+        assert_almost_eq!(mean, 2.0, 0.05);
+    }
+
+    #[test]
+    #[allow(clippy::cast_precision_loss)]
+    fn gamma_rate_means_match_target() {
+        // With population = N, drawn rates form an iid Gamma sample. Mean
+        // should land at shape/rate; variance at shape/rate². Rate-side
+        // only — duration is checked above by the Erlang KS test.
+        use crate::person::DrawnRate;
+        use crate::rate::GammaParams;
+        let population: usize = 5_000;
+        let shape = 4.0_f64;
+        let rate = 2.0_f64; // mean = 2.0, variance = 1.0
+        let params = Parameters {
+            infection_rate: InfectionRate::Gamma {
+                rate: GammaParams { shape, rate },
+                duration: GammaParams {
+                    shape: 1.0,
+                    rate: 1.0,
+                },
+            },
+            population,
+            initial_infections: 0,
+            seed: 42,
+            max_time: 0.0,
+        };
+        let mut ctx = Context::new();
+        ctx.set_global_property_value(Params, params).unwrap();
+        ctx.setup();
+        let values: Vec<f64> = ctx
+            .query_result_iterator(Person)
+            .map(|p| ctx.get_property::<_, DrawnRate>(p).0)
+            .collect();
+        assert_eq!(values.len(), population);
+        let n = values.len() as f64;
+        let mean: f64 = values.iter().sum::<f64>() / n;
+        let var: f64 = values.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / n;
+        assert_almost_eq!(mean, 2.0, 0.05);
+        assert_almost_eq!(var, 1.0, 0.10);
     }
 
     #[test]

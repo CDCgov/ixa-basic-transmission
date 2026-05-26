@@ -25,6 +25,7 @@ const emit = defineEmits<{
 
 const rateTypeOptions: SelectOption[] = [
   { value: "constant", label: "Constant" },
+  { value: "gamma", label: "Gamma (per-person)" },
   { value: "empirical", label: "Time-varying" },
   { value: "library", label: "Library" },
 ];
@@ -81,6 +82,44 @@ const rateScale = computed<number>({
   },
 });
 
+// Gamma bridges: four two-way computed bindings for the {shape, rate}
+// pair on each of the two distributions. Each setter emits a fresh
+// `Gamma` object so reactivity picks up the change (we follow the
+// "replace whole top-level keys" rule from Page.vue).
+function gammaSetter(
+  axis: "rate" | "duration",
+  field: "shape" | "rate",
+): (v: number) => void {
+  return (v: number) => {
+    if (props.modelValue.type !== "gamma") return;
+    const next = {
+      ...props.modelValue,
+      [axis]: { ...props.modelValue[axis], [field]: v },
+    };
+    emit("update:modelValue", next);
+  };
+}
+function gammaGetter(axis: "rate" | "duration", field: "shape" | "rate"): number {
+  if (props.modelValue.type !== "gamma") return 0;
+  return props.modelValue[axis][field];
+}
+const gammaRateShape = computed<number>({
+  get: () => gammaGetter("rate", "shape"),
+  set: gammaSetter("rate", "shape"),
+});
+const gammaRateRate = computed<number>({
+  get: () => gammaGetter("rate", "rate"),
+  set: gammaSetter("rate", "rate"),
+});
+const gammaDurationShape = computed<number>({
+  get: () => gammaGetter("duration", "shape"),
+  set: gammaSetter("duration", "shape"),
+});
+const gammaDurationRate = computed<number>({
+  get: () => gammaGetter("duration", "rate"),
+  set: gammaSetter("duration", "rate"),
+});
+
 const libraryRates = computed<[number, number][][]>(() =>
   props.modelValue.type === "library" ? props.modelValue.rates : [],
 );
@@ -114,7 +153,12 @@ function nextPage() {
 }
 
 function setRateType(next: string) {
-  if (next !== "constant" && next !== "empirical" && next !== "library") {
+  if (
+    next !== "constant" &&
+    next !== "empirical" &&
+    next !== "library" &&
+    next !== "gamma"
+  ) {
     return;
   }
   if (next === "library") {
@@ -423,7 +467,7 @@ function formatRate(v: unknown): string {
       <Button variant="secondary" @click="addPoint">Add point</Button>
     </div>
   </template>
-  <template v-else>
+  <template v-else-if="modelValue.type === 'library'">
     <p class="schedule-hint">
       Library of {{ libraryCount }} per-person curves. Each person draws
       one uniformly at setup. Curve values are relative hazards;
@@ -539,7 +583,30 @@ function formatRate(v: unknown): string {
       </div>
     </template>
   </template>
-  <div v-if="modelValue.type !== 'library'" class="rate-preview">
+  <template v-else-if="modelValue.type === 'gamma'">
+    <p class="gamma-section-header">Infection rates</p>
+    <p class="schedule-hint">
+      Each person's rate is drawn from a Gamma distribution with shape k
+      and rate λ.
+    </p>
+    <div class="gamma-row">
+      <NumberInput v-model="gammaRateShape" label="Shape (k)" :min="0.01" :step="0.1" />
+      <NumberInput v-model="gammaRateRate" label="Rate (λ)" :min="0.01" :step="0.05" />
+    </div>
+    <p class="gamma-section-header">Infection durations</p>
+    <p class="schedule-hint">
+      Each person's duration of infection (i.e., time from infection to
+      recovery) is drawn from a Gamma distribution with shape k and rate λ.
+    </p>
+    <div class="gamma-row">
+      <NumberInput v-model="gammaDurationShape" label="Shape (k)" :min="0.01" :step="0.1" />
+      <NumberInput v-model="gammaDurationRate" label="Rate (λ)" :min="0.01" :step="0.05" />
+    </div>
+  </template>
+  <div
+    v-if="modelValue.type !== 'library' && modelValue.type !== 'gamma'"
+    class="rate-preview"
+  >
     <LineChart
       :series="previewSeries"
       :height="120"
@@ -656,5 +723,14 @@ function formatRate(v: unknown): string {
 }
 .library-overlay {
   margin-top: 0.4em;
+}
+.gamma-section-header {
+  margin: 0.25em 0 0;
+  font-weight: 600;
+}
+.gamma-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5em;
 }
 </style>
