@@ -4,17 +4,25 @@ use rand_distr::Exp;
 
 use crate::parameters::Parameters;
 use crate::person::{InfectionStatus, InfectionTime, Person, PersonId};
-use crate::rate::InfectionRate;
+use crate::rate::{
+    empirical_cum_rate, empirical_curve_duration, empirical_inverse_cum_rate, InfectionRate,
+};
+use crate::rate_library::{AssignedRate, Rate, RateLibraryData};
 use crate::stats::ModelStats;
 
 define_global_property!(Params, Parameters);
 
 define_rng!(InfectionRng);
 define_rng!(RecoveryRng);
+define_rng!(RateAssignmentRng);
 
 define_data_plugin!(ModelStatsPlugin, ModelStats, |context| {
     let params = context.get_global_property_value(Params).unwrap();
     ModelStats::new(params.initial_infections)
+});
+
+define_data_plugin!(RateLibraryPlugin, RateLibraryData, |_context| {
+    RateLibraryData::new()
 });
 
 trait InfectionLoop {
@@ -65,11 +73,18 @@ impl InfectionLoop for Context {
         // For `Empirical`, recovery is deterministic at the end of the
         // infectiousness curve. For `Constant`, recovery follows
         // `Exp(1/duration)` (the variant's `duration` field is the mean).
+        // For `Library`, recovery is deterministic at the end of the
+        // person's assigned curve.
         let t_inf = self.get_property::<_, InfectionTime>(p).0;
         let recovery_dt = match self.get_params().infection_rate {
-            InfectionRate::Empirical { ref points } => points.last().map_or(0.0, |p| p[0]),
+            InfectionRate::Empirical { ref points } => empirical_curve_duration(points),
             InfectionRate::Constant { duration, .. } => {
                 self.sample_distr(RecoveryRng, Exp::new(1.0 / duration).unwrap())
+            }
+            InfectionRate::Library { .. } => {
+                let rate_id = self.get_property::<_, AssignedRate>(p);
+                let curve = self.get_data(RateLibraryPlugin).curve(rate_id);
+                empirical_curve_duration(curve)
             }
         };
         let recovery_time = t_inf + recovery_dt;
@@ -86,12 +101,28 @@ impl InfectionLoop for Context {
         // Λ(τ_next) − Λ(elapsed) = e for τ_next, with elapsed = now − t_inf.
         // `None` from `inverse_cum_rate` means the curve is exhausted —
         // no further attempts for this person.
+        //
+        // Hot path: avoid cloning the curve. For `Library` we hand a
+        // borrowed slice to the empirical helpers.
         let t_inf = self.get_property::<_, InfectionTime>(infector).0;
         let elapsed = self.get_current_time() - t_inf;
-        let rate = &self.get_params().infection_rate;
-        let cum_now = rate.cum_rate(elapsed);
-        let e: f64 = self.sample_distr(InfectionRng, Exp::new(1.0).unwrap());
-        let Some(elapsed_next) = rate.inverse_cum_rate(cum_now + e) else {
+        let is_library = matches!(
+            self.get_params().infection_rate,
+            InfectionRate::Library { .. }
+        );
+        let next_elapsed: Option<f64> = if is_library {
+            let assigned = self.get_property::<_, AssignedRate>(infector);
+            let curve = self.get_data(RateLibraryPlugin).curve(assigned);
+            let cum_now = empirical_cum_rate(curve, elapsed);
+            let e: f64 = self.sample_distr(InfectionRng, Exp::new(1.0).unwrap());
+            empirical_inverse_cum_rate(curve, cum_now + e)
+        } else {
+            let rate = &self.get_params().infection_rate;
+            let cum_now = rate.cum_rate(elapsed);
+            let e: f64 = self.sample_distr(InfectionRng, Exp::new(1.0).unwrap());
+            rate.inverse_cum_rate(cum_now + e)
+        };
+        let Some(elapsed_next) = next_elapsed else {
             return;
         };
         let next_time = t_inf + elapsed_next;
@@ -129,8 +160,37 @@ impl InfectionLoop for Context {
             },
         );
 
+        // For `Library` mode, instantiate one `Rate` entity per curve and
+        // populate the EntityMap. Cloning the curves once at setup is
+        // fine — the hot path borrows from the EntityMap and doesn't
+        // allocate.
+        let library_size: usize =
+            if let InfectionRate::Library { rates } = &self.get_params().infection_rate {
+                let curves: Vec<Vec<[f64; 2]>> = rates.clone();
+                let mut ids: Vec<crate::rate_library::RateId> = Vec::with_capacity(curves.len());
+                for _ in 0..curves.len() {
+                    ids.push(self.add_entity(Rate).unwrap());
+                }
+                let n = ids.len();
+                let lib = self.get_data_mut(RateLibraryPlugin);
+                lib.ids = ids.clone();
+                lib.curves.reserve(curves.len());
+                for (id, curve) in ids.into_iter().zip(curves.into_iter()) {
+                    lib.curves.insert(id, curve);
+                }
+                n
+            } else {
+                0
+            };
+
         for _ in 0..population {
-            self.add_entity(Person).unwrap();
+            let p = self.add_entity(Person).unwrap();
+            if library_size > 0 {
+                // Uniform random assignment: each person draws independently.
+                let idx: usize = self.sample_range(RateAssignmentRng, 0..library_size);
+                let assigned = self.get_data(RateLibraryPlugin).ids[idx];
+                self.set_property(p, AssignedRate(Some(assigned)));
+            }
         }
 
         // Generate and record initial infections
@@ -662,6 +722,122 @@ mod tests {
         assert!(
             max_t > 1.5,
             "expected infections past t=1.5 (per-person clock); max observed t={max_t}"
+        );
+    }
+
+    #[test]
+    fn library_with_single_curve_matches_empirical() {
+        // A library containing one identical curve should produce the
+        // same dynamics as the single-Empirical variant, modulo a
+        // different RNG stream (RateAssignmentRng draws one sample
+        // per person but doesn't alter InfectionRng). We compare mean
+        // cumulative incidence across many seeds.
+        let curve = vec![[0.0_f64, 1.0], [3.0, 1.0]];
+
+        let mut total_library = 0.0_f64;
+        let mut total_empirical = 0.0_f64;
+        let n_sims = 100_u64;
+        for seed in 0..n_sims {
+            let p_lib = Parameters {
+                infection_rate: InfectionRate::Library {
+                    rates: vec![curve.clone()],
+                },
+                population: 200,
+                initial_infections: 3,
+                seed,
+                max_time: 20.0,
+            };
+            let p_emp = Parameters {
+                infection_rate: InfectionRate::Empirical {
+                    points: curve.clone(),
+                },
+                ..p_lib.clone()
+            };
+            total_library += run(p_lib).cum_incidence() as f64;
+            total_empirical += run(p_emp).cum_incidence() as f64;
+        }
+        let mean_lib = total_library / n_sims as f64;
+        let mean_emp = total_empirical / n_sims as f64;
+        // Loose bound: both ensembles see the same dynamics; the only
+        // statistical difference is the extra rng consumption for
+        // assignment, so they should agree within a few percent.
+        let rel = (mean_lib - mean_emp).abs() / mean_emp.max(1.0);
+        assert!(
+            rel < 0.10,
+            "library({mean_lib}) vs empirical({mean_emp}) diverged by {rel}"
+        );
+    }
+
+    #[test]
+    fn library_assigns_a_rate_to_each_person() {
+        // After setup, every Person should carry a Some(_) AssignedRate
+        // whose value points into the library.
+        let library = vec![vec![[0.0, 0.5], [3.0, 0.5]], vec![[0.0, 1.5], [3.0, 1.5]]];
+        let params = Parameters {
+            infection_rate: InfectionRate::Library {
+                rates: library.clone(),
+            },
+            population: 50,
+            initial_infections: 0,
+            seed: 7,
+            max_time: 0.0,
+        };
+        let mut ctx = Context::new();
+        ctx.set_global_property_value(Params, params).unwrap();
+        ctx.setup();
+        let assigned_count: usize = ctx
+            .query_result_iterator(Person)
+            .map(|p| ctx.get_property::<_, AssignedRate>(p))
+            .filter(|a| a.0.is_some())
+            .count();
+        assert_eq!(assigned_count, 50);
+    }
+
+    #[test]
+    fn library_heterogeneous_curves_produce_different_durations() {
+        // Two curves of clearly different support: one short (τ=1), one
+        // long (τ=10). Run a population where everyone is initially
+        // infected, then observe the spread of recovery times. If
+        // assignment is per-person, recovery times must straddle both
+        // anchor endpoints; if everyone shared a single curve, they'd
+        // all bunch near one value.
+        let short = vec![[0.0_f64, 0.0], [1.0, 0.0]]; // λ=0 → no transmissions, deterministic recovery at τ=1
+        let long = vec![[0.0_f64, 0.0], [10.0, 0.0]]; // recovery at τ=10
+        let params = Parameters {
+            infection_rate: InfectionRate::Library {
+                rates: vec![short.clone(), long.clone()],
+            },
+            population: 200,
+            initial_infections: 200,
+            seed: 11,
+            max_time: 50.0,
+        };
+
+        let recovery_times: Rc<RefCell<Vec<f64>>> = Rc::new(RefCell::new(Vec::new()));
+        let clone = Rc::clone(&recovery_times);
+        let mut ctx = Context::new();
+        ctx.set_global_property_value(Params, params).unwrap();
+        ctx.subscribe_to_event(
+            move |context, event: PropertyChangeEvent<Person, InfectionStatus>| {
+                if event.current == InfectionStatus::Recovered {
+                    clone.borrow_mut().push(context.get_current_time());
+                }
+            },
+        );
+        ctx.setup();
+        ctx.execute();
+
+        let times = recovery_times.borrow().clone();
+        let near_short = times.iter().filter(|&&t| (t - 1.0).abs() < 1e-9).count();
+        let near_long = times.iter().filter(|&&t| (t - 10.0).abs() < 1e-9).count();
+        assert!(
+            near_short > 50 && near_long > 50,
+            "expected mix of curves; near_short={near_short} near_long={near_long}"
+        );
+        assert_eq!(
+            near_short + near_long,
+            times.len(),
+            "unexpected recovery time"
         );
     }
 }

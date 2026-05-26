@@ -11,6 +11,9 @@ use serde::{Deserialize, Serialize};
 /// - `Empirical { points }`: piecewise-linear infectiousness curve in
 ///   τ-space. Rate is 0 outside the anchor range; recovery is
 ///   deterministic at τ = `points.last().0`.
+/// - `Library { rates }`: population of empirical curves. Each person
+///   gets one assigned at setup and keeps it for their whole infectious
+///   period (per-person heterogeneity). Empty curves are rejected.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(
     tag = "type",
@@ -20,41 +23,151 @@ use serde::{Deserialize, Serialize};
 pub enum InfectionRate {
     Constant { value: f64, duration: f64 },
     Empirical { points: Vec<[f64; 2]> },
+    Library { rates: Vec<Vec<[f64; 2]>> },
+}
+
+/// Cumulative hazard `Λ(τ)` for a single piecewise-linear empirical
+/// curve. Hot-path helper: takes a slice so the caller can avoid
+/// allocating or cloning when iterating per-event.
+#[inline]
+pub fn empirical_cum_rate(points: &[[f64; 2]], t: f64) -> f64 {
+    if t <= 0.0 || points.is_empty() {
+        return 0.0;
+    }
+    let t0 = points[0][0];
+    if t <= t0 {
+        return 0.0;
+    }
+    let mut acc = 0.0;
+    for i in 0..points.len() - 1 {
+        let [ti, ri] = points[i];
+        let [tj, rj] = points[i + 1];
+        if t >= tj {
+            acc += 0.5 * (ri + rj) * (tj - ti);
+        } else {
+            let dt = t - ti;
+            let slope = (rj - ri) / (tj - ti);
+            let r_at_t = ri + slope * dt;
+            return acc + 0.5 * (ri + r_at_t) * dt;
+        }
+    }
+    acc
+}
+
+/// Inverse cumulative hazard for a single piecewise-linear empirical
+/// curve. `None` when `c` exceeds the curve's total integrated hazard.
+/// Hot-path helper (called once per infection attempt).
+#[inline]
+pub fn empirical_inverse_cum_rate(points: &[[f64; 2]], c: f64) -> Option<f64> {
+    if c < 0.0 {
+        return None;
+    }
+    if c == 0.0 {
+        return Some(0.0);
+    }
+    if points.is_empty() {
+        return None;
+    }
+    let mut acc = 0.0;
+    for i in 0..points.len() - 1 {
+        let [ti, ri] = points[i];
+        let [tj, rj] = points[i + 1];
+        let seg = 0.5 * (ri + rj) * (tj - ti);
+        if c > acc + seg {
+            acc += seg;
+            continue;
+        }
+        let extra = c - acc;
+        let span = tj - ti;
+        let slope = (rj - ri) / span;
+        if slope == 0.0 {
+            return Some(ti + extra / ri);
+        }
+        let disc = (ri * ri + 2.0 * slope * extra).max(0.0);
+        let u = (-ri + disc.sqrt()) / slope;
+        return Some(ti + u);
+    }
+    None
+}
+
+/// Curve support — the deterministic recovery time τ for an empirical
+/// schedule. `0.0` if the curve is empty.
+#[inline]
+pub fn empirical_curve_duration(points: &[[f64; 2]]) -> f64 {
+    points.last().map_or(0.0, |p| p[0])
+}
+
+/// Linear interpolation of a piecewise-linear curve at τ. Zero outside
+/// the anchor range. Mainly used by tests / display code.
+#[inline]
+pub fn rate_at_curve(points: &[[f64; 2]], t: f64) -> f64 {
+    if points.is_empty() {
+        return 0.0;
+    }
+    let first = points[0];
+    let last = points[points.len() - 1];
+    if t < first[0] || t > last[0] {
+        return 0.0;
+    }
+    let idx = points.partition_point(|p| p[0] <= t);
+    if idx == 0 {
+        return first[1];
+    }
+    if idx >= points.len() {
+        return last[1];
+    }
+    let lo = points[idx - 1];
+    let hi = points[idx];
+    let span = hi[0] - lo[0];
+    if span == 0.0 {
+        return hi[1];
+    }
+    let alpha = (t - lo[0]) / span;
+    lo[1] + alpha * (hi[1] - lo[1])
+}
+
+fn validate_empirical_points(points: &[[f64; 2]]) -> Result<(), String> {
+    if points.is_empty() {
+        return Err("infection_rate empirical schedule must have at least one point".to_string());
+    }
+    if points[0][0] < 0.0 {
+        return Err(format!(
+            "infection_rate first point time must be non-negative, got {}",
+            points[0][0]
+        ));
+    }
+    let mut prev_t = f64::NEG_INFINITY;
+    for [t, r] in points {
+        if !t.is_finite() {
+            return Err(format!("infection_rate point time must be finite, got {t}"));
+        }
+        if !r.is_finite() || *r < 0.0 {
+            return Err(format!(
+                "infection_rate point rate must be finite and non-negative, got {r}"
+            ));
+        }
+        if *t < prev_t {
+            return Err(format!(
+                "infection_rate points must be sorted by time, got {t} after {prev_t}"
+            ));
+        }
+        prev_t = *t;
+    }
+    Ok(())
 }
 
 impl InfectionRate {
     /// Rate at elapsed time `τ`. For `Empirical`, linear interpolation
     /// between anchor points; **zero outside the anchor range** (latent
     /// before `points[0].0`, recovered after `points.last().0`).
+    /// For `Library`, returns 0 — there is no single curve; use
+    /// `rate_at_for_curve` with a specific curve from the library.
     #[cfg_attr(not(test), allow(dead_code))]
     pub fn rate_at(&self, t: f64) -> f64 {
         match self {
             InfectionRate::Constant { value, .. } => *value,
-            InfectionRate::Empirical { points } => {
-                if points.is_empty() {
-                    return 0.0;
-                }
-                let first = points[0];
-                let last = points[points.len() - 1];
-                if t < first[0] || t > last[0] {
-                    return 0.0;
-                }
-                let idx = points.partition_point(|p| p[0] <= t);
-                if idx == 0 {
-                    return first[1];
-                }
-                if idx >= points.len() {
-                    return last[1];
-                }
-                let lo = points[idx - 1];
-                let hi = points[idx];
-                let span = hi[0] - lo[0];
-                if span == 0.0 {
-                    return hi[1];
-                }
-                let alpha = (t - lo[0]) / span;
-                lo[1] + alpha * (hi[1] - lo[1])
-            }
+            InfectionRate::Empirical { points } => rate_at_curve(points, t),
+            InfectionRate::Library { .. } => 0.0,
         }
     }
 
@@ -62,36 +175,15 @@ impl InfectionRate {
     /// the anchor range. Used with `inverse_cum_rate` for inverse-CDF
     /// sampling of the next event time in a non-homogeneous Poisson
     /// process. `Constant` is unbounded; `Empirical` saturates at the
-    /// total integral past `points.last().0`.
+    /// total integral past `points.last().0`. `Library` panics — the
+    /// caller must dispatch through the per-person assigned curve.
     pub fn cum_rate(&self, t: f64) -> f64 {
-        if t <= 0.0 {
-            return 0.0;
-        }
         match self {
-            InfectionRate::Constant { value, .. } => value * t,
-            InfectionRate::Empirical { points } => {
-                if points.is_empty() {
-                    return 0.0;
-                }
-                let t0 = points[0][0];
-                if t <= t0 {
-                    return 0.0;
-                }
-                let mut acc = 0.0;
-                for i in 0..points.len() - 1 {
-                    let [ti, ri] = points[i];
-                    let [tj, rj] = points[i + 1];
-                    if t >= tj {
-                        acc += 0.5 * (ri + rj) * (tj - ti);
-                    } else {
-                        let dt = t - ti;
-                        let slope = (rj - ri) / (tj - ti);
-                        let r_at_t = ri + slope * dt;
-                        return acc + 0.5 * (ri + r_at_t) * dt;
-                    }
-                }
-                // t ≥ last anchor: rate is 0 after, so cum stays at total.
-                acc
+            InfectionRate::Constant { value, .. } if t > 0.0 => value * t,
+            InfectionRate::Constant { .. } => 0.0,
+            InfectionRate::Empirical { points } => empirical_cum_rate(points, t),
+            InfectionRate::Library { .. } => {
+                panic!("cum_rate called on Library variant; use the per-person curve")
             }
         }
     }
@@ -99,6 +191,7 @@ impl InfectionRate {
     /// Solves `cum_rate(τ) = c` for `τ ≥ 0`. Returns `None` when `c`
     /// exceeds the schedule's total cumulative hazard (i.e. the curve
     /// has been exhausted — the person is effectively done transmitting).
+    /// `Library` panics — see `cum_rate`.
     pub fn inverse_cum_rate(&self, c: f64) -> Option<f64> {
         if c < 0.0 {
             return None;
@@ -114,52 +207,29 @@ impl InfectionRate {
                     Some(c / value)
                 }
             }
-            InfectionRate::Empirical { points } => {
-                if points.is_empty() {
-                    return None;
-                }
-                // Rate is 0 for τ < points[0].0, so cum stays at 0 there;
-                // for c > 0 we always start integrating from the first
-                // anchor.
-                let mut acc = 0.0;
-                for i in 0..points.len() - 1 {
-                    let [ti, ri] = points[i];
-                    let [tj, rj] = points[i + 1];
-                    let seg = 0.5 * (ri + rj) * (tj - ti);
-                    if c > acc + seg {
-                        acc += seg;
-                        continue;
-                    }
-                    let extra = c - acc;
-                    let span = tj - ti;
-                    let slope = (rj - ri) / span;
-                    // Solve r_i·u + slope/2·u² = extra for u ∈ [0, span].
-                    if slope == 0.0 {
-                        // ri > 0 here: zero-rate segments have seg = 0,
-                        // so we'd only reach this with c == acc, which
-                        // implies extra == 0 — almost surely impossible
-                        // in the hot path where e ~ Exp(1) is continuous.
-                        return Some(ti + extra / ri);
-                    }
-                    let disc = (ri * ri + 2.0 * slope * extra).max(0.0);
-                    let u = (-ri + disc.sqrt()) / slope;
-                    return Some(ti + u);
-                }
-                // c exceeds the curve's total integrated hazard.
-                None
+            InfectionRate::Empirical { points } => empirical_inverse_cum_rate(points, c),
+            InfectionRate::Library { .. } => {
+                panic!("inverse_cum_rate called on Library variant; use the per-person curve")
             }
         }
     }
 
     /// Duration of the infectious period. For `Constant` this is the
     /// mean of the `Exp` recovery distribution; for `Empirical` it's
-    /// the curve's support (`points.last().0`), at which recovery is
-    /// deterministic. Used for expected-R₀ display and reporting.
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// the curve's support (`points.last().0`); for `Library` it's the
+    /// mean curve-support over the library (used only for display).
+    #[allow(dead_code)]
     pub fn duration(&self) -> f64 {
         match self {
             InfectionRate::Constant { duration, .. } => *duration,
-            InfectionRate::Empirical { points } => points.last().map_or(0.0, |p| p[0]),
+            InfectionRate::Empirical { points } => empirical_curve_duration(points),
+            InfectionRate::Library { rates } => {
+                if rates.is_empty() {
+                    return 0.0;
+                }
+                let total: f64 = rates.iter().map(|r| empirical_curve_duration(r)).sum();
+                total / rates.len() as f64
+            }
         }
     }
 
@@ -177,35 +247,16 @@ impl InfectionRate {
                     ));
                 }
             }
-            InfectionRate::Empirical { points } => {
-                if points.is_empty() {
+            InfectionRate::Empirical { points } => validate_empirical_points(points)?,
+            InfectionRate::Library { rates } => {
+                if rates.is_empty() {
                     return Err(
-                        "infection_rate empirical schedule must have at least one point"
-                            .to_string(),
+                        "infection_rate library must contain at least one curve".to_string()
                     );
                 }
-                if points[0][0] < 0.0 {
-                    return Err(format!(
-                        "infection_rate first point time must be non-negative, got {}",
-                        points[0][0]
-                    ));
-                }
-                let mut prev_t = f64::NEG_INFINITY;
-                for [t, r] in points {
-                    if !t.is_finite() {
-                        return Err(format!("infection_rate point time must be finite, got {t}"));
-                    }
-                    if !r.is_finite() || *r < 0.0 {
-                        return Err(format!(
-                            "infection_rate point rate must be finite and non-negative, got {r}"
-                        ));
-                    }
-                    if *t < prev_t {
-                        return Err(format!(
-                            "infection_rate points must be sorted by time, got {t} after {prev_t}"
-                        ));
-                    }
-                    prev_t = *t;
+                for (i, curve) in rates.iter().enumerate() {
+                    validate_empirical_points(curve)
+                        .map_err(|e| format!("infection_rate library curve #{i}: {e}"))?;
                 }
             }
         }

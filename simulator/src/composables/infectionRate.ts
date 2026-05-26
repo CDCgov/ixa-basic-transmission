@@ -2,9 +2,11 @@
 // wasm boundary:
 //   { type: "constant", value, duration }
 //   { type: "empirical", points: [[τ, rate], ...] }    (duration = points.last().τ)
+//   { type: "library", rates: [[[τ, rate], ...], ...] } (per-person curves)
 export type InfectionRate =
   | { type: "constant"; value: number; duration: number }
-  | { type: "empirical"; points: [number, number][] };
+  | { type: "empirical"; points: [number, number][] }
+  | { type: "library"; rates: [number, number][][] };
 
 // Used when switching Constant → Empirical from a UI with no curve yet.
 export const DEFAULT_EMPIRICAL_POINTS: [number, number][] = [
@@ -21,6 +23,17 @@ export const DEFAULT_CONSTANT: InfectionRate = {
   duration: 3.0,
 };
 
+/// Trapezoidal area under one piecewise-linear curve.
+function curveArea(points: [number, number][]): number {
+  let acc = 0;
+  for (let i = 0; i < points.length - 1; i++) {
+    const [ti, ri] = points[i];
+    const [tj, rj] = points[i + 1];
+    acc += 0.5 * (ri + rj) * (tj - ti);
+  }
+  return acc;
+}
+
 /// Last anchor's time = the deterministic infectious duration for Empirical.
 export function empiricalDuration(rate: InfectionRate): number {
   if (rate.type !== "empirical" || rate.points.length === 0) return 0;
@@ -28,26 +41,28 @@ export function empiricalDuration(rate: InfectionRate): number {
 }
 
 /// Expected R₀: value · duration for Constant; trapezoidal area under
-/// the curve for Empirical.
+/// the curve for Empirical; mean area across the library for Library.
 export function expectedR0(rate: InfectionRate): number {
   if (rate.type === "constant") {
     return rate.value * rate.duration;
   }
-  let acc = 0;
-  for (let i = 0; i < rate.points.length - 1; i++) {
-    const [ti, ri] = rate.points[i];
-    const [tj, rj] = rate.points[i + 1];
-    acc += 0.5 * (ri + rj) * (tj - ti);
+  if (rate.type === "library") {
+    if (!rate.rates.length) return 0;
+    const total = rate.rates.reduce((sum, c) => sum + curveArea(c), 0);
+    return total / rate.rates.length;
   }
-  return acc;
+  return curveArea(rate.points);
 }
 
 /// Switch variant, preserving as much state as we can. Going to constant
 /// uses the current curve's duration as the new mean period; going to
-/// empirical seeds a default viral-load-shaped curve.
+/// empirical seeds a default viral-load-shaped curve; going to library
+/// expects the caller to seed `rates` itself (it has no good default
+/// here — the library payload lives in `virtual:rateLibrary`).
 export function withRateType(
   current: InfectionRate,
-  next: "constant" | "empirical",
+  next: "constant" | "empirical" | "library",
+  defaultLibrary?: [number, number][][],
 ): InfectionRate {
   if (next === current.type) return current;
   if (next === "constant") {
@@ -56,6 +71,15 @@ export function withRateType(
       value: 0.5,
       duration: empiricalDuration(current) || 3.0,
     };
+  }
+  if (next === "library") {
+    const rates =
+      defaultLibrary && defaultLibrary.length
+        ? defaultLibrary.map((c) => c.map((p) => [...p] as [number, number]))
+        : [
+            DEFAULT_EMPIRICAL_POINTS.map((p) => [...p]) as [number, number][],
+          ];
+    return { type: "library", rates };
   }
   return {
     type: "empirical",
@@ -106,4 +130,58 @@ export function withPointRemoved(rate: InfectionRate, i: number): InfectionRate 
     .filter((_, idx) => idx !== i)
     .map((p) => [...p] as [number, number]);
   return { type: "empirical", points };
+}
+
+/// Parse a CSV string of the shape produced by R's `write.csv` / the
+/// bundled library file: header row `id,time,value`, one row per anchor
+/// point. Throws on unparseable rows. Rows are grouped by `id` and
+/// sorted by `time` within each group. The id order is the natural
+/// sort of the ids (numeric if all numeric, otherwise string).
+export function parseRateLibraryCsv(text: string): [number, number][][] {
+  const lines = text.split(/\r?\n/);
+  let header = -1;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) continue;
+    if (/^id\s*,/i.test(line)) {
+      header = i;
+      break;
+    }
+    // First non-empty line that doesn't look like a header → assume
+    // headerless data.
+    header = i - 1;
+    break;
+  }
+  const groups = new Map<string, [number, number][]>();
+  for (let i = header + 1; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) continue;
+    const parts = line.split(",").map((p) => p.trim());
+    if (parts.length < 3) {
+      throw new Error(`row ${i + 1}: expected 3 columns, got ${parts.length}`);
+    }
+    const [idCol, timeCol, valueCol] = parts;
+    const t = Number(timeCol);
+    const v = Number(valueCol);
+    if (!Number.isFinite(t) || !Number.isFinite(v)) {
+      throw new Error(`row ${i + 1}: non-numeric time/value`);
+    }
+    const arr = groups.get(idCol) ?? [];
+    arr.push([t, v]);
+    groups.set(idCol, arr);
+  }
+  if (!groups.size) {
+    throw new Error("no data rows found");
+  }
+  const ids = [...groups.keys()].sort((a, b) => {
+    const na = Number(a);
+    const nb = Number(b);
+    if (Number.isFinite(na) && Number.isFinite(nb)) return na - nb;
+    return a.localeCompare(b);
+  });
+  return ids.map((id) => {
+    const pts = groups.get(id)!.slice();
+    pts.sort((a, b) => a[0] - b[0]);
+    return pts;
+  });
 }

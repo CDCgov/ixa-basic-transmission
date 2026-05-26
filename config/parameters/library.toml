@@ -1,0 +1,17 @@
+name = "Library of empirical curves"
+description = "Per-person heterogeneity: each person draws one curve uniformly from the bundled library of fitted infectiousness profiles."
+
+[parameters]
+population = 10000
+initialInfections = 5
+seed = 0
+maxTime = 100
+nSimulations = 20
+
+# `rates` is intentionally empty — the presets Vite plugin expands it to
+# the bundled `config/rates/library_empirical_rate_fns.csv` at build/dev
+# time. The frontend's RateEditor can then page through the curves and
+# users can swap in their own CSV.
+[parameters.infectionRate]
+type = "library"
+rates = []

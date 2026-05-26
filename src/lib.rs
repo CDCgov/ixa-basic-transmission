@@ -2,6 +2,7 @@ mod model;
 mod parameters;
 mod person;
 mod rate;
+mod rate_library;
 mod stats;
 
 use cfasim_model::{model_outputs, ModelOutput};
