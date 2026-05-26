@@ -19,11 +19,6 @@ use serde::{Deserialize, Serialize};
 ///   single shared scale. Each person gets one curve assigned at setup
 ///   and keeps it for their whole infectious period (per-person
 ///   heterogeneity). Empty curve list is rejected.
-/// - `Gamma { rate, duration }`: each person draws their own constant
-///   infectiousness rate and deterministic recovery time from two
-///   independent Gamma distributions at setup. Both `rate` and
-///   `duration` carry `{ shape, rate }` (the gamma rate parameter λ,
-///   not the infection rate). Per-person heterogeneity without curves.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(
     tag = "type",
@@ -45,27 +40,6 @@ pub enum InfectionRate {
         #[serde(default = "default_scale")]
         scale: f64,
     },
-    Gamma {
-        rate: GammaParams,
-        duration: GammaParams,
-    },
-}
-
-/// Shape-rate parameterization of a Gamma distribution. `mean = shape /
-/// rate`. (`rand_distr::Gamma::new` takes shape + scale, so callers
-/// convert with `scale = 1.0 / rate`.)
-#[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct GammaParams {
-    pub shape: f64,
-    pub rate: f64,
-}
-
-impl GammaParams {
-    /// Mean of the distribution. Used for display (expected R₀, etc.).
-    pub fn mean(&self) -> f64 {
-        self.shape / self.rate
-    }
 }
 
 fn default_scale() -> f64 {
@@ -265,10 +239,10 @@ pub fn rate_at_curve(points: &[[f64; 2]], t: f64) -> f64 {
 }
 
 /// Per-person effective rate. Resolved from `InfectionRate` plus any
-/// per-person state (a `Gamma` person's `DrawnRate`, a `Library`
-/// person's assigned curve). Once resolved, inverse-CDF sampling needs
-/// only this primitive — no further variant dispatch — so the
-/// transmission loop is one branch instead of four.
+/// per-person state (a `Library` person's assigned curve). Once
+/// resolved, inverse-CDF sampling needs only this primitive — no
+/// further variant dispatch — so the transmission loop is one branch
+/// instead of three.
 #[derive(Debug, Clone, Copy)]
 pub enum EffectiveRate<'a> {
     Constant { value: f64 },
@@ -292,8 +266,8 @@ impl EffectiveRate<'_> {
     }
 
     /// Solves `cum_rate(τ) = c`. `None` for `c < 0`, for a non-positive
-    /// or non-finite constant rate (e.g. a degenerate Gamma draw), or
-    /// when `c` exceeds the empirical curve's total integrated hazard.
+    /// or non-finite constant rate, or when `c` exceeds the empirical
+    /// curve's total integrated hazard.
     #[inline]
     pub fn inverse_cum_rate(&self, c: f64) -> Option<f64> {
         if c < 0.0 {
@@ -370,7 +344,7 @@ impl InfectionRate {
         match self {
             InfectionRate::Constant { value, .. } => *value,
             InfectionRate::Empirical { points, scale } => scale * rate_at_curve(points, t),
-            InfectionRate::Library { .. } | InfectionRate::Gamma { .. } => 0.0,
+            InfectionRate::Library { .. } => 0.0,
         }
     }
 
@@ -387,9 +361,6 @@ impl InfectionRate {
             InfectionRate::Empirical { points, scale } => scale * empirical_cum_rate(points, t),
             InfectionRate::Library { .. } => {
                 panic!("cum_rate called on Library variant; use the per-person curve")
-            }
-            InfectionRate::Gamma { .. } => {
-                panic!("cum_rate called on Gamma variant; use the per-person DrawnRate")
             }
         }
     }
@@ -422,9 +393,6 @@ impl InfectionRate {
             InfectionRate::Library { .. } => {
                 panic!("inverse_cum_rate called on Library variant; use the per-person curve")
             }
-            InfectionRate::Gamma { .. } => {
-                panic!("inverse_cum_rate called on Gamma variant; use the per-person DrawnRate")
-            }
         }
     }
 
@@ -444,7 +412,6 @@ impl InfectionRate {
                 let total: f64 = rates.iter().map(|r| empirical_curve_duration(r)).sum();
                 total / rates.len() as f64
             }
-            InfectionRate::Gamma { duration, .. } => duration.mean(),
         }
     }
 
@@ -478,29 +445,9 @@ impl InfectionRate {
                 }
                 validate_scale(*scale)?;
             }
-            InfectionRate::Gamma { rate, duration } => {
-                validate_gamma_params("rate", rate)?;
-                validate_gamma_params("duration", duration)?;
-            }
         }
         Ok(())
     }
-}
-
-fn validate_gamma_params(label: &str, p: &GammaParams) -> Result<(), String> {
-    if !p.shape.is_finite() || p.shape <= 0.0 {
-        return Err(format!(
-            "infection_rate gamma {label}.shape must be a finite positive number, got {}",
-            p.shape
-        ));
-    }
-    if !p.rate.is_finite() || p.rate <= 0.0 {
-        return Err(format!(
-            "infection_rate gamma {label}.rate must be a finite positive number, got {}",
-            p.rate
-        ));
-    }
-    Ok(())
 }
 
 #[cfg(test)]
@@ -808,110 +755,6 @@ mod tests {
         assert_eq!(r, back);
         // Sanity-check the wire shape.
         assert!(json.contains("\"type\":\"empirical\""));
-    }
-
-    #[test]
-    fn gamma_validate_accepts_positive_params() {
-        let r = InfectionRate::Gamma {
-            rate: GammaParams {
-                shape: 2.0,
-                rate: 0.25,
-            },
-            duration: GammaParams {
-                shape: 3.0,
-                rate: 1.0,
-            },
-        };
-        r.validate().unwrap();
-    }
-
-    #[test]
-    fn gamma_rejects_non_positive_params() {
-        for params in [
-            GammaParams {
-                shape: 0.0,
-                rate: 1.0,
-            },
-            GammaParams {
-                shape: -1.0,
-                rate: 1.0,
-            },
-            GammaParams {
-                shape: f64::NAN,
-                rate: 1.0,
-            },
-            GammaParams {
-                shape: 1.0,
-                rate: 0.0,
-            },
-            GammaParams {
-                shape: 1.0,
-                rate: -0.5,
-            },
-            GammaParams {
-                shape: 1.0,
-                rate: f64::INFINITY,
-            },
-        ] {
-            let r = InfectionRate::Gamma {
-                rate: params,
-                duration: GammaParams {
-                    shape: 1.0,
-                    rate: 1.0,
-                },
-            };
-            assert!(r.validate().is_err(), "expected error for {params:?}");
-        }
-    }
-
-    #[test]
-    fn gamma_mean_duration() {
-        let r = InfectionRate::Gamma {
-            rate: GammaParams {
-                shape: 2.0,
-                rate: 0.5,
-            },
-            duration: GammaParams {
-                shape: 6.0,
-                rate: 2.0,
-            },
-        };
-        assert!((r.duration() - 3.0).abs() < 1e-12);
-    }
-
-    #[test]
-    #[should_panic(expected = "Gamma")]
-    fn gamma_cum_rate_panics() {
-        let r = InfectionRate::Gamma {
-            rate: GammaParams {
-                shape: 1.0,
-                rate: 1.0,
-            },
-            duration: GammaParams {
-                shape: 1.0,
-                rate: 1.0,
-            },
-        };
-        let _ = r.cum_rate(1.0);
-    }
-
-    #[test]
-    fn gamma_serde_roundtrip_json() {
-        let r = InfectionRate::Gamma {
-            rate: GammaParams {
-                shape: 2.0,
-                rate: 0.25,
-            },
-            duration: GammaParams {
-                shape: 3.0,
-                rate: 1.0,
-            },
-        };
-        let json = serde_json::to_string(&r).unwrap();
-        let back: InfectionRate = serde_json::from_str(&json).unwrap();
-        assert_eq!(r, back);
-        assert!(json.contains("\"type\":\"gamma\""));
-        assert!(json.contains("\"shape\":2.0"));
     }
 
     #[test]
