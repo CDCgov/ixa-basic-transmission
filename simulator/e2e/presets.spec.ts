@@ -31,9 +31,9 @@ test.describe("Parameter presets", () => {
     await page.getByRole("option", { name: "Fast outbreak" }).click();
 
     // URL only carries values that differ from defaults; Fast outbreak
-    // bumps maxTime. `infectionRate` is excluded from URL sync (it's an
-    // object now, holding both rate value and duration); the preset
-    // selection itself is the source of truth for that field.
+    // bumps maxTime. `infectionRate` is excluded from URL sync (it's a
+    // tagged union and the sync layer can only enumerate one variant of
+    // defaults at a time — see issue filed upstream).
     await expect(page).toHaveURL(/maxTime=60/);
     await expect(preset).toHaveText(/Fast outbreak/);
 

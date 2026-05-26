@@ -30,9 +30,12 @@ const defaults = {
 };
 const params = reactive(structuredClone(defaults));
 
-// `infectionRate` is an object, which the URL-sync layer would stringify
-// as "[object Object]". Keep it out of the URL — presets / the rate
-// editor / the JSON editor are the supported ways to set a schedule.
+// `infectionRate` is a tagged union (Constant | Empirical). `useUrlParams`
+// builds its leaf set from `defaults`, which can only represent one variant
+// at a time — so the other variant's fields (e.g. `points` for Empirical)
+// would silently fall off the URL. Keep it out of sync entirely until
+// upstream supports variant-shaped fields. Presets / the rate editor /
+// the JSON editor are the supported ways to set a schedule.
 const { reset } = useUrlParams(params, defaults, {
   router: useRouter(),
   route: useRoute(),
