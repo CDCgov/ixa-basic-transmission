@@ -8,6 +8,7 @@ pub mod parameters;
 pub mod person;
 pub mod rate;
 pub mod rate_library;
+pub mod settings;
 pub mod stats;
 
 use cfasim_model::{model_outputs, ModelOutput};
@@ -16,6 +17,7 @@ use wasm_bindgen::prelude::*;
 
 use crate::parameters::Parameters;
 use crate::rate::InfectionRate;
+use crate::settings::SettingType;
 
 /// Arguments accepted by `simulate`. JS passes these as a single JSON string
 /// (see `Page.vue`); `serde(rename_all = "camelCase")` bridges the JS field
@@ -29,6 +31,8 @@ struct SimulateArgs {
     seed: u32,
     max_time: f64,
     n_simulations: u32,
+    #[serde(default)]
+    settings: Vec<SettingType>,
 }
 
 /// Arguments accepted by `simulate_batch`. Same as `SimulateArgs` but
@@ -45,6 +49,8 @@ struct SimulateBatchArgs {
     max_time: f64,
     batch_size: u32,
     seed_offset: u32,
+    #[serde(default)]
+    settings: Vec<SettingType>,
 }
 
 struct BatchData {
@@ -91,6 +97,7 @@ pub fn simulate(args: &str) -> JsValue {
         initial_infections: args.initial_infections as usize,
         seed: args.seed as u64,
         max_time: args.max_time,
+        settings: args.settings,
     };
 
     let BatchData {
@@ -128,6 +135,7 @@ pub fn simulate_batch(args: &str) -> JsValue {
         initial_infections: args.initial_infections as usize,
         seed: args.seed as u64,
         max_time: args.max_time,
+        settings: args.settings,
     };
 
     let BatchData {

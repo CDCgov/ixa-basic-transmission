@@ -6,6 +6,7 @@ use crate::parameters::Parameters;
 use crate::person::{InfectionStatus, InfectionTime, Person, PersonId};
 use crate::rate::{empirical_curve_duration, Curve, EffectiveRate, InfectionRate};
 use crate::rate_library::{AssignedRate, Rate, RateLibraryData};
+use crate::settings::SettingsExt;
 use crate::stats::ModelStats;
 
 define_global_property!(Params, Parameters);
@@ -28,7 +29,10 @@ trait InfectionLoop {
     fn get_stats(&self) -> &ModelStats;
     #[cfg_attr(not(test), allow(dead_code))]
     fn infected_people(&self) -> usize;
-    fn random_person(&mut self) -> Option<PersonId>;
+    fn max_total_infectiousness_multiplier(&self, person: PersonId) -> f64;
+    fn current_total_infectiousness_multiplier(&self, person: PersonId) -> f64;
+    fn evaluate_forecast(&mut self, infector: PersonId, forecasted: f64) -> bool;
+    fn infection_attempt(&mut self, infector: PersonId);
     fn infect_person(&mut self, p: PersonId, t: Option<f64>);
     fn recover_person(&mut self, p: PersonId);
     fn schedule_recovery(&mut self, p: PersonId);
@@ -46,9 +50,6 @@ impl InfectionLoop for Context {
     }
     fn infected_people(&self) -> usize {
         self.query_entity_count(with!(Person, InfectionStatus::Infectious))
-    }
-    fn random_person(&mut self) -> Option<PersonId> {
-        self.sample_entity(InfectionRng, Person)
     }
     fn infect_person(&mut self, p: PersonId, t: Option<f64>) {
         if self.get_property::<_, InfectionStatus>(p) != InfectionStatus::Susceptible {
@@ -69,16 +70,11 @@ impl InfectionLoop for Context {
         self.get_data_mut(ModelStatsPlugin).record_recovery();
     }
     fn schedule_recovery(&mut self, p: PersonId) {
-        // For `Empirical`, recovery is deterministic at the end of the
-        // infectiousness curve. For `Constant`, recovery follows
-        // `Exp(1/duration)` (the variant's `duration` field is the mean).
-        // For `Library`, recovery is deterministic at the end of the
-        // person's assigned curve.
+        // For empirical infectiousness curves, recovery is deterministic at the
+        // end of the assigned curve. For `Constant`, recovery follows
+        // `Exp(1/duration)` (the `duration` field is the mean).
         let t_inf = self.get_property::<_, InfectionTime>(p).0;
         let recovery_dt = match self.get_params().infection_rate {
-            // Recovery time is determined by the curve's support — the
-            // `scale` factor multiplies the rate at each anchor, not the
-            // anchor times, so it doesn't shift the recovery boundary.
             InfectionRate::Empirical { ref points, .. } => empirical_curve_duration(points),
             InfectionRate::Constant { duration, .. } => {
                 self.sample_distr(RecoveryRng, Exp::new(1.0 / duration).unwrap())
@@ -97,9 +93,7 @@ impl InfectionLoop for Context {
     }
     fn effective_rate(&self, person: PersonId) -> EffectiveRate<'_> {
         // Resolve `InfectionRate` + per-person state into the primitive
-        // the inverse-CDF math actually needs. Hot path: every variant
-        // is a pair of property/data lookups at most, and the empirical
-        // curve is borrowed (no clone).
+        // the inverse-CDF math actually needs
         match &self.get_params().infection_rate {
             InfectionRate::Constant { value, .. } => EffectiveRate::Constant { value: *value },
             InfectionRate::Empirical { points, scale } => EffectiveRate::Empirical {
@@ -116,34 +110,88 @@ impl InfectionLoop for Context {
             }
         }
     }
+
+    fn max_total_infectiousness_multiplier(&self, person: PersonId) -> f64 {
+        // Upper bound on per-person scaling of the intrinsic rate. The
+        // forecast samples on this upper-bound process and `evaluate_forecast`
+        // thins down to the true marginal rate. When settings are disabled
+        // this is 1.0 (a no-op).
+        self.settings_max_multiplier(person)
+    }
+
+    fn current_total_infectiousness_multiplier(&self, person: PersonId) -> f64 {
+        // True per-person scaling: `Σ p_s · M_s` over the person's settings
+        // (matching ixa-epi-isolation). Equals 1.0 when settings are disabled.
+        self.settings_current_multiplier(person)
+    }
+
+    fn infection_attempt(&mut self, infector: PersonId) {
+        if let Some(target) = self.settings_sample_contact(infector) {
+            let now = self.get_current_time();
+            self.infect_person(target, Some(now));
+        }
+    }
+
+    fn evaluate_forecast(&mut self, infector: PersonId, forecasted: f64) -> bool {
+        // Thinning step: the forecast was sampled on the upper-bound rate
+        // (intrinsic × max_total_infectiousness_multiplier), so the actual
+        // current rate is ≤ forecasted. Accept the event with probability
+        // current / forecasted; when the two are equal (e.g. settings
+        // disabled, where both multipliers are 1.0) the branch short-
+        // circuits and consumes no randomness.
+        let t_inf = self.get_property::<_, InfectionTime>(infector).0;
+        let elapsed = self.get_current_time() - t_inf;
+        let intrinsic = self.effective_rate(infector).rate(elapsed);
+        let current = intrinsic * self.current_total_infectiousness_multiplier(infector);
+
+        assert!(
+            current <= forecasted + 1e-10,
+            "person {infector:?}: current rate {current} exceeds forecasted upper bound {forecasted}"
+        );
+
+        if current < forecasted {
+            self.sample_bool(InfectionRng, current / forecasted)
+        } else {
+            true
+        }
+    }
+
     fn schedule_next_infection_attempt(&mut self, infector: PersonId) {
-        // Inverse-CDF sampling of the next event time for a person's
-        // intrinsic infectiousness profile λ(τ), where τ = time since
-        // this person became infectious. Draw e ~ Exp(1) and solve
-        // Λ(τ_next) − Λ(elapsed) = e for τ_next, with elapsed = now − t_inf.
+        // Inverse-CDF sampling on the upper-bound process
+        // λ_max(τ) = λ(τ) · max_total_infectiousness_multiplier.
+        // Draw e ~ Exp(1) and solve Λ_max(τ_next) − Λ_max(elapsed) = e,
+        // which rearranges to Λ(τ_next) = Λ(elapsed) + e / max_mult.
         // `None` from `inverse_cum_rate` means the curve is exhausted —
         // no further attempts for this person.
         let t_inf = self.get_property::<_, InfectionTime>(infector).0;
         let elapsed = self.get_current_time() - t_inf;
-        // Sample `e` before resolving the effective rate so the &mut
-        // borrow on `self` doesn't collide with the &self borrow that
-        // backs the empirical curve in `EffectiveRate::Empirical`.
+        let max_mult = self.max_total_infectiousness_multiplier(infector);
+
+        // A zero upper bound means there are no contacts this person can
+        // reach (e.g. they're in a size-1 household and the model is in
+        // settings mode). Skip the inverse-CDF — `e / 0 = inf` would
+        // otherwise schedule a plan at t = ∞.
+        if max_mult <= 0.0 {
+            return;
+        }
+
         let e: f64 = self.sample_distr(InfectionRng, Exp::new(1.0).unwrap());
-        let next_elapsed = {
+        let forecast = {
             let eff = self.effective_rate(infector);
-            eff.inverse_cum_rate(eff.cum_rate(elapsed) + e)
+            eff.inverse_cum_rate(eff.cum_rate(elapsed) + e / max_mult)
+                .map(|tau| (tau, eff.rate(tau) * max_mult))
         };
-        let Some(elapsed_next) = next_elapsed else {
+        let Some((elapsed_next, forecasted)) = forecast else {
             return;
         };
         let next_time = t_inf + elapsed_next;
         self.add_plan(next_time, move |context| {
+            // The person is no longer infected, exit the loop
             if context.get_property::<_, InfectionStatus>(infector) != InfectionStatus::Infectious {
                 return;
             }
-            if let Some(target) = context.random_person() {
-                let now = context.get_current_time();
-                context.infect_person(target, Some(now));
+            if context.evaluate_forecast(infector, forecasted) {
+                context.infection_attempt(infector);
             }
             context.schedule_next_infection_attempt(infector);
         });
@@ -205,6 +253,11 @@ impl InfectionLoop for Context {
                 self.set_property(p, AssignedRate(Some(assigned)));
             }
         }
+
+        // Optional settings-based contact structure. No-op when
+        // `params.settings` is empty.
+        let settings_types = self.get_params().settings.clone();
+        self.settings_setup(&settings_types);
 
         // Generate and record initial infections
         let sampled: Vec<PersonId> = self.sample_entities(
@@ -299,9 +352,10 @@ mod tests {
     #[allow(clippy::cast_precision_loss)]
     fn infection_attempt_times_match_constant_rate_poisson() {
         // One infector + one contact, with the contact reset to Susceptible
-        // on each infection so the pool stays constant. Each attempt picks
-        // uniformly, so the contact is hit with prob 1/2. Expected:
-        //   mean count in [0, T] = rate · 0.5 · T
+        // on each infection so the pool stays constant. The infector is
+        // excluded from contact selection, so every attempt hits the contact.
+        // Expected:
+        //   mean count in [0, T] = rate · T
         //   pooled infection times ~ Uniform(0, T)
         let num_sims: u64 = 20_000;
         let infection_rate = 5.0;
@@ -320,6 +374,7 @@ mod tests {
                 initial_infections: 1,
                 seed,
                 max_time,
+                settings: vec![],
             };
             let mut ctx = Context::new();
             ctx.set_global_property_value(Params, params).unwrap();
@@ -344,7 +399,7 @@ mod tests {
         assert!(n_samples > 100, "expected many samples, got {n_samples}");
 
         let observed_mean = n_samples as f64 / num_sims as f64;
-        let expected_mean = infection_rate * 0.5 * max_time;
+        let expected_mean = infection_rate * max_time;
         assert_almost_eq!(observed_mean, expected_mean, 0.05);
 
         let ks = ks_stat(&mut samples, |x| {
@@ -394,6 +449,7 @@ mod tests {
                 initial_infections: 1,
                 seed,
                 max_time,
+                settings: vec![],
             };
             let mut ctx = Context::new();
             ctx.set_global_property_value(Params, params).unwrap();
@@ -417,9 +473,9 @@ mod tests {
         let n_samples = samples.len();
         assert!(n_samples > 100, "expected many samples, got {n_samples}");
 
-        // E[count] = Λ(T) · P(contact hit) = 5.0 · 0.5 = 2.5 per sim.
+        // E[count] = Λ(T) = 5.0 per sim (every attempt hits the single contact).
         let observed_mean = n_samples as f64 / num_sims as f64;
-        let expected_mean = big_lambda * 0.5;
+        let expected_mean = big_lambda;
         assert_almost_eq!(observed_mean, expected_mean, 0.05);
 
         let ks = ks_stat(&mut samples, |x| {
@@ -458,6 +514,7 @@ mod tests {
             initial_infections: population,
             seed: 0,
             max_time,
+            settings: vec![],
         };
         let mut ctx = Context::new();
         ctx.set_global_property_value(Params, params).unwrap();
@@ -509,6 +566,7 @@ mod tests {
             initial_infections,
             seed: 0,
             max_time: 50.0,
+            settings: vec![],
         };
         let stats = run(params);
         assert_eq!(stats.cum_incidence(), 0);
@@ -522,7 +580,8 @@ mod tests {
     fn open_pool_cumulative_incidence_matches_cdf() {
         // One infector + N contacts, no cascade (bypass setup() to skip the
         // global hook), no reset. Each contact faces a constant hazard
-        // λ = rate / pop over T, so P(contact infected) = 1 − exp(−λT) and
+        // λ = rate / N (infector excluded) over T, so
+        // P(contact infected) = 1 − exp(−λT) and
         // E[cum_incidence] = N · (1 − exp(−λT)).
         let num_sims: u64 = 1_000;
         let population: usize = 6;
@@ -531,7 +590,7 @@ mod tests {
         let max_time: f64 = 5.0;
         let infectious_period: f64 = 1e6; // suppress recovery in the window
 
-        let lambda = infection_rate / population as f64;
+        let lambda = infection_rate / n_contacts as f64;
         let p_infected = 1.0 - f64::exp(-lambda * max_time);
         let expected_cases = n_contacts as f64 * p_infected;
 
@@ -546,6 +605,7 @@ mod tests {
                 initial_infections: 1,
                 seed,
                 max_time,
+                settings: vec![],
             };
             let mut ctx = Context::new();
             ctx.set_global_property_value(Params, params).unwrap();
@@ -584,6 +644,7 @@ mod tests {
                 initial_infections,
                 seed,
                 max_time: 0.0,
+                settings: vec![],
             };
             let mut ctx = Context::new();
             ctx.set_global_property_value(Params, params).unwrap();
@@ -612,7 +673,7 @@ mod tests {
         let lambda: f64 = 3.6;
         let max_time: f64 = 5.0;
 
-        let hazard = lambda / population as f64;
+        let hazard = lambda / n_contacts as f64;
         let p_infected = 1.0 - f64::exp(-hazard * max_time);
         let expected_cases = n_contacts as f64 * p_infected;
 
@@ -630,6 +691,7 @@ mod tests {
                 initial_infections: 1,
                 seed,
                 max_time,
+                settings: vec![],
             };
             let mut ctx = Context::new();
             ctx.set_global_property_value(Params, params).unwrap();
@@ -653,9 +715,11 @@ mod tests {
     fn empirical_step_schedule_matches_integrated_hazard() {
         // Piecewise-linear schedule that's effectively a step function:
         // λ = lambda_hi on [0, switch], drops to lambda_lo on [switch+ε, T].
-        // For a contact in an open pool of size `population`, the survival
-        // probability is exp(−∫ λ(t)/N dt). The integral over the step is
-        //     I = lambda_hi/N · switch + lambda_lo/N · (T − switch − ε),
+        // For a contact in an open pool of `n_contacts` (infector excluded),
+        // the survival probability is exp(−∫ λ(t)/n_contacts dt). The integral
+        // over the step is
+        //     I = lambda_hi/n_contacts · switch
+        //       + lambda_lo/n_contacts · (T − switch − ε),
         // ignoring the thin linear ramp at the switch (ε ≪ T).
         let num_sims: u64 = 2_000;
         let population: usize = 6;
@@ -667,7 +731,7 @@ mod tests {
         let max_time: f64 = 4.0;
 
         let integrated_hazard =
-            (lambda_hi * switch + lambda_lo * (max_time - switch - eps)) / population as f64;
+            (lambda_hi * switch + lambda_lo * (max_time - switch - eps)) / n_contacts as f64;
         let p_infected = 1.0 - f64::exp(-integrated_hazard);
         let expected_cases = n_contacts as f64 * p_infected;
 
@@ -687,6 +751,7 @@ mod tests {
                 initial_infections: 1,
                 seed,
                 max_time,
+                settings: vec![],
             };
             let mut ctx = Context::new();
             ctx.set_global_property_value(Params, params).unwrap();
@@ -726,6 +791,7 @@ mod tests {
             initial_infections: 5,
             seed: 42,
             max_time: 10.0,
+            settings: vec![],
         };
         let mut ctx = Context::new();
         ctx.set_global_property_value(Params, params).unwrap();
@@ -777,6 +843,7 @@ mod tests {
                 initial_infections: 3,
                 seed,
                 max_time: 20.0,
+                settings: vec![],
             };
             let p_emp = Parameters {
                 infection_rate: InfectionRate::Empirical {
@@ -814,6 +881,7 @@ mod tests {
             initial_infections: 0,
             seed: 7,
             max_time: 0.0,
+            settings: vec![],
         };
         let mut ctx = Context::new();
         ctx.set_global_property_value(Params, params).unwrap();
@@ -845,6 +913,7 @@ mod tests {
             initial_infections: 200,
             seed: 11,
             max_time: 50.0,
+            settings: vec![],
         };
 
         let recovery_times: Rc<RefCell<Vec<f64>>> = Rc::new(RefCell::new(Vec::new()));
@@ -873,5 +942,64 @@ mod tests {
             times.len(),
             "unexpected recovery time"
         );
+    }
+
+    #[test]
+    #[allow(clippy::cast_precision_loss)]
+    fn settings_match_marginal_rate_open_pool() {
+        // End-to-end check that the settings forecast + thinning pipeline
+        // produces the right marginal rate, mirroring the open-pool tests
+        // above (bypass `setup()` to avoid the cascade, no reset).
+        //
+        // One setting type, every person in one setting of size=population
+        // with alpha=1 → M = pop - 1. proportion = 1, so current = max = M.
+        // Per-contact constant hazard:
+        //   λ = base_rate · M / n_contacts  (n_contacts = pop - 1 = M, so λ = base_rate).
+        let num_sims: u64 = 1_000;
+        let population: usize = 6;
+        let n_contacts: usize = population - 1;
+        let base_rate: f64 = 0.7;
+        let max_time: f64 = 4.0;
+
+        let lambda = base_rate;
+        let p_infected = 1.0 - f64::exp(-lambda * max_time);
+        let expected_cases = n_contacts as f64 * p_infected;
+
+        let setting_type = crate::settings::SettingType {
+            name: "all".into(),
+            alpha: 1.0,
+            sizes: vec![(population, 1.0)],
+            proportion: 1.0,
+        };
+
+        let mut total: f64 = 0.0;
+        for seed in 0..num_sims {
+            let params = Parameters {
+                infection_rate: InfectionRate::Constant {
+                    value: base_rate,
+                    duration: 1e6, // suppress recovery in the window
+                },
+                population,
+                initial_infections: 1,
+                seed,
+                max_time,
+                settings: vec![setting_type.clone()],
+            };
+            let mut ctx = Context::new();
+            ctx.set_global_property_value(Params, params).unwrap();
+            ctx.init_random(seed);
+            let infector = ctx.add_entity(Person).unwrap();
+            for _ in 0..n_contacts {
+                ctx.add_entity(Person).unwrap();
+            }
+            ctx.settings_setup(&[setting_type.clone()]);
+            ctx.infect_person(infector, None);
+            ctx.schedule_next_infection_attempt(infector);
+            ctx.add_plan(max_time, |c| c.shutdown());
+            ctx.execute();
+            total += ctx.get_stats().cum_incidence() as f64;
+        }
+        let observed = total / num_sims as f64;
+        assert_almost_eq!(observed, expected_cases, 0.03);
     }
 }

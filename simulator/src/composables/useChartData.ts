@@ -3,6 +3,7 @@ import { ModelOutput } from "cfasim-ui/shared";
 import type { TypedColumn } from "cfasim-ui/shared";
 import type { ChartAnnotation } from "cfasim-ui/charts";
 import { expectedR0, type InfectionRate } from "./infectionRate";
+import type { SettingType } from "./settings";
 
 // Chart layers, in render order:
 //   1. The N stochastic trajectories as a translucent blue "fan" (no legend).
@@ -76,6 +77,7 @@ function buildSeries(
 export function useChartData(
   outputs: Ref<Record<string, ModelOutput> | undefined>,
   infectionRate: Ref<InfectionRate>,
+  settings: Ref<SettingType[]>,
 ) {
   const incidenceAnnotations = computed<ChartAnnotation[]>(() => {
     const s = outputs.value?.series;
@@ -114,8 +116,8 @@ export function useChartData(
   ]);
 
   // Summary table: observed median attack rate (from the ensemble) plus
-  // the expected R₀. For Constant, R₀ = value · duration. For Empirical,
-  // R₀ ≈ ∫ λ(τ) dτ.
+  // the expected R₀ from `composables/infectionRate#expectedR0` — the
+  // random-mixing R₀ adjusted for the current settings configuration.
   const summary = computed(() => {
     const s = outputs.value?.summary;
     if (!s) return null;
@@ -125,7 +127,10 @@ export function useChartData(
       Number.isFinite(v) ? `${(v * 100).toFixed(1)}%` : "—";
     return {
       metric: ["R₀ (expected)", "Attack rate (observed median)"],
-      value: [fmtR0(expectedR0(infectionRate.value)), fmtAr(arMedian)],
+      value: [
+        fmtR0(expectedR0(infectionRate.value, settings.value)),
+        fmtAr(arMedian),
+      ],
     };
   });
 

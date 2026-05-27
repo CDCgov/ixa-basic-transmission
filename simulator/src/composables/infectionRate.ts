@@ -50,9 +50,10 @@ export function empiricalDuration(rate: InfectionRate): number {
   return rate.points[rate.points.length - 1][0];
 }
 
-/// Expected R₀: value · duration for Constant; scale · area-under-curve
-/// for Empirical; scale · mean-area-across-curves for Library.
-export function expectedR0(rate: InfectionRate): number {
+/// Expected number of transmission attempts per index under random
+/// mixing. Constant: `value · duration`. Empirical / Library: scaled
+/// area under the infectiousness curve.
+function expectedAttempts(rate: InfectionRate): number {
   if (rate.type === "constant") {
     return rate.value * rate.duration;
   }
@@ -62,6 +63,32 @@ export function expectedR0(rate: InfectionRate): number {
     return rate.scale * (total / rate.rates.length);
   }
   return rate.scale * curveArea(rate.points);
+}
+
+/// Expected R₀. With no settings this is just `expectedAttempts(rate)`
+/// (the random-mixing R₀). With settings active, transmission is
+/// confined to setting members, so we sum a first-generation estimate
+/// across settings:
+///   R₀ ≈ Σ_s E_n[(n − 1) · (1 − exp(−A · p_s · (n − 1)^(α_s − 1)))]
+/// where `A = expectedAttempts(rate)` and `(n − 1)^(α_s − 1)` is the
+/// per-target hazard scaling. Treats the index's susceptibles as
+/// freshly available (no within-setting chain — that's an epidemic-
+/// dynamics question, not an R₀ one).
+export function expectedR0(
+  rate: InfectionRate,
+  settings: import("./settings").SettingType[] = [],
+): number {
+  const attempts = expectedAttempts(rate);
+  if (!settings.length) return attempts;
+  let r0 = 0;
+  for (const s of settings) {
+    for (const [n, q] of s.sizes) {
+      if (n <= 1) continue;
+      const perTargetRate = attempts * s.proportion * Math.pow(n - 1, s.alpha - 1);
+      r0 += q * (n - 1) * (1 - Math.exp(-perTargetRate));
+    }
+  }
+  return r0;
 }
 
 /// Switch variant, preserving as much state as we can. Going to constant

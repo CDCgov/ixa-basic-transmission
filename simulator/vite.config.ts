@@ -89,6 +89,48 @@ function presetsPlugin(): Plugin {
   };
 }
 
+// Reads `../config/settings/*.{toml,json}` and emits a
+// `virtual:settingsLibrary` module so the frontend can offer pre-built
+// settings bundles (e.g. US Census household sizes plus community).
+// Each entry is `{ id, name, description, settings: SettingType[] }`.
+function settingsLibraryPlugin(): Plugin {
+  const id = "virtual:settingsLibrary";
+  const resolvedId = "\0" + id;
+  const dir = resolve(import.meta.dirname, "..", "config", "settings");
+  const isPresetFile = (f: string) => /\.(toml|json)$/i.test(f);
+  return {
+    name: "ixa-basic-transmission-settings-library",
+    resolveId(source) {
+      if (source === id) return resolvedId;
+    },
+    load(loadId) {
+      if (loadId !== resolvedId) return;
+      if (!existsSync(dir)) return `export default [];`;
+      const files = readdirSync(dir).filter(isPresetFile).sort();
+      const presets = files.map((f) => {
+        const text = readFileSync(resolve(dir, f), "utf-8");
+        const data = f.toLowerCase().endsWith(".json")
+          ? JSON.parse(text)
+          : parseToml(text);
+        return { id: f.replace(/\.(toml|json)$/i, ""), ...data };
+      });
+      return `export default ${JSON.stringify(presets)};`;
+    },
+    configureServer(server) {
+      server.watcher.add(dir);
+      const reload = (file: string) => {
+        if (!file.startsWith(dir) || !isPresetFile(file)) return;
+        const mod = server.moduleGraph.getModuleById(resolvedId);
+        if (mod) server.moduleGraph.invalidateModule(mod);
+        server.ws.send({ type: "full-reload" });
+      };
+      server.watcher.on("add", reload);
+      server.watcher.on("change", reload);
+      server.watcher.on("unlink", reload);
+    },
+  };
+}
+
 // Emits the rate-library CSV (parsed by `readRateLibrary`) as a
 // `virtual:rateLibrary` module — the frontend uses this as the bundled
 // default library.
@@ -136,5 +178,6 @@ export default defineConfig({
     cfasimWasm({ model: "..", name: "ixa_basic_transmission" }),
     presetsPlugin(),
     rateLibraryPlugin(),
+    settingsLibraryPlugin(),
   ],
 });

@@ -1,0 +1,31 @@
+name = "US (household + community)"
+description = "US Census Table HH-4 household-size distribution, 2025 (mean ≈ 2.5 people per household), plus a uniform community pool. Most attempts hit housemates; the community provides the cross-household path that lets epidemics propagate."
+
+# 2025 numbers from `census.gov/data/tables/time-series/demo/families/households.html`,
+# Table HH-4 ("Households by Size: 1960 to Present"). Last row "7+"
+# collapsed to size 7. Percentages rounded to 2 dp; sums to 1.00.
+[[settings]]
+name = "household"
+alpha = 1.0
+proportion = 0.6
+sizes = [
+    [1, 0.30],
+    [2, 0.34],
+    [3, 0.15],
+    [4, 0.12],
+    [5, 0.06],
+    [6, 0.02],
+    [7, 0.01],
+]
+
+# Community = "pick a random contact from the whole population". The model
+# truncates `sizes` to the actual population at setup, so 100000 just
+# guarantees a single community containing everyone. `alpha = 0` makes
+# the per-target hazard independent of community size — the multiplier
+# `(n − 1)^0 = 1` cancels against the uniform `1/(n − 1)` per-attempt
+# split, recovering classic random-mixing semantics scaled by `proportion`.
+[[settings]]
+name = "community"
+alpha = 0.0
+proportion = 0.4
+sizes = [[100000, 1.0]]

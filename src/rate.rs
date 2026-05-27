@@ -250,6 +250,16 @@ pub enum EffectiveRate<'a> {
 }
 
 impl EffectiveRate<'_> {
+    /// Instantaneous rate `λ(τ)`. `Constant` is time-invariant; `Empirical`
+    /// is zero outside the curve's anchor range.
+    #[inline]
+    pub fn rate(&self, t: f64) -> f64 {
+        match *self {
+            EffectiveRate::Constant { value } => value,
+            EffectiveRate::Empirical { curve, scale } => scale * rate_at_curve(&curve.points, t),
+        }
+    }
+
     /// `Λ(τ)` for the per-person effective rate.
     #[inline]
     pub fn cum_rate(&self, t: f64) -> f64 {

@@ -14,11 +14,14 @@ import { useUrlParams, type ParamCodec } from "cfasim-ui/shared";
 import presets from "virtual:presets";
 import defaultLibrary from "virtual:rateLibrary";
 import RateEditor from "./components/RateEditor.vue";
+import SettingsEditor from "./components/SettingsEditor.vue";
+import settingsLibrary from "virtual:settingsLibrary";
 import {
   type InfectionRate,
   DEFAULT_CONSTANT,
   normalizeInfectionRate,
 } from "./composables/infectionRate";
+import type { SettingType } from "./composables/settings";
 import { useSimulationRunner } from "./composables/useSimulationRunner";
 import { useChartData } from "./composables/useChartData";
 
@@ -29,6 +32,7 @@ const defaults = {
   seed: 0,
   maxTime: 100,
   nSimulations: 20,
+  settings: [] as SettingType[],
 };
 type Params = typeof defaults;
 
@@ -84,10 +88,60 @@ const infectionRateCodec: ParamCodec = {
     return normalizeInfectionRate(parsed as InfectionRate);
   },
 };
+// Settings is a Vec<SettingType>. Without a codec, useUrlParams would
+// flatten it to dotted keys per array entry — verbose and brittle as
+// users add/remove setting types. Use a hybrid encoding instead:
+//
+//   * If `value` exactly matches a `virtual:settingsLibrary` preset,
+//     serialize as the preset id (e.g. `households_us`). Keeps the
+//     URL compact and human-readable.
+//   * Otherwise JSON-encode the array with probabilities rounded to
+//     2 decimals. UI inputs use `step=0.01`, so values that came in via
+//     the editor are already 2 dp and round-trip cleanly; for
+//     hand-edited values that were finer-grained, the rounded sum can
+//     drift outside `SettingType::validate`'s 1e-6 tolerance — use the
+//     "Normalize" button to restore.
+//
+// Deserialize is the reverse: a leading `[` means JSON, anything else
+// is treated as a preset id.
+function roundProb(p: number): number {
+  return Math.round(p * 100) / 100;
+}
+function findLibraryId(settings: SettingType[]): string | undefined {
+  const target = JSON.stringify(settings);
+  return settingsLibrary.find((p) => JSON.stringify(p.settings) === target)?.id;
+}
+const settingsCodec: ParamCodec = {
+  serialize: (value) => {
+    const settings = value as SettingType[];
+    const presetId = findLibraryId(settings);
+    if (presetId) return presetId;
+    const rounded = settings.map((s) => ({
+      ...s,
+      alpha: roundProb(s.alpha),
+      proportion: roundProb(s.proportion),
+      sizes: s.sizes.map(([n, p]) => [n, roundProb(p)] as [number, number]),
+    }));
+    return JSON.stringify(rounded);
+  },
+  deserialize: (raw) => {
+    if (raw.startsWith("[")) return JSON.parse(raw) as SettingType[];
+    const entry = settingsLibrary.find((p) => p.id === raw);
+    if (!entry) return [];
+    // Deep-clone so user edits don't mutate the bundled preset.
+    return entry.settings.map((s) => ({
+      ...s,
+      sizes: s.sizes.map((p) => [...p] as [number, number]),
+    }));
+  },
+};
 const { reset } = useUrlParams(params, defaults, {
   router: useRouter(),
   route: useRoute(),
-  codecs: { infectionRate: infectionRateCodec },
+  codecs: {
+    infectionRate: infectionRateCodec,
+    settings: settingsCodec,
+  },
 });
 
 // When `useEditor` is on, the sidebar shows a JSON/TOML/YAML editor
@@ -196,6 +250,7 @@ const { outputs, error, loading, statusMessage } = useSimulationRunner(params, {
 const { charts, summary, fmtCount } = useChartData(
   outputs,
   toRef(params, "infectionRate"),
+  toRef(params, "settings"),
 );
 </script>
 
@@ -249,6 +304,7 @@ const { charts, summary, fmtCount } = useChartData(
         :min="1"
         :max="100"
       />
+      <SettingsEditor v-model="params.settings" :live="live" />
     </template>
   </Teleport>
   <h1>Ixa Basic Transmission</h1>
@@ -260,7 +316,8 @@ const { charts, summary, fmtCount } = useChartData(
       rel="noopener noreferrer"
       >ixa</a
     >. Each newly infectious person schedules their own recovery and their own
-    next transmission attempt; targets are picked uniformly from the population.
+    next transmission attempt; contacts are picked from a setting in their
+    itinerary, or uniformly from the population when no settings are configured.
   </p>
   <p v-if="error" class="error">{{ error }}</p>
   <p v-if="statusMessage" class="status">{{ statusMessage }}</p>

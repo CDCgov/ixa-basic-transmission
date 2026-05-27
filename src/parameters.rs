@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::rate::InfectionRate;
+use crate::settings::SettingType;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Parameters {
@@ -12,6 +13,11 @@ pub struct Parameters {
     pub initial_infections: usize,
     pub seed: u64,
     pub max_time: f64,
+    /// Optional settings-based contact structure. Empty (the default)
+    /// means the model uses global random mixing — same as before this
+    /// feature was added. See `crate::settings`.
+    #[serde(default)]
+    pub settings: Vec<SettingType>,
 }
 
 impl Default for Parameters {
@@ -25,6 +31,7 @@ impl Default for Parameters {
             initial_infections: 5,
             seed: 0,
             max_time: 100.0,
+            settings: Vec::new(),
         }
     }
 }
@@ -43,6 +50,17 @@ impl Parameters {
                 "initial_infections ({}) must not exceed population ({})",
                 self.initial_infections, self.population
             ));
+        }
+        if !self.settings.is_empty() {
+            for s in &self.settings {
+                s.validate()?;
+            }
+            let total: f64 = self.settings.iter().map(|s| s.proportion).sum();
+            if total <= 0.0 || !total.is_finite() {
+                return Err(format!(
+                    "settings proportions must sum to a positive finite number, got {total}"
+                ));
+            }
         }
         Ok(())
     }
