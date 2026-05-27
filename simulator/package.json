@@ -2,6 +2,7 @@
   "name": "ixa-basic-transmission-simulator",
   "private": true,
   "type": "module",
+  "packageManager": "pnpm@10.33.0",
   "dependencies": {
     "cfasim-ui": "^0.4.13",
     "vue": "^3.5.30",
