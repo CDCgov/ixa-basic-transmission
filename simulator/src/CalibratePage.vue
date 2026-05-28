@@ -234,7 +234,9 @@ async function onSelectRun(id: string | number) {
     setParam("population", c.modelContext.population);
     setParam("maxTime", c.modelContext.maxTime);
     setParam("settings", c.modelContext.settings);
-    setParam("initialInfections", c.initialInfections);
+    // Default 10 for runs persisted before initialInfections moved into
+    // the top-level config (was a target.synthetic field).
+    setParam("initialInfections", c.initialInfections ?? 10);
     setParam("priors", c.priors);
     setParam("stagesText", c.stages.join(","));
     setParam("nParticles", c.nParticles);
