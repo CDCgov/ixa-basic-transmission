@@ -83,31 +83,24 @@ pub struct PerturbationKernel {
 }
 
 impl PerturbationKernel {
-    /// Build the per-stage kernel from the previous generation's particle
-    /// parameters. The r0 SD is `sqrt(2 * sample_variance)` — the
-    /// Beaumont 2009 ABC-SMC standard for Gaussian random-walk kernels,
-    /// matching `cfa-calibration-tools/src/calibrationtools/variance_adapter.py:102`.
-    /// Note: the original port from `def_abc_smc` used `sqrt(variance)`
-    /// without the 2× factor; switching to 2× brings exploration in line
-    /// with the canonical recipe. The discrete-uniform half-width on
-    /// initial_infections is still fixed to 1 to match def's TODO note.
-    pub fn new<'a>(samples: impl Iterator<Item = &'a CalibratedParams>) -> Self {
+    /// r0 SD = `sqrt(variance_factor * sample_variance)`. Default 2.0 is
+    /// Beaumont 2009 / cfa-calibration-tools (`variance_adapter.py:102`).
+    /// We use Welford (divisor n-1); cfa's `np.var` uses n — < 1% SD
+    /// difference at n ≥ 50.
+    pub fn new<'a>(
+        samples: impl Iterator<Item = &'a CalibratedParams>,
+        variance_factor: f64,
+    ) -> Self {
         let mut r0_stats = MeanVarianceEstimator::new();
         let mut n: u64 = 0;
         for x in samples {
             r0_stats.add(x.r0);
             n += 1;
         }
-        // Two clamps unrelated to the 2× scaling (still divergent from def):
-        //   1. n < 2: variance is undefined (divisor (n-1) is 0 / wraps).
-        //      Fall back to SD = 1e-9.
-        //   2. n >= 2 but all r0 samples identical → variance == 0 → SD == 0
-        //      → `rand_distr::Normal::new(0, 0)` panics. Same fallback.
-        // In both cases the kernel produces near-zero perturbations and
-        // rejection sampling does the rest; this is a safety net, not the
-        // expected path.
+        // 1e-9 fallback: n < 2 → undefined variance; n ≥ 2 with all-equal
+        // samples → SD = 0, which panics `Normal::new`.
         let sd = if n >= 2 {
-            (2.0 * r0_stats.get_variance()).sqrt().max(1e-9)
+            (variance_factor * r0_stats.get_variance()).sqrt().max(1e-9)
         } else {
             1e-9
         };

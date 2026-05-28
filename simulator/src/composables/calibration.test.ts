@@ -309,6 +309,10 @@ describe("defaultConfig", () => {
     const rt = JSON.parse(JSON.stringify(c));
     expect(rt).toEqual(c);
   });
+
+  it("defaults varianceFactor to 2.0 (Beaumont 2009 / cfa default)", () => {
+    expect(defaultConfig().varianceFactor).toBe(2.0);
+  });
 });
 
 describe("seedObservationHistogram", () => {

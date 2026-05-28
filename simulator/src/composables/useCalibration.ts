@@ -221,6 +221,8 @@ export function useCalibration(): CalibrationRunner {
         initialInfections: p.initialInfections,
         weight: p.weight,
       })),
+      // Undefined for v2 runs → wasm side defaults to 2.0.
+      varianceFactor: c.varianceFactor,
       batchSize,
       particleOffset: haveSoFar,
       seed: c.seed,

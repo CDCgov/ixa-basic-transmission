@@ -208,10 +208,17 @@ struct CalibrateBatchArgs {
     error_threshold: Option<f64>,
     #[serde(default)]
     previous_particles: Vec<PriorParticle>,
+    /// r0 kernel SD scaling — see `PerturbationKernel::new`. Default 2.0.
+    #[serde(default = "default_variance_factor")]
+    variance_factor: f64,
     batch_size: u32,
     /// Just for ordering / output labels; does not affect the math.
     particle_offset: u32,
     seed: u64,
+}
+
+fn default_variance_factor() -> f64 {
+    2.0
 }
 
 /// SplitMix64 finalizer — fast 64→64 hash with full avalanche. Used to
@@ -328,6 +335,7 @@ pub fn calibrate_batch(args: &str) -> JsValue {
             args.batch_size as usize,
             &priors,
             &prev,
+            args.variance_factor,
             &base_params,
             &args.observed,
             &mut rng,

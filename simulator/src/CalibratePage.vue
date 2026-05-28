@@ -55,6 +55,7 @@ const defaults = {
   nParticles: seed.nParticles,
   batchSize: seed.batchSize,
   seed: seed.seed,
+  varianceFactor: seed.varianceFactor ?? 2.0,
   targetMode: (seed.target.mode === "synthetic" ? "synthetic" : "csv") as
     | "synthetic"
     | "csv",
@@ -108,6 +109,7 @@ const config = computed<CalibrationConfig>(() => ({
   nParticles: params.nParticles,
   batchSize: params.batchSize,
   seed: params.seed,
+  varianceFactor: params.varianceFactor,
   observed: observed.value,
   target:
     params.targetMode === "synthetic"
@@ -245,6 +247,7 @@ async function onSelectRun(id: string | number) {
     setParam("nParticles", c.nParticles);
     setParam("batchSize", c.batchSize);
     setParam("seed", c.seed);
+    setParam("varianceFactor", c.varianceFactor ?? 2.0);
     observed.value = c.observed;
     if (c.target.mode === "synthetic") {
       setParam("targetMode", "synthetic");
@@ -751,6 +754,12 @@ const observedSeries = computed(() => {
       <NumberInput v-model="params.nParticles" label="Particles per stage" :min="10" />
       <NumberInput v-model="params.batchSize" label="Batch size" :min="1" />
       <NumberInput v-model="params.seed" label="Seed" :min="0" />
+      <NumberInput
+        v-model="params.varianceFactor"
+        label="Kernel variance factor (kernel SD = √(factor × Var); 2.0 recommended)"
+        :min="0.01"
+        :step="0.1"
+      />
       <TextInput
         v-model="params.stagesText"
         label="Error schedule (comma-separated, 0 < r < 1)"

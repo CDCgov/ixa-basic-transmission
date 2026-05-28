@@ -77,6 +77,7 @@ mod tests {
             60,
             &priors,
             &gen0.particles,
+            2.0,
             &base,
             &observed,
             &mut rng,
@@ -96,12 +97,11 @@ mod tests {
         );
     }
 
-    /// Perturbation kernel: perturbing N times around a point with
-    /// `previous_particles` of varying r0 should give samples whose
-    /// variance is roughly **twice** the sample variance — the Beaumont
-    /// 2009 ABC-SMC random-walk recipe (kernel SD = sqrt(2 * Var)).
+    /// Kernel perturbation variance ≈ `variance_factor * sample_variance`.
+    /// Sample variance of [1..=5] is 2.5, so we check factor=1 → ~2.5 and
+    /// factor=2 → ~5.0.
     #[test]
-    fn perturbation_kernel_uses_twice_sample_variance() {
+    fn perturbation_kernel_scales_with_variance_factor() {
         let samples = [1.0_f64, 2.0, 3.0, 4.0, 5.0];
         let params: Vec<CalibratedParams> = samples
             .iter()
@@ -111,26 +111,23 @@ mod tests {
                 seed: 0,
             })
             .collect();
-        let kernel = PerturbationKernel::new(params.iter());
         let base = params[2];
-        let mut rng = StdRng::seed_from_u64(99);
-        let perturbed: Vec<f64> = (0..2000)
-            .map(|_| kernel.perturb(&base, &mut rng).r0)
-            .collect();
-        let mean: f64 = perturbed.iter().sum::<f64>() / perturbed.len() as f64;
-        // Sample variance of [1..=5] is 2.5; with the 2× factor the
-        // kernel variance is ~5.0, so perturbed values should cluster
-        // around base.r0 = 3.0 with sqrt(5) ≈ 2.24 spread.
-        let var: f64 = perturbed.iter().map(|x| (x - mean).powi(2)).sum::<f64>()
-            / (perturbed.len() - 1) as f64;
-        assert!(
-            (mean - 3.0).abs() < 0.25,
-            "perturbation mean {mean} should be near base r0 = 3.0"
-        );
-        assert!(
-            (3.5..6.5).contains(&var),
-            "perturbation variance {var} should be ~5.0 (= 2 * sample variance 2.5)"
-        );
+        for (factor, lo, hi) in [(1.0_f64, 1.5, 3.5), (2.0, 3.5, 6.5)] {
+            let kernel = PerturbationKernel::new(params.iter(), factor);
+            let mut rng = StdRng::seed_from_u64(99);
+            let perturbed: Vec<f64> = (0..2000)
+                .map(|_| kernel.perturb(&base, &mut rng).r0)
+                .collect();
+            let mean: f64 = perturbed.iter().sum::<f64>() / perturbed.len() as f64;
+            let var: f64 = perturbed.iter().map(|x| (x - mean).powi(2)).sum::<f64>()
+                / (perturbed.len() - 1) as f64;
+            assert!((mean - 3.0).abs() < 0.25, "factor={factor}: mean {mean}");
+            assert!(
+                (lo..hi).contains(&var),
+                "factor={factor}: variance {var}, expected ~{}",
+                factor * 2.5,
+            );
+        }
     }
 
     #[test]

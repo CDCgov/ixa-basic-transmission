@@ -112,19 +112,24 @@ pub fn sample_from_prior_batch(
 /// Mirrors `def_abc_smc/src/step.rs::do_abc_smc_step` (lines 7–80).
 /// `previous_particles` already carry their stage-normalized weights
 /// (JS hands us either normalized or proportional weights — `WeightedIndex`
-/// only cares about proportion).
+/// only cares about proportion). `variance_factor` is passed through to
+/// `PerturbationKernel::new`.
 pub fn perturb_from_previous_batch(
     error_threshold: f64,
     batch_size: usize,
     priors: &Priors,
     previous_particles: &[Particle],
+    variance_factor: f64,
     base_params: &Parameters,
     observed: &[u64],
     rng: &mut impl Rng,
 ) -> ABCStepOutput {
     let weights: Vec<f64> = previous_particles.iter().map(|x| x.weight).collect();
     let particle_sampler = WeightedIndex::new(&weights).unwrap();
-    let kernel = PerturbationKernel::new(previous_particles.iter().map(|x| &x.parameters));
+    let kernel = PerturbationKernel::new(
+        previous_particles.iter().map(|x| &x.parameters),
+        variance_factor,
+    );
 
     let mut n_attempts: u64 = 0;
     let mut particles: Vec<Particle> = Vec::with_capacity(batch_size);
