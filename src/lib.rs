@@ -339,18 +339,28 @@ pub fn calibrate_batch(args: &str) -> JsValue {
     let mut ii_col = Vec::with_capacity(n);
     let mut weight_col = Vec::with_capacity(n);
     let mut dist_col = Vec::with_capacity(n);
+    // Seeds are u64 but ModelOutput is f64-only; the upper 11 bits would
+    // get rounded off if cast directly. Split into two u32 halves (each
+    // fits exactly in f64) and let JS rejoin them into a string key.
+    let mut seed_hi_col = Vec::with_capacity(n);
+    let mut seed_lo_col = Vec::with_capacity(n);
     for p in &step.particles {
         r0_col.push(p.parameters.r0);
         ii_col.push(p.parameters.initial_infections as f64);
         weight_col.push(p.weight);
         dist_col.push(p.data_distance as f64);
+        let s = p.parameters.seed;
+        seed_hi_col.push((s >> 32) as f64);
+        seed_lo_col.push((s & 0xffff_ffff) as f64);
     }
 
     let particles = ModelOutput::new(n)
         .add_f64("r0", r0_col)
         .add_f64("initial_infections", ii_col)
         .add_f64("weight", weight_col)
-        .add_f64("distance", dist_col);
+        .add_f64("distance", dist_col)
+        .add_f64("seed_hi", seed_hi_col)
+        .add_f64("seed_lo", seed_lo_col);
 
     // Per-particle daily-incidence trajectory, one column per particle.
     // Length = floor(max_time) (the cumulative timeseries diff). Powers

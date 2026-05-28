@@ -49,6 +49,12 @@ export interface Particle {
   /// Per-particle simulated daily-incidence trajectory; length matches
   /// the target's `observed` array. Used for the per-stage overlay plot.
   trajectory: number[];
+  /// The u64 RNG seed used to drive this particle's stochastic sim,
+  /// serialized as `"<hi32>-<lo32>"` because JS numbers can't hold the
+  /// full 64 bits losslessly. Powers the seed-observation diagnostic
+  /// (`seedObservationHistogram`). Optional so runs persisted before
+  /// SCHEMA_VERSION=2 still rehydrate without crashing.
+  seed?: string;
 }
 
 export interface PriorBounds {
@@ -291,4 +297,35 @@ export function totalWeight(particles: Particle[]): number {
 export function acceptanceRatio(nAccepted: number, nAttempts: number): number {
   if (nAttempts === 0) return 0;
   return nAccepted / nAttempts;
+}
+
+/// Diagnostic for particle-population degeneracy: how often does each
+/// random seed appear in the accepted particles? Returns the histogram
+/// of *seed occurrence counts*, NOT a histogram over seed values.
+///
+/// X-axis (categories): observation count k (≥ 1).
+/// Y-axis (data):       number of distinct seeds that appeared k times.
+///
+/// Healthy posteriors land almost entirely in the k=1 bar (every seed
+/// appears once → maximum diversity). A long right tail means a handful
+/// of seeds dominate the population — small effective sample size, the
+/// posterior is over-relying on a few stochastic draws.
+///
+/// Particles without a `seed` field (older persisted runs, schema < 2)
+/// are skipped silently.
+export function seedObservationHistogram(
+  particles: Particle[],
+): { categories: string[]; data: number[] } {
+  const counts = new Map<string, number>();
+  for (const p of particles) {
+    if (p.seed === undefined) continue;
+    counts.set(p.seed, (counts.get(p.seed) ?? 0) + 1);
+  }
+  if (counts.size === 0) return { categories: [], data: [] };
+  let maxK = 0;
+  for (const c of counts.values()) if (c > maxK) maxK = c;
+  const data = new Array<number>(maxK).fill(0);
+  for (const c of counts.values()) data[c - 1] += 1;
+  const categories = Array.from({ length: maxK }, (_, i) => String(i + 1));
+  return { categories, data };
 }

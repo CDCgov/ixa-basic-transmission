@@ -240,6 +240,8 @@ export function useCalibration(): CalibrationRunner {
     const iiCol = particles.column("initial_infections");
     const wCol = particles.column("weight");
     const dCol = particles.column("distance");
+    const seedHiCol = particles.column("seed_hi");
+    const seedLoCol = particles.column("seed_lo");
     const trajTable = res.trajectories;
     const newParticles: Particle[] = [];
     for (let i = 0; i < particles.length; i++) {
@@ -251,6 +253,7 @@ export function useCalibration(): CalibrationRunner {
         weight: wCol[i],
         distance: dCol[i],
         trajectory: Array.from(tcol),
+        seed: `${seedHiCol[i]}-${seedLoCol[i]}`,
       });
     }
     const nAttempts = res.batch_meta.column("n_attempts")[0];

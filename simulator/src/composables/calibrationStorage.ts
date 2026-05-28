@@ -32,7 +32,10 @@ const PARTICLES_STORE = "particles";
 /// describes the application-level shape of the bytes inside those
 /// stores — that can change without changing the store layout (e.g.
 /// renaming a config field).
-export const SCHEMA_VERSION = 1;
+// v2: StoredParticle gained a `seed` field for the seed-observation
+//     diagnostic. Older v1 rows don't carry it, so loadRun's schema
+//     check rejects them — the user can discard via the delete dialog.
+export const SCHEMA_VERSION = 2;
 
 export type RunStatus = "idle" | "running" | "paused" | "complete" | "error";
 
@@ -66,6 +69,10 @@ export interface StoredParticle {
   distance: number;
   /// Per-particle daily-incidence trajectory; length = floor(maxTime).
   trajectory: number[];
+  /// Seed key as `"<hi32>-<lo32>"` (see Particle.seed). Optional so the
+  /// type tolerates pre-v2 rows during read-back; new writes always
+  /// include it.
+  seed?: string;
   /// See `StoredRun.schemaVersion`.
   schemaVersion?: number;
 }
@@ -209,6 +216,7 @@ export async function loadRun(
       weight: sp.weight,
       distance: sp.distance,
       trajectory: sp.trajectory ?? [],
+      seed: sp.seed,
     });
   }
   return { run, particlesByStage };

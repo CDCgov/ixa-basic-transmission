@@ -9,6 +9,7 @@ import {
   defaultConfig,
   withR0,
   cumulativeToIncidence,
+  seedObservationHistogram,
   type Particle,
 } from "./calibration";
 import type { InfectionRate } from "./infectionRate";
@@ -307,5 +308,65 @@ describe("defaultConfig", () => {
     // Round-trip — guards against any Vue Proxy contamination.
     const rt = JSON.parse(JSON.stringify(c));
     expect(rt).toEqual(c);
+  });
+});
+
+describe("seedObservationHistogram", () => {
+  function withSeed(seed: string | undefined): Particle {
+    return {
+      r0: 0,
+      initialInfections: 0,
+      weight: 1,
+      distance: 0,
+      trajectory: [],
+      seed,
+    };
+  }
+
+  it("returns empty arrays when no particles carry a seed", () => {
+    const h = seedObservationHistogram([
+      withSeed(undefined),
+      withSeed(undefined),
+    ]);
+    expect(h).toEqual({ categories: [], data: [] });
+  });
+
+  it("puts every distinct-seed particle in the k=1 bar", () => {
+    const h = seedObservationHistogram([
+      withSeed("1-1"),
+      withSeed("2-2"),
+      withSeed("3-3"),
+    ]);
+    expect(h).toEqual({ categories: ["1"], data: [3] });
+  });
+
+  it("counts seeds by their occurrence multiplicity", () => {
+    // Two seeds appear once, one seed appears twice, one seed appears
+    // three times. Expected histogram:
+    //   k=1: 2 seeds
+    //   k=2: 1 seed
+    //   k=3: 1 seed
+    const h = seedObservationHistogram([
+      withSeed("a"),
+      withSeed("b"),
+      withSeed("c"),
+      withSeed("c"),
+      withSeed("d"),
+      withSeed("d"),
+      withSeed("d"),
+    ]);
+    expect(h.categories).toEqual(["1", "2", "3"]);
+    expect(h.data).toEqual([2, 1, 1]);
+  });
+
+  it("skips undefined-seed particles without distorting counts", () => {
+    const h = seedObservationHistogram([
+      withSeed("a"),
+      withSeed(undefined),
+      withSeed("a"),
+      withSeed(undefined),
+    ]);
+    // Only one distinct seed, appearing twice.
+    expect(h).toEqual({ categories: ["1", "2"], data: [0, 1] });
   });
 });
