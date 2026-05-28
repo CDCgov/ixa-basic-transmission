@@ -432,13 +432,22 @@ interface KdeOverlay {
   data: number[];
 }
 
+/// Two-series overlay payload for a BarChart with `layout="overlay"`:
+/// the posterior bins drawn on top of the (flat) prior bins. Categories
+/// are shared.
+interface OverlayBarSeries {
+  categories: string[];
+  prior: number[];
+  posterior: number[];
+}
+
 interface StageTrace {
   stage: number;
   stageLabel: string;
   n: number;
   acceptance: number | null;
-  r0Bins: { categories: string[]; data: number[] };
-  iiBins: { categories: string[]; data: number[] };
+  r0Bins: OverlayBarSeries;
+  iiBins: OverlayBarSeries;
   cumBins: { categories: string[]; data: number[] };
   r0KdeOverlay: KdeOverlay;
   cumKdeOverlay: KdeOverlay;
@@ -577,13 +586,18 @@ const stageTraces = computed<StageTrace[]>(() => {
       // infections values in the ~1e-4 range — unreadable — since
       // density scales as 1/x-range. Weight stays in [0, ~0.5] for
       // typical posteriors.
+      // Prior series: uniform PDF integrates to 1 over its support, so
+      // each of N bins gets mass 1/N. Drawn under the posterior so the
+      // "departure from flat" pops visually.
       r0Bins: {
         categories: r0Bins.map((b) => b.center.toFixed(2)),
-        data: r0Bins.map((b) => b.weight),
+        prior: r0Bins.map(() => 1 / r0Bins.length),
+        posterior: r0Bins.map((b) => b.weight),
       },
       iiBins: {
         categories: iiBins.map((b) => b.center.toFixed(0)),
-        data: iiBins.map((b) => b.weight),
+        prior: iiBins.map(() => 1 / iiBins.length),
+        posterior: iiBins.map((b) => b.weight),
       },
       cumBins: {
         categories: cumBins.map((b) => b.center.toFixed(0)),
@@ -877,15 +891,28 @@ const observedSeries = computed(() => {
         </div>
         <div class="trace-row">
           <div class="trace-mini">
-            <p class="trace-label">R₀ (KDE overlay)</p>
+            <p class="trace-label">R₀ (prior · posterior · KDE)</p>
             <BarChart
               :categories="trace.r0Bins.categories"
-              :data="trace.r0Bins.data"
+              :series="[
+                {
+                  data: trace.r0Bins.prior,
+                  color: '#94a3b8',
+                  blendMode: 'multiply',
+                  legend: 'Prior',
+                },
+                {
+                  data: trace.r0Bins.posterior,
+                  color: '#2563eb',
+                  legend: 'Posterior',
+                },
+              ]"
+              layout="overlay"
               :summary-lines="[
                 {
                   x: trace.r0KdeOverlay.x,
                   data: trace.r0KdeOverlay.data,
-                  color: '#2563eb',
+                  color: '#dc2626',
                   strokeWidth: 2,
                   dots: false,
                 },
@@ -897,10 +924,23 @@ const observedSeries = computed(() => {
           <div class="trace-mini">
             <!-- Initial-infections is discrete + frozen by the
                  perturbation kernel, so no KDE overlay. -->
-            <p class="trace-label">Initial infections</p>
+            <p class="trace-label">Initial infections (prior · posterior)</p>
             <BarChart
               :categories="trace.iiBins.categories"
-              :data="trace.iiBins.data"
+              :series="[
+                {
+                  data: trace.iiBins.prior,
+                  color: '#94a3b8',
+                  blendMode: 'multiply',
+                  legend: 'Prior',
+                },
+                {
+                  data: trace.iiBins.posterior,
+                  color: '#2563eb',
+                  legend: 'Posterior',
+                },
+              ]"
+              layout="overlay"
               :height="120"
               :menu="false"
             />
@@ -916,7 +956,7 @@ const observedSeries = computed(() => {
                 {
                   x: trace.cumKdeOverlay.x,
                   data: trace.cumKdeOverlay.data,
-                  color: '#2563eb',
+                  color: '#dc2626',
                   strokeWidth: 2,
                   dots: false,
                 },
