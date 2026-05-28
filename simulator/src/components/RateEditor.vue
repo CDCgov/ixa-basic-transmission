@@ -7,12 +7,13 @@ import defaultLibrary from "virtual:rateLibrary";
 import {
   type InfectionRate,
   empiricalDuration,
+  expectedR0,
   withRateType,
   withPointUpdated,
   withPointAdded,
   withPointRemoved,
   parseRateLibraryCsv,
-  DEFAULT_LIBRARY_SCALE,
+  DEFAULT_R0_SCALE,
 } from "../composables/infectionRate";
 
 const props = defineProps<{
@@ -179,8 +180,23 @@ function restoreDefaultLibrary() {
     rates: defaultLibrary.map((c) =>
       c.map((p) => [...p] as [number, number]),
     ),
-    scale: DEFAULT_LIBRARY_SCALE,
+    scale: DEFAULT_R0_SCALE,
   });
+}
+
+// R₀ under random (homogeneous) mixing — `value × duration` for Constant,
+// `scale` for Empirical/Library (the wasm side's `normalize_to_r0`
+// rescales curves so `∫ effective_rate = scale` regardless of shape).
+// We pass `[]` for settings on purpose: this is the unconfined
+// baseline the user is calibrating against, not the setting-adjusted
+// R₀ the simulation summary shows.
+const r0RandomMixing = computed(() => expectedR0(props.modelValue, []));
+
+function formatR0(v: number): string {
+  // toFixed (not toLocaleString) for locale-stable output — the summary
+  // table in `useChartData.ts` uses the same form, keeping both R₀
+  // readouts visually identical and the smoke test patterns locale-safe.
+  return Number.isFinite(v) ? v.toFixed(2) : "—";
 }
 
 // Single-series preview tracing λ(τ): a flat segment for Constant,
@@ -378,17 +394,17 @@ function formatRate(v: unknown): string {
   <template v-else-if="modelValue.type === 'empirical'">
     <p class="schedule-hint">
       Time-varying curve, recovery at τ = {{ empiricalRecoveryAt }}.
-      Point values are relative hazards; multiply by Scale for the
-      absolute rate.
+      Points define the shape; the model rescales them at runtime so
+      Scale is the expected R₀ under random mixing.
     </p>
     <NumberInput
       v-model="rateScale"
-      label="Scale"
+      label="Scale (R₀)"
       slider
       :live="live"
       :min="0"
-      :max="2"
-      :step="0.01"
+      :max="6"
+      :step="0.1"
     />
     <div class="points-editor">
       <div class="points-header">
@@ -426,17 +442,17 @@ function formatRate(v: unknown): string {
   <template v-else-if="modelValue.type === 'library'">
     <p class="schedule-hint">
       Library of {{ libraryCount }} per-person curves. Each person draws
-      one uniformly at setup. Curve values are relative hazards;
-      multiply by Scale for the absolute rate.
+      one uniformly at setup. The model rescales the library at runtime
+      so Scale is the expected R₀ under random mixing.
     </p>
     <NumberInput
       v-model="rateScale"
-      label="Scale"
+      label="Scale (R₀)"
       slider
       :live="live"
       :min="0"
-      :max="0.2"
-      :step="0.001"
+      :max="6"
+      :step="0.1"
     />
     <div class="library-actions">
       <Button variant="secondary" @click="triggerUpload">Upload CSV</Button>
@@ -540,6 +556,13 @@ function formatRate(v: unknown): string {
     </template>
   </template>
   <div
+    v-if="modelValue.type === 'constant'"
+    class="rate-r0"
+  >
+    <span class="rate-r0-label">R₀ (random mixing)</span>
+    <span class="rate-r0-value">{{ formatR0(r0RandomMixing) }}</span>
+  </div>
+  <div
     v-if="modelValue.type !== 'library'"
     class="rate-preview"
   >
@@ -595,6 +618,26 @@ function formatRate(v: unknown): string {
 }
 .rate-preview {
   margin-top: 0.5em;
+}
+.rate-r0 {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5em;
+  margin-top: 0.5em;
+  padding: 0.4em 0.6em;
+  border: 1px solid var(--cfa-color-border, #e5e5e5);
+  border-radius: 4px;
+  background: var(--cfa-color-surface-muted, #f7f7f7);
+}
+.rate-r0-label {
+  font-size: var(--font-size-sm, 0.875rem);
+  color: var(--cfa-color-text-muted, #666);
+}
+.rate-r0-value {
+  font-size: var(--font-size-sm, 0.875rem);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
 }
 .library-actions {
   display: flex;

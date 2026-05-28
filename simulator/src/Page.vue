@@ -178,8 +178,10 @@ function deepEqual(a: unknown, b: unknown): boolean {
 
 function paramsMatchPreset(preset: (typeof presets)[number]): boolean {
   for (const key of Object.keys(defaults) as (keyof typeof defaults)[]) {
-    const target = preset.parameters[key];
-    if (target === undefined) return false;
+    // A preset that omits a key is treated as inheriting the default —
+    // e.g. older presets predate the `settings` field but should still
+    // match the defaults when nothing else differs.
+    const target = preset.parameters[key] ?? defaults[key];
     if (!deepEqual((params as Record<string, unknown>)[key], target))
       return false;
   }
@@ -198,13 +200,17 @@ function applyPreset(id: string) {
   const preset = presets.find((p) => p.id === id);
   if (!preset) return;
   for (const key of Object.keys(defaults) as (keyof Params)[]) {
-    const v = preset.parameters[key];
-    if (v === undefined) continue;
+    // Omitted preset keys reset to defaults — mirrors `paramsMatchPreset`
+    // so a preset that doesn't declare every field stays selected after
+    // it's applied (otherwise stale values from the previous preset
+    // could leak in and the picker would jump to "Custom").
+    const v = preset.parameters[key] ?? defaults[key];
     if (typeof v === "number") {
       if (Number.isFinite(v)) setParam(key, v as Params[typeof key]);
     } else if (typeof v === "object" && v !== null) {
-      // Clone so subsequent edits don't mutate the preset. Normalize
-      // infectionRate so older presets without `scale` get scale=1.0.
+      // Clone so subsequent edits don't mutate the preset / defaults.
+      // Normalize infectionRate so older presets without `scale` get
+      // scale=1.0.
       const cloned = structuredClone(v);
       const next =
         key === "infectionRate"

@@ -14,6 +14,10 @@ export type InfectionRate =
   | { type: "library"; rates: [number, number][][]; scale: number };
 
 // Used when switching Constant → Empirical from a UI with no curve yet.
+// Values are raw shape — Rust's `normalize::normalize_to_r0` rescales
+// at simulation entry so `scale` is the expected R₀ regardless of the
+// curve's absolute magnitudes. The point values here are read directly
+// in the chart preview, so we keep them human-readable.
 export const DEFAULT_EMPIRICAL_POINTS: [number, number][] = [
   [0, 0],
   [2, 1.0],
@@ -28,21 +32,10 @@ export const DEFAULT_CONSTANT: InfectionRate = {
   duration: 3.0,
 };
 
-/// Calibration factor for the bundled library curves (from
-/// ixa-epi-isolation's production config). The CSV values are relative
-/// hazards; multiplied by this they land at a realistic mean R₀ ≈ 3.
-export const DEFAULT_LIBRARY_SCALE = 0.05;
-
-/// Trapezoidal area under one piecewise-linear curve.
-function curveArea(points: [number, number][]): number {
-  let acc = 0;
-  for (let i = 0; i < points.length - 1; i++) {
-    const [ti, ri] = points[i];
-    const [tj, rj] = points[i + 1];
-    acc += 0.5 * (ri + rj) * (tj - ti);
-  }
-  return acc;
-}
+/// Default magnitude shared by both curve variants. After area
+/// normalization (single empirical curve → area = 1; library → mean
+/// area = 1), `scale` is the expected R₀ under random mixing.
+export const DEFAULT_R0_SCALE = 3.0;
 
 /// Last anchor's time = the deterministic infectious duration for Empirical.
 export function empiricalDuration(rate: InfectionRate): number {
@@ -51,18 +44,18 @@ export function empiricalDuration(rate: InfectionRate): number {
 }
 
 /// Expected number of transmission attempts per index under random
-/// mixing. Constant: `value · duration`. Empirical / Library: scaled
-/// area under the infectiousness curve.
+/// mixing. Constant: `value · duration`. Empirical / Library: just
+/// `scale` — the wasm side's `normalize::normalize_to_r0` rescales
+/// curves so `∫ effective_rate(τ) dτ = scale` regardless of the raw
+/// area, so the JS-side computation matches what the model simulates.
 function expectedAttempts(rate: InfectionRate): number {
   if (rate.type === "constant") {
     return rate.value * rate.duration;
   }
   if (rate.type === "library") {
-    if (!rate.rates.length) return 0;
-    const total = rate.rates.reduce((sum, c) => sum + curveArea(c), 0);
-    return rate.scale * (total / rate.rates.length);
+    return rate.rates.length ? rate.scale : 0;
   }
-  return rate.scale * curveArea(rate.points);
+  return rate.points.length ? rate.scale : 0;
 }
 
 /// Expected R₀. With no settings this is just `expectedAttempts(rate)`
@@ -109,12 +102,10 @@ export function withRateType(
       duration: empiricalDuration(current) || 3.0,
     };
   }
-  // Each curve variant has its own "natural" scale because the underlying
-  // data differs: the editor's seeded Empirical curve is already at
-  // absolute-rate scale (1.0), while the bundled Library curves are
-  // relative hazards calibrated against ixa-epi-isolation
-  // (DEFAULT_LIBRARY_SCALE = 0.05). Switching variants therefore swaps
-  // the scale too — preserving the old one would give the wrong R₀.
+  // Both curve variants are area-normalized so `scale` reads as the
+  // expected R₀ under random mixing (single empirical curve → area = 1;
+  // library → mean area = 1). The defaults match: switching between
+  // variants preserves the R₀-shaped magnitude.
   if (next === "library") {
     const rates =
       defaultLibrary && defaultLibrary.length
@@ -122,12 +113,12 @@ export function withRateType(
         : [
             DEFAULT_EMPIRICAL_POINTS.map((p) => [...p]) as [number, number][],
           ];
-    return { type: "library", rates, scale: DEFAULT_LIBRARY_SCALE };
+    return { type: "library", rates, scale: DEFAULT_R0_SCALE };
   }
   return {
     type: "empirical",
     points: DEFAULT_EMPIRICAL_POINTS.map((p) => [...p]) as [number, number][],
-    scale: 1.0,
+    scale: DEFAULT_R0_SCALE,
   };
 }
 
@@ -195,7 +186,9 @@ export function normalizeInfectionRate(rate: InfectionRate): InfectionRate {
 /// bundled library file: header row `id,time,value`, one row per anchor
 /// point. Throws on unparseable rows. Rows are grouped by `id` and
 /// sorted by `time` within each group. The id order is the natural
-/// sort of the ids (numeric if all numeric, otherwise string).
+/// sort of the ids (numeric if all numeric, otherwise string). The
+/// returned curves are raw — the model's `normalize::normalize_to_r0`
+/// rescales them at simulation entry so `scale` reads as R₀.
 export function parseRateLibraryCsv(text: string): [number, number][][] {
   const lines = text.split(/\r?\n/);
   let header = -1;

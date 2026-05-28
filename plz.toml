@@ -59,3 +59,4 @@ run = "vite preview"
 [taskgroup.ui.e2e]
 depends = ["ui.setup"]
 run = "playwright test"
+git_hook = "pre-commit"

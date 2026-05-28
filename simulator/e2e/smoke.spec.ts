@@ -34,9 +34,9 @@ test.describe("Simulator smoke", () => {
     ).toBeVisible();
 
     // Summary table shows the two metrics. The R₀ for the Baseline preset
-    // is value × duration = 0.3 × 5 = 1.50.
+    // is value × duration = 0.5 × 3 = 1.50.
     await expect(page.getByText("R₀ (expected)")).toBeVisible();
-    await expect(page.getByText("1.50")).toBeVisible();
+    await expect(page.getByText("1.50").first()).toBeVisible();
     await expect(
       page.getByText("Attack rate (observed median)"),
     ).toBeVisible();
@@ -97,10 +97,10 @@ test.describe("Simulator smoke", () => {
     await rateType.click();
     await page.getByRole("option", { name: "Library" }).click();
     await expect(page).toHaveURL(/infectionRate=.*library/);
-    // The default library scale (0.05, matching ixa-epi-isolation) must
-    // appear in the encoded URL so it doesn't fall back to 1.0 on
-    // reload.
-    await expect(page).toHaveURL(/scale.*0\.05/);
+    // The default library scale (3.0 — the bundled curves are mean-area
+    // normalized so `scale` reads as expected R₀) must appear in the
+    // encoded URL so it doesn't fall back to 1.0 on reload.
+    await expect(page).toHaveURL(/scale.*3/);
     const libraryUrl = page.url();
     expect(libraryUrl.length).toBeLessThan(500);
 
@@ -138,5 +138,71 @@ test.describe("Simulator smoke", () => {
     // Flip back to the form view and confirm the form is back.
     await page.getByLabel("Edit as code").click();
     await expect(page.getByRole("textbox", { name: "Seed" })).toBeVisible();
+  });
+
+  test("Library preset renders R₀ = scale (mean-area normalized curves)", async ({
+    page,
+  }) => {
+    // The model's `normalize::normalize_to_r0` rescales the bundled
+    // library so the mean curve has area 1 — `scale` then reads as
+    // the expected R₀ under random mixing. Sanity check: picking the
+    // Library preset (scale = 3.0) should render R₀ (expected) ≈ 3.00
+    // in the summary table.
+    await page.goto("/");
+    const preset = page.getByRole("combobox", { name: "Preset" });
+    await preset.click();
+    await page
+      .getByRole("option", { name: "Library of empirical curves" })
+      .click();
+
+    // Wait for the simulation to complete before asserting on the
+    // summary table (the R₀ row only mounts after the first run).
+    await expect(page.getByText(/Ran \d+ simulations/)).toBeVisible({
+      timeout: 60_000,
+    });
+
+    await expect(page.getByText("R₀ (expected)")).toBeVisible();
+    await expect(page.getByText("3.00", { exact: true })).toBeVisible();
+  });
+
+  test("Constant rate editor shows live R₀ readout above the preview", async ({
+    page,
+  }) => {
+    // Constant has no R₀ slider (it's derived: value × duration), so
+    // the editor renders an inline readout next to the preview chart.
+    // Baseline preset: value = 0.5, duration = 3 → R₀ = 1.50.
+    await page.goto("/");
+    const readout = page
+      .getByText("R₀ (random mixing)")
+      .locator("xpath=..");
+    await expect(readout).toContainText("1.50");
+
+    // The readout reacts to slider input: bumping value via arrow keys
+    // (step=0.05) one notch up → 0.55, R₀ = 0.55 × 3 = 1.65.
+    const rate = page.getByRole("slider", { name: "Infection rate" });
+    await rate.focus();
+    await rate.press("ArrowRight");
+    await expect(readout).toContainText("1.65");
+  });
+
+  test("Time-varying preset renders R₀ = scale (area-normalized curve)", async ({
+    page,
+  }) => {
+    // Same contract as Library, single-curve variant: the empirical
+    // points are area-normalized so `scale` is the expected R₀ under
+    // random mixing. Time-varying preset's scale = 3.0 → R₀ ≈ 3.00.
+    await page.goto("/");
+    const preset = page.getByRole("combobox", { name: "Preset" });
+    await preset.click();
+    await page
+      .getByRole("option", { name: "Time-varying infectiousness" })
+      .click();
+
+    await expect(page.getByText(/Ran \d+ simulations/)).toBeVisible({
+      timeout: 60_000,
+    });
+
+    await expect(page.getByText("R₀ (expected)")).toBeVisible();
+    await expect(page.getByText("3.00", { exact: true })).toBeVisible();
   });
 });

@@ -8,8 +8,11 @@ seed = 0
 maxTime = 100
 nSimulations = 20
 
-# Times are days since the person became infectious. Rate is 0 outside
-# the anchor range. Recovery is deterministic at τ = 8.
+# Times are days since the person became infectious. Point values
+# describe the shape; the model's `normalize_to_r0` rescales so `scale`
+# reads as the expected R₀ under random mixing. Recovery is
+# deterministic at τ = 8.
 [parameters.infectionRate]
 type = "empirical"
 points = [[0.0, 0.0], [2.0, 1.0], [4.0, 1.2], [6.0, 0.4], [8.0, 0.0]]
+scale = 3.0

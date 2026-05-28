@@ -128,7 +128,7 @@ function sizeChartData(s: SettingType) {
       <h3>Settings</h3>
       <SelectBox
         v-if="libraryOptions.length"
-        label="Preset"
+        label="Library"
         :options="libraryOptions"
         :model-value="selectedLibraryId"
         placeholder="Custom"

@@ -2,7 +2,6 @@
   "name": "Tiny town",
   "description": "Small population (500) — high run-to-run variability, fast to iterate.",
   "parameters": {
-    "infectionRate": { "type": "constant", "value": 0.5, "duration": 3.0 },
     "population": 500,
     "initialInfections": 2,
     "seed": 0,

@@ -6,8 +6,11 @@ import { resolve } from "node:path";
 import { parse as parseToml } from "smol-toml";
 
 // Reads the rate-library CSV (`id,time,value`) and returns curves grouped
-// by id. Returns an empty array if the file is missing. Shared by the
-// `virtual:rateLibrary` plugin and the preset-expansion logic below.
+// by id. Returns raw values — the Rust side (`normalize::normalize_to_r0`)
+// rescales at simulation entry so `scale` reads as the expected R₀ under
+// random mixing. Returns an empty array if the file is missing. Shared
+// by the `virtual:rateLibrary` plugin and the preset-expansion logic
+// below.
 function readRateLibrary(): [number, number][][] {
   const file = resolve(
     import.meta.dirname,

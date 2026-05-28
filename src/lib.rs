@@ -4,6 +4,7 @@
 // items further down); nothing inside these modules is re-exported via
 // wasm-bindgen.
 pub mod model;
+pub mod normalize;
 pub mod parameters;
 pub mod person;
 pub mod rate;

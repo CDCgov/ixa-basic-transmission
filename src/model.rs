@@ -277,6 +277,11 @@ impl InfectionLoop for Context {
 
 pub fn run(params: Parameters) -> ModelStats {
     params.validate().expect("invalid Parameters");
+    // Rescale curve points so `scale` is the expected R₀ under random
+    // mixing — the model owns this contract so it holds for every
+    // caller (wasm UI, benchmarks, future external embedders).
+    let mut params = params;
+    crate::normalize::normalize_to_r0(&mut params.infection_rate);
     let mut ctx = Context::new();
     ctx.set_global_property_value(Params, params).unwrap();
     ctx.setup();
@@ -291,6 +296,8 @@ pub fn run(params: Parameters) -> ModelStats {
 #[doc(hidden)]
 pub fn setup_only(params: Parameters) {
     params.validate().expect("invalid Parameters");
+    let mut params = params;
+    crate::normalize::normalize_to_r0(&mut params.infection_rate);
     let mut ctx = Context::new();
     ctx.set_global_property_value(Params, params).unwrap();
     ctx.setup();
