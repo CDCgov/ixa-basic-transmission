@@ -426,6 +426,7 @@ interface StageTrace {
   r0Bins: { categories: string[]; data: number[] };
   iiBins: { categories: string[]; data: number[] };
   cumBins: { categories: string[]; data: number[] };
+  r0Kde: KdeResult;
   cumKde: KdeResult;
   cumDay: number;
   trajectorySeries: TrajectorySeries[];
@@ -470,9 +471,10 @@ const stageTraces = computed<StageTrace[]>(() => {
       cumHi = cumMax + pad;
     }
   }
-  // Bar bin width for cum infections — used to rescale the KDE so its
-  // peak height aligns with bar heights (the KDE is a density, area=1;
-  // multiplying by binWidth converts to weight-per-bar units).
+  // Bar bin widths — used to rescale each KDE so its peak height aligns
+  // with bar heights (KDE is a density, area=1; multiplying by binWidth
+  // converts to weight-per-bar units that match the bars sum-to-1 form).
+  const r0BinWidth = (params.priors.r0Hi - params.priors.r0Lo) / 18;
   const cumBinWidth = cumHi > cumLo ? (cumHi - cumLo) / 18 : 0;
   for (let s = 0; s < stages.length; s++) {
     const ps = stages[s];
@@ -507,8 +509,19 @@ const stageTraces = computed<StageTrace[]>(() => {
       cumLo,
       cumHi,
     );
-    // Weighted Gaussian KDE on the same range — shown beside the bars
-    // as a smoothed, bin-independent rendering of the same density.
+    // Weighted Gaussian KDEs for the continuous parameters — shown
+    // beside (or below) the bars as smoothed, bin-independent renderings
+    // of the same posterior. No KDE for `initial_infections`: it's
+    // discrete and the perturbation kernel never moves it, so a smooth
+    // curve would imply density between integers and exploration that
+    // the algorithm structurally doesn't perform.
+    const r0Kde = weightedKde(
+      ps.map((p) => p.r0),
+      normalizedWeights,
+      params.priors.r0Lo,
+      params.priors.r0Hi,
+      120,
+    );
     const cumKde = weightedKde(
       cumValues,
       normalizedWeights,
@@ -562,9 +575,13 @@ const stageTraces = computed<StageTrace[]>(() => {
         categories: cumBins.map((b) => b.center.toFixed(0)),
         data: cumBins.map((b) => b.weight),
       },
-      // Rescale the KDE (which is a density, area=1) by the bar-bin
-      // width so its peak aligns visually with the bar heights — both
-      // panels share the same y-axis interpretation.
+      // Rescale each KDE (a density, area=1) by its bar-bin width so the
+      // peak aligns visually with the corresponding bar heights — bars
+      // and KDE then share the same y-axis interpretation.
+      r0Kde: {
+        x: r0Kde.x,
+        y: r0Kde.y.map((v) => v * r0BinWidth),
+      },
       cumKde: {
         x: cumKde.x,
         y: cumKde.y.map((v) => v * cumBinWidth),
@@ -859,9 +876,31 @@ const observedSeries = computed(() => {
               :menu="false"
             />
           </div>
+        </div>
+        <div class="trace-row">
+          <div class="trace-mini">
+            <p class="trace-label">R₀ (KDE)</p>
+            <LineChart
+              :series="[
+                {
+                  x: trace.r0Kde.x,
+                  data: trace.r0Kde.y,
+                  color: '#2563eb',
+                  strokeWidth: 2,
+                  dots: false,
+                },
+              ]"
+              :height="120"
+              :menu="false"
+            />
+          </div>
+          <!-- No initial-infections KDE: it's discrete + frozen by the
+               perturbation kernel. See "Calibration semantics" in
+               CLAUDE.md for the rationale. -->
+          <div class="trace-mini trace-mini--empty" aria-hidden="true"></div>
           <div class="trace-mini">
             <p class="trace-label">
-              Cum. infections (KDE)
+              Cumulative infections (KDE)
             </p>
             <LineChart
               :series="[
@@ -1101,7 +1140,7 @@ const observedSeries = computed(() => {
 }
 .trace-row {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   gap: 1rem;
 }
 .trace-mini {
