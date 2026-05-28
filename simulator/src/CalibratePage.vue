@@ -458,6 +458,20 @@ function totalCumInfections(trajectory: number[]): number {
   return s;
 }
 
+/// Stage 0 is unconstrained prior sampling. Stage 1 is rejection-sample
+/// from prior at the first scheduled quantile. Stage k≥2 is perturbation
+/// from the previous stage at quantile stages[k-1] of stage-0 distances.
+function stageLabelFor(s: number, stages: number[]): string {
+  if (s === 0) return "Prior (∞)";
+  if (s === 1) {
+    const q = stages[0];
+    return q !== undefined
+      ? `Prior @ ${(q * 100).toFixed(0)}%`
+      : "Prior";
+  }
+  return `Stage ${s} (perturb)`;
+}
+
 const stageTraces = computed<StageTrace[]>(() => {
   const stages = runner.particlesByStage.value;
   const acc = runner.acceptance.value;
@@ -571,7 +585,7 @@ const stageTraces = computed<StageTrace[]>(() => {
     }
     out.push({
       stage: s,
-      stageLabel: s === 0 ? "Prior (∞)" : `Stage ${s}`,
+      stageLabel: stageLabelFor(s, parseStages(params.stagesText)),
       n: ps.length,
       acceptance: a ? acceptanceRatio(a.nAccepted, a.nAttempts) : null,
       // Bar heights are bin weights summing to 1 across the panel
@@ -634,8 +648,11 @@ const summaryRows = computed(() =>
   stageTraces.value.map((t) => ({
     stage: t.stageLabel,
     particles: t.n,
+    // Stage 0's acceptance is trivially 1.0 (threshold = ∞), so the
+    // ratio is vacuous — render as "—" instead of "100%" to avoid
+    // implying it's a meaningful diagnostic.
     acceptance:
-      t.acceptance === null
+      t.stage === 0 || t.acceptance === null
         ? "—"
         : `${(t.acceptance * 100).toFixed(1)}%`,
   })),
@@ -896,6 +913,7 @@ const observedSeries = computed(() => {
                 {
                   data: trace.r0Bins.posterior,
                   color: '#2563eb',
+                  blendMode: 'multiply',
                   legend: 'Posterior',
                 },
               ]"
@@ -931,6 +949,7 @@ const observedSeries = computed(() => {
                 {
                   data: trace.iiBins.posterior,
                   color: '#2563eb',
+                  blendMode: 'multiply',
                   legend: 'Posterior',
                 },
               ]"
