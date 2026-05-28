@@ -3,6 +3,7 @@ import {
   computeThreshold,
   parseTargetCsv,
   weightedHistogram,
+  weightedKde,
   totalWeight,
   acceptanceRatio,
   defaultConfig,
@@ -125,6 +126,107 @@ describe("weightedHistogram", () => {
     expect(bins.reduce((s, b) => s + b.weight, 0)).toBe(2);
   });
 });
+
+describe("weightedKde", () => {
+  // Trapezoidal integration on a regular grid.
+  function area(x: number[], y: number[]): number {
+    let s = 0;
+    for (let i = 1; i < x.length; i++) {
+      s += 0.5 * (y[i] + y[i - 1]) * (x[i] - x[i - 1]);
+    }
+    return s;
+  }
+
+  it("returns empty for invalid inputs", () => {
+    expect(weightedKde([], [], 0, 1, 10)).toEqual({ x: [], y: [] });
+    expect(weightedKde([1], [1], 1, 0, 10)).toEqual({ x: [], y: [] });
+    expect(weightedKde([1], [1], 0, 1, 1)).toEqual({ x: [], y: [] });
+  });
+
+  it("output grid has nGrid points spanning [lo, hi]", () => {
+    const r = weightedKde([0.5], [1], 0, 1, 11);
+    expect(r.x).toHaveLength(11);
+    expect(r.y).toHaveLength(11);
+    expect(r.x[0]).toBeCloseTo(0);
+    expect(r.x[10]).toBeCloseTo(1);
+    expect(r.x[5]).toBeCloseTo(0.5);
+  });
+
+  it("integrates to approximately 1 over a wide grid (uniform weights)", () => {
+    // 200 draws from N(50, 5²), uniform weights. KDE area on [10, 90]
+    // should capture ~all the mass.
+    const rng = mulberry(42);
+    const values = Array.from({ length: 200 }, () => 50 + 5 * gaussian(rng));
+    const w = Array.from({ length: 200 }, () => 1 / 200);
+    const r = weightedKde(values, w, 10, 90, 200);
+    expect(area(r.x, r.y)).toBeCloseTo(1, 1);
+  });
+
+  it("integrates to approximately 1 with non-uniform weights", () => {
+    // Two clusters; one weighted heavier. Total weight = 1.
+    const values = [0, 0.1, 0.2, 5, 5.1, 5.2];
+    const w = [0.05, 0.05, 0.05, 0.3, 0.3, 0.25];
+    const r = weightedKde(values, w, -5, 10, 200);
+    expect(area(r.x, r.y)).toBeCloseTo(1, 1);
+  });
+
+  it("peaks near the data center for tightly clustered samples", () => {
+    const values = Array.from({ length: 50 }, (_, i) => 10 + 0.01 * i);
+    const w = Array.from({ length: 50 }, () => 1 / 50);
+    const r = weightedKde(values, w, 5, 15, 201);
+    let argmax = 0;
+    for (let i = 1; i < r.y.length; i++) {
+      if (r.y[i] > r.y[argmax]) argmax = i;
+    }
+    expect(r.x[argmax]).toBeGreaterThan(9);
+    expect(r.x[argmax]).toBeLessThan(11);
+  });
+
+  it("falls back to σ when IQR is degenerate (all values tied)", () => {
+    // All particles tied at 5; IQR = 0, so robust scale must fall back
+    // to σ (which itself is ~0). Output should be finite (no NaN/Inf)
+    // and concentrate mass near 5.
+    const values = [5, 5, 5, 5, 5];
+    const w = [0.2, 0.2, 0.2, 0.2, 0.2];
+    const r = weightedKde(values, w, 0, 10, 51);
+    for (const y of r.y) {
+      expect(Number.isFinite(y)).toBe(true);
+    }
+    // The peak should be near 5 (within one grid step).
+    let argmax = 0;
+    for (let i = 1; i < r.y.length; i++) {
+      if (r.y[i] > r.y[argmax]) argmax = i;
+    }
+    expect(Math.abs(r.x[argmax] - 5)).toBeLessThan(0.3);
+  });
+
+  it("is deterministic for the same inputs", () => {
+    const values = [1, 2, 3, 4, 5];
+    const w = [0.1, 0.2, 0.4, 0.2, 0.1];
+    const a = weightedKde(values, w, 0, 6, 50);
+    const b = weightedKde(values, w, 0, 6, 50);
+    expect(a).toEqual(b);
+  });
+});
+
+// Deterministic RNG for the tests above.
+function mulberry(seed: number): () => number {
+  let t = seed;
+  return () => {
+    t |= 0;
+    t = (t + 0x6d2b79f5) | 0;
+    let r = Math.imul(t ^ (t >>> 15), 1 | t);
+    r = (r + Math.imul(r ^ (r >>> 7), 61 | r)) ^ r;
+    return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function gaussian(rng: () => number): number {
+  // Box-Muller.
+  const u1 = Math.max(rng(), 1e-12);
+  const u2 = rng();
+  return Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+}
 
 describe("totalWeight", () => {
   it("returns 0 for empty input", () => {

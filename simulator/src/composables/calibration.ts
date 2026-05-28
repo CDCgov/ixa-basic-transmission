@@ -186,6 +186,100 @@ export function weightedHistogram(
   return bins;
 }
 
+/// Pair of parallel `x` and `y` arrays at evenly-spaced grid points,
+/// ready to feed straight into a `LineChart` series.
+export interface KdeResult {
+  x: number[];
+  y: number[];
+}
+
+/// Weighted Gaussian KDE on a regular grid spanning `[lo, hi]`.
+///
+/// Bandwidth is the **robust Silverman** plug-in `h = 0.9 · A · n_eff^(-1/5)`
+/// with `A = min(σ_w, IQR_w / 1.34)`, chosen over the classic
+/// `1.06·σ·n^(-1/5)` because ABC posteriors are routinely skewed and
+/// the IQR-based scale won't over-smooth heavy tails. References:
+/// Silverman 1986 §3.4.2 (the robust scale); Wand & Jones 1995. scipy's
+/// `gaussian_kde(..., bw_method="silverman")` uses the non-robust form;
+/// we deviate intentionally.
+///
+/// Weighted variance uses the bias correction `1/(1 − Σw²)` (matches
+/// `np.cov(aweights=, bias=False)`). For ABC-SMC with `n_eff` in the
+/// 30–60 range the uncorrected form underestimates σ² by ~3–5%.
+///
+/// `n_eff = (Σw)²/Σw² = 1/Σw²` for normalized weights (Kish 1965).
+export function weightedKde(
+  values: number[],
+  weights: number[],
+  lo: number,
+  hi: number,
+  nGrid: number,
+): KdeResult {
+  if (values.length === 0 || hi <= lo || nGrid < 2) {
+    return { x: [], y: [] };
+  }
+  let mean = 0;
+  for (let i = 0; i < values.length; i++) mean += weights[i] * values[i];
+  let biasedVar = 0;
+  for (let i = 0; i < values.length; i++) {
+    const d = values[i] - mean;
+    biasedVar += weights[i] * d * d;
+  }
+  let sumW2 = 0;
+  for (const w of weights) sumW2 += w * w;
+  const nEff = sumW2 > 0 ? 1 / sumW2 : values.length;
+  // Bessel-analogue: divide by (1 − Σw²) for an unbiased σ² under
+  // reliability weights (matches scipy/np.cov).
+  const denom = 1 - sumW2;
+  const variance = denom > 1e-12 ? biasedVar / denom : biasedVar;
+  const sd = Math.sqrt(Math.max(variance, 1e-12));
+  // Weighted IQR via cumulative weights walk after sorting.
+  const idx = values.map((_, i) => i).sort((a, b) => values[a] - values[b]);
+  const cum: number[] = new Array(idx.length);
+  let acc = 0;
+  for (let k = 0; k < idx.length; k++) {
+    acc += weights[idx[k]];
+    cum[k] = acc;
+  }
+  const totalW = cum.length > 0 ? cum[cum.length - 1] : 0;
+  function quantile(q: number): number {
+    if (idx.length === 0) return 0;
+    const target = q * totalW;
+    for (let k = 0; k < idx.length; k++) {
+      if (cum[k] >= target) {
+        if (k === 0) return values[idx[0]];
+        const w0 = cum[k - 1];
+        const w1 = cum[k];
+        const v0 = values[idx[k - 1]];
+        const v1 = values[idx[k]];
+        const t = (target - w0) / Math.max(w1 - w0, 1e-12);
+        return v0 + t * (v1 - v0);
+      }
+    }
+    return values[idx[idx.length - 1]];
+  }
+  const iqr = quantile(0.75) - quantile(0.25);
+  // Fall back to σ alone if IQR is degenerate (e.g. all particles tied
+  // at the same value); avoids collapsing the bandwidth to 0.
+  const a = iqr > 0 ? Math.min(sd, iqr / 1.34) : sd;
+  const h = Math.max(0.9 * a * Math.pow(nEff, -1 / 5), 1e-9);
+  const norm = 1 / (h * Math.sqrt(2 * Math.PI));
+  const step = (hi - lo) / (nGrid - 1);
+  const x: number[] = new Array(nGrid);
+  const y: number[] = new Array(nGrid);
+  for (let i = 0; i < nGrid; i++) {
+    const xi = lo + i * step;
+    let dens = 0;
+    for (let j = 0; j < values.length; j++) {
+      const z = (xi - values[j]) / h;
+      dens += weights[j] * Math.exp(-0.5 * z * z);
+    }
+    x[i] = xi;
+    y[i] = dens * norm;
+  }
+  return { x, y };
+}
+
 /// Sum of all particle weights — used to normalize displays on the fly.
 export function totalWeight(particles: Particle[]): number {
   let s = 0;

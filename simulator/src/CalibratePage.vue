@@ -18,12 +18,14 @@ import PriorEditor from "./components/PriorEditor.vue";
 import {
   defaultConfig,
   weightedHistogram,
+  weightedKde,
   totalWeight,
   parseTargetCsv,
   acceptanceRatio,
   withR0,
   cumulativeToIncidence,
   type CalibrationConfig,
+  type KdeResult,
   type Particle,
 } from "./composables/calibration";
 import { useCalibration } from "./composables/useCalibration";
@@ -415,13 +417,53 @@ interface StageTrace {
   acceptance: number | null;
   r0Bins: { categories: string[]; data: number[] };
   iiBins: { categories: string[]; data: number[] };
+  cumBins: { categories: string[]; data: number[] };
+  cumKde: KdeResult;
+  cumDay: number;
   trajectorySeries: TrajectorySeries[];
+}
+
+/// Posterior-predictive over total epidemic size: sum each particle's
+/// daily-incidence trajectory. Same statistic as the "Cumulative
+/// infections on <date>" forecasts CDC publishes — just keyed on the
+/// last simulated day rather than a calendar date.
+function totalCumInfections(trajectory: number[]): number {
+  let s = 0;
+  for (const v of trajectory) s += v;
+  return s;
 }
 
 const stageTraces = computed<StageTrace[]>(() => {
   const stages = runner.particlesByStage.value;
   const acc = runner.acceptance.value;
   const out: StageTrace[] = [];
+  // Shared bin range for the cumulative-infections histogram across
+  // every stage so panels are directly comparable. Includes the prior
+  // (stage 0) so the contraction story is visible.
+  let cumLo = 0;
+  let cumHi = 1;
+  let cumMin = Infinity;
+  let cumMax = -Infinity;
+  for (const ps of stages) {
+    if (!ps) continue;
+    for (const p of ps) {
+      const c = totalCumInfections(p.trajectory);
+      if (c < cumMin) cumMin = c;
+      if (c > cumMax) cumMax = c;
+    }
+  }
+  if (cumMin !== Infinity) {
+    if (cumMax <= cumMin) {
+      cumLo = Math.max(0, cumMin - 0.5);
+      cumHi = cumMin + 0.5;
+    } else {
+      const pad = (cumMax - cumMin) * 0.05;
+      cumLo = Math.max(0, cumMin - pad);
+      cumHi = cumMax + pad;
+    }
+  }
+  const r0BinWidth = (params.priors.r0Hi - params.priors.r0Lo) / 18;
+  const cumBinWidth = cumHi > cumLo ? (cumHi - cumLo) / 18 : 0;
   for (let s = 0; s < stages.length; s++) {
     const ps = stages[s];
     if (!ps || ps.length === 0) continue;
@@ -446,6 +488,23 @@ const stageTraces = computed<StageTrace[]>(() => {
       iiRange,
       params.priors.initialInfectionsLo - 0.5,
       params.priors.initialInfectionsHi + 0.5,
+    );
+    const cumValues = ps.map((p) => totalCumInfections(p.trajectory));
+    const cumBins = weightedHistogram(
+      cumValues,
+      normalizedWeights,
+      18,
+      cumLo,
+      cumHi,
+    );
+    // Weighted Gaussian KDE on the same range — shown beside the bars
+    // as a smoothed, bin-independent rendering of the same density.
+    const cumKde = weightedKde(
+      cumValues,
+      normalizedWeights,
+      cumLo,
+      cumHi,
+      120,
     );
     const a = acc[s];
     // Particle trajectories as faint gray lines; observed (if loaded) as
@@ -476,14 +535,29 @@ const stageTraces = computed<StageTrace[]>(() => {
       stageLabel: s === 0 ? "Prior (∞)" : `Stage ${s}`,
       n: ps.length,
       acceptance: a ? acceptanceRatio(a.nAccepted, a.nAttempts) : null,
+      // Densities, not weights: divide each bin's weight by its width
+      // so the bar heights integrate to 1 across the panel (∫ p(x) dx = 1).
+      // Bins are uniform within a panel, so the shape is unchanged
+      // vs the weight form — only the y-axis scale shifts.
       r0Bins: {
         categories: r0Bins.map((b) => b.center.toFixed(2)),
-        data: r0Bins.map((b) => b.weight),
+        data: r0Bins.map((b) =>
+          r0BinWidth > 0 ? b.weight / r0BinWidth : 0,
+        ),
       },
       iiBins: {
         categories: iiBins.map((b) => b.center.toFixed(0)),
+        // ii bin width is 1 (one integer per bin), so weight == density.
         data: iiBins.map((b) => b.weight),
       },
+      cumBins: {
+        categories: cumBins.map((b) => b.center.toFixed(0)),
+        data: cumBins.map((b) =>
+          cumBinWidth > 0 ? b.weight / cumBinWidth : 0,
+        ),
+      },
+      cumKde,
+      cumDay: ps[0].trajectory.length,
       trajectorySeries,
     });
   }
@@ -751,6 +825,7 @@ const observedSeries = computed(() => {
               :data="trace.r0Bins.data"
               :height="120"
               :menu="false"
+              y-label="Density"
             />
           </div>
           <div class="trace-mini">
@@ -760,6 +835,38 @@ const observedSeries = computed(() => {
               :data="trace.iiBins.data"
               :height="120"
               :menu="false"
+              y-label="Density"
+            />
+          </div>
+          <div class="trace-mini">
+            <p class="trace-label">
+              Cumulative infections (day {{ trace.cumDay }})
+            </p>
+            <BarChart
+              :categories="trace.cumBins.categories"
+              :data="trace.cumBins.data"
+              :height="120"
+              :menu="false"
+              y-label="Density"
+            />
+          </div>
+          <div class="trace-mini">
+            <p class="trace-label">
+              Cum. infections (KDE)
+            </p>
+            <LineChart
+              :series="[
+                {
+                  x: trace.cumKde.x,
+                  data: trace.cumKde.y,
+                  color: '#2563eb',
+                  strokeWidth: 2,
+                  dots: false,
+                },
+              ]"
+              :height="120"
+              :menu="false"
+              y-label="Density"
             />
           </div>
         </div>
@@ -986,7 +1093,7 @@ const observedSeries = computed(() => {
 }
 .trace-row {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(4, 1fr);
   gap: 1rem;
 }
 .trace-mini {
