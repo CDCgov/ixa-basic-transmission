@@ -470,7 +470,9 @@ const stageTraces = computed<StageTrace[]>(() => {
       cumHi = cumMax + pad;
     }
   }
-  const r0BinWidth = (params.priors.r0Hi - params.priors.r0Lo) / 18;
+  // Bar bin width for cum infections — used to rescale the KDE so its
+  // peak height aligns with bar heights (the KDE is a density, area=1;
+  // multiplying by binWidth converts to weight-per-bar units).
   const cumBinWidth = cumHi > cumLo ? (cumHi - cumLo) / 18 : 0;
   for (let s = 0; s < stages.length; s++) {
     const ps = stages[s];
@@ -543,28 +545,30 @@ const stageTraces = computed<StageTrace[]>(() => {
       stageLabel: s === 0 ? "Prior (∞)" : `Stage ${s}`,
       n: ps.length,
       acceptance: a ? acceptanceRatio(a.nAccepted, a.nAttempts) : null,
-      // Densities, not weights: divide each bin's weight by its width
-      // so the bar heights integrate to 1 across the panel (∫ p(x) dx = 1).
-      // Bins are uniform within a panel, so the shape is unchanged
-      // vs the weight form — only the y-axis scale shifts.
+      // Bar heights are bin weights summing to 1 across the panel
+      // ("probability mass per bin"). Density (area=1) would put cum-
+      // infections values in the ~1e-4 range — unreadable — since
+      // density scales as 1/x-range. Weight stays in [0, ~0.5] for
+      // typical posteriors.
       r0Bins: {
         categories: r0Bins.map((b) => b.center.toFixed(2)),
-        data: r0Bins.map((b) =>
-          r0BinWidth > 0 ? b.weight / r0BinWidth : 0,
-        ),
+        data: r0Bins.map((b) => b.weight),
       },
       iiBins: {
         categories: iiBins.map((b) => b.center.toFixed(0)),
-        // ii bin width is 1 (one integer per bin), so weight == density.
         data: iiBins.map((b) => b.weight),
       },
       cumBins: {
         categories: cumBins.map((b) => b.center.toFixed(0)),
-        data: cumBins.map((b) =>
-          cumBinWidth > 0 ? b.weight / cumBinWidth : 0,
-        ),
+        data: cumBins.map((b) => b.weight),
       },
-      cumKde,
+      // Rescale the KDE (which is a density, area=1) by the bar-bin
+      // width so its peak aligns visually with the bar heights — both
+      // panels share the same y-axis interpretation.
+      cumKde: {
+        x: cumKde.x,
+        y: cumKde.y.map((v) => v * cumBinWidth),
+      },
       cumDay: ps[0].trajectory.length,
       trajectorySeries,
     });
@@ -833,7 +837,6 @@ const observedSeries = computed(() => {
               :data="trace.r0Bins.data"
               :height="120"
               :menu="false"
-              y-label="Density"
             />
           </div>
           <div class="trace-mini">
@@ -843,7 +846,6 @@ const observedSeries = computed(() => {
               :data="trace.iiBins.data"
               :height="120"
               :menu="false"
-              y-label="Density"
             />
           </div>
           <div class="trace-mini">
@@ -855,7 +857,6 @@ const observedSeries = computed(() => {
               :data="trace.cumBins.data"
               :height="120"
               :menu="false"
-              y-label="Density"
             />
           </div>
           <div class="trace-mini">
@@ -874,7 +875,6 @@ const observedSeries = computed(() => {
               ]"
               :height="120"
               :menu="false"
-              y-label="Density"
             />
           </div>
         </div>
