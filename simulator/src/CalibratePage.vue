@@ -342,9 +342,17 @@ async function startRun() {
       errorMessage.value = `Observed data length (${observed.value.length}) must equal floor(maxTime) (${Math.floor(params.maxTime)}).`;
       return;
     }
-    // If no run is selected (rare — "+ New" auto-creates one), mint
-    // one now so the rest of the flow is uniform.
-    if (!runner.runId.value) {
+    // Mint a fresh run when there's nothing selected OR when the
+    // selected run is already finished. Overwriting a complete/error
+    // run's config would silently corrupt its history and the loop
+    // would no-op (useCalibration.run returns early on those statuses).
+    // `idle` (the "+ New" placeholder) and `paused` (resumable) reuse
+    // the existing run.
+    const status = runner.status.value;
+    const needsFresh =
+      !runner.runId.value || status === "complete" || status === "error";
+    if (needsFresh) {
+      params.runName = defaultRunName();
       const id = await createRun(config.value, params.runName);
       selectedRunId.value = id;
       syncRunIdToUrl(id);
