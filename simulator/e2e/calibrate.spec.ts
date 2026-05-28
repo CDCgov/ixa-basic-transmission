@@ -104,6 +104,37 @@ test.describe("Calibration page", () => {
     });
   });
 
+  test("params are locked once a run starts and stays locked when complete", async ({
+    page,
+  }) => {
+    await page.goto("/calibrate");
+    await expect(
+      page.getByRole("heading", { name: "Calibration", exact: true }),
+    ).toBeVisible();
+
+    // A fresh (idle) run is editable.
+    const population = page.getByLabel("Population", { exact: true });
+    await expect(population).toBeEnabled();
+    await expect(page.getByText("This run is read-only")).toHaveCount(0);
+
+    // Starting the run freezes the params.
+    await page.getByRole("button", { name: "Start new run" }).click();
+    await expect(page.getByText("This run is read-only")).toBeVisible({
+      timeout: 60_000,
+    });
+    await expect(population).toBeDisabled();
+
+    // Still locked after it completes.
+    await expect(page.getByText(/Complete/)).toBeVisible({ timeout: 180_000 });
+    await expect(population).toBeDisabled();
+    await expect(page.getByText("This run is read-only")).toBeVisible();
+
+    // "+ New" mints a fresh idle run → editable again.
+    await page.getByRole("button", { name: "+ New" }).click();
+    await expect(population).toBeEnabled();
+    await expect(page.getByText("This run is read-only")).toHaveCount(0);
+  });
+
   test("nav lets the user switch between Simulate and Calibrate", async ({
     page,
   }) => {

@@ -115,6 +115,11 @@ const config = computed<CalibrationConfig>(() => ({
 
 const runner = useCalibration();
 
+// Params are editable only for a not-yet-started (idle) run. Once a run
+// is running/paused/complete/error its config is frozen — the user must
+// create a new run to change anything.
+const paramsLocked = computed(() => runner.status.value !== "idle");
+
 // --- Saved-run management ----------------------------------------------------
 
 const savedRuns = ref<StoredRun[]>([]);
@@ -723,6 +728,11 @@ const observedSeries = computed(() => {
       </div>
     </div>
 
+    <p v-if="paramsLocked" class="cal-locked-banner">
+      This run is read-only. Create a new run to change parameters.
+    </p>
+
+    <fieldset class="cal-fieldset" :disabled="paramsLocked">
     <section class="cal-section">
       <h3>Model</h3>
       <RateEditor v-model="params.infectionRate" />
@@ -792,6 +802,7 @@ const observedSeries = computed(() => {
         label="Error schedule (comma-separated, 0 < r < 1)"
       />
     </section>
+    </fieldset>
 
     <div class="sidebar-controls">
       <Button
@@ -1129,6 +1140,24 @@ const observedSeries = computed(() => {
   display: flex;
   justify-content: flex-end;
   gap: 0.5rem;
+}
+/* Reset the native fieldset chrome so it's a transparent wrapper whose
+   only job is to cascade `disabled` to the param controls inside. */
+.cal-fieldset {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-inline-size: 0;
+  display: contents;
+}
+.cal-locked-banner {
+  margin: 0.75rem 0 0;
+  padding: 0.5rem 0.75rem;
+  font-size: var(--font-size-sm, 0.875rem);
+  color: var(--color-text-muted, #64748b);
+  background: var(--color-surface-muted, #f1f5f9);
+  border: 1px solid var(--color-border);
+  border-radius: 0.375rem;
 }
 .cal-section {
   display: flex;
