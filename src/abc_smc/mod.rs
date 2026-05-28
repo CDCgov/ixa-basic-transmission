@@ -98,9 +98,10 @@ mod tests {
 
     /// Perturbation kernel: perturbing N times around a point with
     /// `previous_particles` of varying r0 should give samples whose
-    /// variance is roughly the variance of the sample set.
+    /// variance is roughly **twice** the sample variance — the Beaumont
+    /// 2009 ABC-SMC random-walk recipe (kernel SD = sqrt(2 * Var)).
     #[test]
-    fn perturbation_kernel_uses_sample_variance() {
+    fn perturbation_kernel_uses_twice_sample_variance() {
         let samples = [1.0_f64, 2.0, 3.0, 4.0, 5.0];
         let params: Vec<CalibratedParams> = samples
             .iter()
@@ -117,17 +118,18 @@ mod tests {
             .map(|_| kernel.perturb(&base, &mut rng).r0)
             .collect();
         let mean: f64 = perturbed.iter().sum::<f64>() / perturbed.len() as f64;
-        // Sample variance of [1..=5] is 2.5; perturbed values should
-        // cluster around base.r0 = 3.0 with comparable spread.
+        // Sample variance of [1..=5] is 2.5; with the 2× factor the
+        // kernel variance is ~5.0, so perturbed values should cluster
+        // around base.r0 = 3.0 with sqrt(5) ≈ 2.24 spread.
         let var: f64 = perturbed.iter().map(|x| (x - mean).powi(2)).sum::<f64>()
             / (perturbed.len() - 1) as f64;
         assert!(
-            (mean - 3.0).abs() < 0.2,
+            (mean - 3.0).abs() < 0.25,
             "perturbation mean {mean} should be near base r0 = 3.0"
         );
         assert!(
-            var > 1.0 && var < 4.0,
-            "perturbation variance {var} unreasonable"
+            (3.5..6.5).contains(&var),
+            "perturbation variance {var} should be ~5.0 (= 2 * sample variance 2.5)"
         );
     }
 

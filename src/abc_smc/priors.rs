@@ -84,9 +84,13 @@ pub struct PerturbationKernel {
 
 impl PerturbationKernel {
     /// Build the per-stage kernel from the previous generation's particle
-    /// parameters. Mirrors `def_abc_smc/src/priors.rs::PerturbationKernel::new`
-    /// (uses the marginal variance on r0; the discrete-uniform half-width
-    /// on initial_infections is fixed to 1 to match def's TODO note).
+    /// parameters. The r0 SD is `sqrt(2 * sample_variance)` — the
+    /// Beaumont 2009 ABC-SMC standard for Gaussian random-walk kernels,
+    /// matching `cfa-calibration-tools/src/calibrationtools/variance_adapter.py:102`.
+    /// Note: the original port from `def_abc_smc` used `sqrt(variance)`
+    /// without the 2× factor; switching to 2× brings exploration in line
+    /// with the canonical recipe. The discrete-uniform half-width on
+    /// initial_infections is still fixed to 1 to match def's TODO note.
     pub fn new<'a>(samples: impl Iterator<Item = &'a CalibratedParams>) -> Self {
         let mut r0_stats = MeanVarianceEstimator::new();
         let mut n: u64 = 0;
@@ -94,7 +98,7 @@ impl PerturbationKernel {
             r0_stats.add(x.r0);
             n += 1;
         }
-        // Two clamps relative to def (documented divergence — see audit):
+        // Two clamps unrelated to the 2× scaling (still divergent from def):
         //   1. n < 2: variance is undefined (divisor (n-1) is 0 / wraps).
         //      Fall back to SD = 1e-9.
         //   2. n >= 2 but all r0 samples identical → variance == 0 → SD == 0
@@ -103,7 +107,7 @@ impl PerturbationKernel {
         // rejection sampling does the rest; this is a safety net, not the
         // expected path.
         let sd = if n >= 2 {
-            r0_stats.get_variance().sqrt().max(1e-9)
+            (2.0 * r0_stats.get_variance()).sqrt().max(1e-9)
         } else {
             1e-9
         };
