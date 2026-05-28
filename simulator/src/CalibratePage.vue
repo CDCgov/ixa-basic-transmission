@@ -15,6 +15,7 @@ import type { SelectOption } from "cfasim-ui/components";
 import { BarChart, LineChart } from "cfasim-ui/charts";
 import RateEditor from "./components/RateEditor.vue";
 import PriorEditor from "./components/PriorEditor.vue";
+import SettingsEditor from "./components/SettingsEditor.vue";
 import {
   defaultConfig,
   weightedHistogram,
@@ -22,7 +23,6 @@ import {
   totalWeight,
   parseTargetCsv,
   acceptanceRatio,
-  withR0,
   cumulativeToIncidence,
   type CalibrationConfig,
   type Particle,
@@ -48,6 +48,7 @@ const defaults = {
   population: seed.modelContext.population,
   maxTime: seed.modelContext.maxTime,
   settings: seed.modelContext.settings,
+  initialInfections: seed.initialInfections,
   priors: seed.priors,
   stagesText: seed.stages.join(","),
   nParticles: seed.nParticles,
@@ -58,12 +59,6 @@ const defaults = {
   targetMode: (seed.target.mode === "synthetic" ? "synthetic" : "csv") as
     | "synthetic"
     | "csv",
-  truthR0:
-    seed.target.mode === "synthetic" ? seed.target.truthR0 : 1.5,
-  truthInitialInfections:
-    seed.target.mode === "synthetic"
-      ? seed.target.truthInitialInfections
-      : 10,
   csvFilename: "",
   runName: defaultRunName(),
 };
@@ -103,6 +98,7 @@ const config = computed<CalibrationConfig>(() => ({
     maxTime: params.maxTime,
     settings: params.settings,
   },
+  initialInfections: params.initialInfections,
   priors: params.priors,
   stages: parseStages(params.stagesText),
   nParticles: params.nParticles,
@@ -113,11 +109,7 @@ const config = computed<CalibrationConfig>(() => ({
   observed: observed.value,
   target:
     params.targetMode === "synthetic"
-      ? {
-          mode: "synthetic",
-          truthInitialInfections: params.truthInitialInfections,
-          truthR0: params.truthR0,
-        }
+      ? { mode: "synthetic" }
       : { mode: "csv", filename: params.csvFilename },
 }));
 
@@ -242,6 +234,7 @@ async function onSelectRun(id: string | number) {
     setParam("population", c.modelContext.population);
     setParam("maxTime", c.modelContext.maxTime);
     setParam("settings", c.modelContext.settings);
+    setParam("initialInfections", c.initialInfections);
     setParam("priors", c.priors);
     setParam("stagesText", c.stages.join(","));
     setParam("nParticles", c.nParticles);
@@ -252,8 +245,6 @@ async function onSelectRun(id: string | number) {
     observed.value = c.observed;
     if (c.target.mode === "synthetic") {
       setParam("targetMode", "synthetic");
-      setParam("truthR0", c.target.truthR0);
-      setParam("truthInitialInfections", c.target.truthInitialInfections);
     } else {
       setParam("targetMode", "csv");
       setParam("csvFilename", c.target.filename);
@@ -269,9 +260,9 @@ async function generateSyntheticObserved(): Promise<number[]> {
   // sim with truth params) and convert the cumulative trajectory into
   // daily incidence via the same helper the ABC distance metric uses.
   const args = JSON.stringify({
-    infectionRate: withR0(params.infectionRate, params.truthR0),
+    infectionRate: params.infectionRate,
     population: params.population,
-    initialInfections: params.truthInitialInfections,
+    initialInfections: params.initialInfections,
     seed: 0,
     maxTime: params.maxTime,
     nSimulations: 1,
@@ -727,7 +718,13 @@ const observedSeries = computed(() => {
       <h3>Model</h3>
       <RateEditor v-model="params.infectionRate" />
       <NumberInput v-model="params.population" label="Population" :min="100" />
+      <NumberInput
+        v-model="params.initialInfections"
+        label="Initial infections (truth, used in synthetic mode)"
+        :min="1"
+      />
       <NumberInput v-model="params.maxTime" label="Max time (days)" :min="1" />
+      <SettingsEditor v-model="params.settings" />
     </section>
 
     <section class="cal-section">
@@ -739,17 +736,10 @@ const observedSeries = computed(() => {
         @update:model-value="(v) => setParam('targetMode', String(v) as 'synthetic' | 'csv')"
       />
       <template v-if="params.targetMode === 'synthetic'">
-        <NumberInput
-          v-model="params.truthR0"
-          label="True R₀"
-          :min="0.1"
-          :step="0.1"
-        />
-        <NumberInput
-          v-model="params.truthInitialInfections"
-          label="True initial infections"
-          :min="1"
-        />
+        <p class="cal-csv-name">
+          Synthetic target is generated from the Model section above
+          (infection rate, population, initial infections, settings).
+        </p>
         <Button variant="secondary" @click="regenerateObservedPreview">
           Regenerate preview
         </Button>

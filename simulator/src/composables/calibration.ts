@@ -73,6 +73,10 @@ export interface ModelContext {
 
 export interface CalibrationConfig {
   modelContext: ModelContext;
+  /// Initial infections for the synthetic-truth generator. Unused in
+  /// CSV mode. The calibrated `initial_infections` is sampled from
+  /// `priors.initialInfectionsLo..Hi` independently.
+  initialInfections: number;
   priors: PriorBounds;
   // Relative-error schedule. stages[k] ∈ (0, 1) is the quantile of the
   // previous stage's sorted distances used as the threshold for stage k+1.
@@ -93,8 +97,10 @@ export interface CalibrationConfig {
   target: TargetSpec;
 }
 
+/// Synthetic mode generates the observed series from the Model section's
+/// own infectionRate + initialInfections; CSV mode reads a user upload.
 export type TargetSpec =
-  | { mode: "synthetic"; truthInitialInfections: number; truthR0: number }
+  | { mode: "synthetic" }
   | { mode: "csv"; filename: string };
 
 /// Default config for a fresh run. The model context defaults match
@@ -107,6 +113,7 @@ export function defaultConfig(): CalibrationConfig {
       maxTime: 60,
       settings: [],
     },
+    initialInfections: 10,
     priors: {
       r0Lo: 0.5,
       r0Hi: 3.0,
@@ -120,7 +127,7 @@ export function defaultConfig(): CalibrationConfig {
     varianceFactor: 2.0,
     probKeepSeed: 0.0,
     observed: [],
-    target: { mode: "synthetic", truthInitialInfections: 10, truthR0: 1.5 },
+    target: { mode: "synthetic" },
   };
 }
 
