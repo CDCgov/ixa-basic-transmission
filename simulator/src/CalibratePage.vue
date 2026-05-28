@@ -765,7 +765,7 @@ const observedSeries = computed(() => {
       />
       <NumberInput
         v-model="params.probKeepSeed"
-        label="Seed-keep probability (0 = always fresh; raise to expose particle degeneracy in the seed-observation chart)"
+        label="Seed-keep probability (0 = always fresh)"
         :min="0"
         :max="1"
         :step="0.01"
