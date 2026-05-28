@@ -22,9 +22,7 @@ describe("computeThreshold", () => {
     expect(computeThreshold([], 0.5)).toBe(Infinity);
   });
 
-  it("picks the floor(relativeError * n) - 1 element of the sorted distances", () => {
-    // Mirrors def_abc_smc/src/lib.rs:50:
-    //   floor(rel * n) - 1 indexed into sorted ascending.
+  it("picks the floor(fraction * n) - 1 element of the sorted distances", () => {
     const ps = [10, 20, 30, 40, 50].map((d) => particle(d));
     expect(computeThreshold(ps, 0.5)).toBe(20); // floor(2.5)-1 = 1 → 20
     expect(computeThreshold(ps, 0.3)).toBe(10); // floor(1.5)-1 = 0 → 10
@@ -32,7 +30,6 @@ describe("computeThreshold", () => {
   });
 
   it("clamps the index to >= 0", () => {
-    // relativeError small enough that floor(rel*n)-1 would go negative.
     const ps = [10, 20, 30].map((d) => particle(d));
     expect(computeThreshold(ps, 0.1)).toBe(10); // would be -1; clamps to 0
   });
@@ -40,6 +37,31 @@ describe("computeThreshold", () => {
   it("uses ascending order regardless of input order", () => {
     const ps = [50, 10, 30].map((d) => particle(d));
     expect(computeThreshold(ps, 1.0)).toBe(50); // sorted [10,30,50], idx 2
+  });
+
+  it("anchors every stage to the same reference (no compounding)", () => {
+    // Whole point of anchoring to stage 0: stages[k] is the quantile of
+    // the prior-sample distribution at stage k+1, NOT of the previous
+    // stage. So calling computeThreshold repeatedly with the same ref +
+    // a fixed quantile schedule gives identical values, while calling it
+    // against successively-narrower stages would compound and tighten.
+    const stage0 = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100].map((d) =>
+      particle(d),
+    );
+    const schedule = [0.5, 0.3, 0.2, 0.1];
+    const thresholds = schedule.map((f) => computeThreshold(stage0, f));
+    expect(thresholds).toEqual([50, 30, 20, 10]);
+
+    // Sanity: the same schedule against a narrower hypothetical stage-1
+    // population would tighten — compounding is what we are NOT doing.
+    const stage1NarrowedHypothetical = [10, 15, 20, 25, 30].map((d) =>
+      particle(d),
+    );
+    const compoundedThresholds = schedule.map((f) =>
+      computeThreshold(stage1NarrowedHypothetical, f),
+    );
+    expect(compoundedThresholds).toEqual([15, 10, 10, 10]);
+    expect(compoundedThresholds[0]).toBeLessThan(thresholds[0]);
   });
 });
 

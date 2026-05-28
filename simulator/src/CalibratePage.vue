@@ -911,6 +911,8 @@ const observedSeries = computed(() => {
               ]"
               :height="180"
               :menu="false"
+              tooltip-trigger="hover"
+              tooltip-value-format="%.4f"
             />
           </div>
           <div class="trace-mini">
@@ -935,6 +937,8 @@ const observedSeries = computed(() => {
               layout="overlay"
               :height="180"
               :menu="false"
+              tooltip-trigger="hover"
+              tooltip-value-format="%.4f"
             />
           </div>
           <div class="trace-mini">
@@ -955,6 +959,8 @@ const observedSeries = computed(() => {
               ] : []"
               :height="180"
               :menu="false"
+              tooltip-trigger="hover"
+              tooltip-value-format="%.4f"
             />
           </div>
         </div>

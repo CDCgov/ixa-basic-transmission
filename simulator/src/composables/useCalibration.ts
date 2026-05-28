@@ -195,14 +195,20 @@ export function useCalibration(): CalibrationRunner {
     // Defensive: a 0 batch would let the outer loop spin forever waiting
     // for particles that never arrive. The wasm side also asserts this.
     const batchSize = Math.max(1, Math.min(c.batchSize, c.nParticles - haveSoFar));
-    // `null` = +Infinity on the wasm side. JS Infinity becomes "null" via
-    // JSON.stringify regardless, so we make the convention explicit.
+    // Stage 0: sample from prior at ∞ (null = ∞ on wasm; JSON.stringify
+    // turns Infinity into "null" anyway, so make the convention explicit).
+    // Stage 1: rejection-sample from prior at threshold = quantile of
+    // stage 0's distances. Stage 2+: perturb from previous stage. All
+    // post-stage-0 thresholds are quantiles anchored to stage 0, so the
+    // schedule doesn't compound across stages.
     let threshold: number | null = null;
     let previousParticles: Particle[] = [];
     if (stage > 0) {
-      const prev = particlesByStage.value[stage - 1] ?? [];
-      threshold = computeThreshold(prev, c.stages[stage - 1]);
-      previousParticles = prev;
+      const reference = particlesByStage.value[0] ?? [];
+      threshold = computeThreshold(reference, c.stages[stage - 1]);
+      if (stage > 1) {
+        previousParticles = particlesByStage.value[stage - 1] ?? [];
+      }
     }
     const args = {
       infectionRate: c.modelContext.infectionRate,

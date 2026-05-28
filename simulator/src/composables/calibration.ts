@@ -78,8 +78,12 @@ export interface CalibrationConfig {
   /// `priors.initialInfectionsLo..Hi` independently.
   initialInfections: number;
   priors: PriorBounds;
-  // Relative-error schedule. stages[k] ∈ (0, 1) is the quantile of the
-  // previous stage's sorted distances used as the threshold for stage k+1.
+  // Quantile schedule, anchored to stage 0 (the prior-sample stage) — NOT
+  // compounding stage-over-stage. stages[k] ∈ (0, 1) is the quantile of
+  // stage 0's sorted distances used as the threshold for stage k+1.
+  // So with stages = [0.5, 0.3, 0.2, 0.1], stage 1 keeps proposals within
+  // the best 50% of prior samples, stage 4 within the best 10% — directly
+  // comparable across runs because the reference distribution is fixed.
   // Total generations = 1 (prior sample at INF) + stages.length.
   stages: number[];
   nParticles: number;
@@ -131,18 +135,18 @@ export function defaultConfig(): CalibrationConfig {
   };
 }
 
-/// Mirrors `def_abc_smc/src/lib.rs` lines 49–51:
-///   error_distance_index = (relative_error * sorted.len()) as usize - 1
-///   error_threshold = sorted_distances[error_distance_index] as f64
-/// Used by JS to compute the threshold for the next stage from the
-/// previous stage's distances.
+/// Quantile lookup on a reference particle population's distances.
+/// `fraction ∈ (0, 1)`: 0.5 → median, 0.1 → 10th percentile.
+/// Called on stage 0's particles to derive each stage's threshold,
+/// so thresholds stay anchored to the prior distribution instead of
+/// compounding across stages.
 export function computeThreshold(
-  prevParticles: Particle[],
-  relativeError: number,
+  refParticles: Particle[],
+  fraction: number,
 ): number {
-  if (prevParticles.length === 0) return Infinity;
-  const sorted = prevParticles.map((p) => p.distance).sort((a, b) => a - b);
-  const idx = Math.max(0, Math.floor(relativeError * sorted.length) - 1);
+  if (refParticles.length === 0) return Infinity;
+  const sorted = refParticles.map((p) => p.distance).sort((a, b) => a - b);
+  const idx = Math.max(0, Math.floor(fraction * sorted.length) - 1);
   return sorted[idx];
 }
 
