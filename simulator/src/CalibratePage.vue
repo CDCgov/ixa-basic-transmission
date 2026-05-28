@@ -24,7 +24,6 @@ import {
   acceptanceRatio,
   withR0,
   cumulativeToIncidence,
-  seedObservationHistogram,
   type CalibrationConfig,
   type KdeResult,
   type Particle,
@@ -437,10 +436,6 @@ interface StageTrace {
   cumKde: KdeResult;
   cumDay: number;
   trajectorySeries: TrajectorySeries[];
-  /// Seed-observation histogram for the stage's accepted particles —
-  /// see `seedObservationHistogram` for the y-axis interpretation.
-  /// Empty bars when the stage's particles predate SCHEMA_VERSION=2.
-  seedBins: { categories: string[]; data: number[] };
 }
 
 /// Posterior-predictive over total epidemic size: sum each particle's
@@ -599,7 +594,6 @@ const stageTraces = computed<StageTrace[]>(() => {
       },
       cumDay: ps[0].trajectory.length,
       trajectorySeries,
-      seedBins: seedObservationHistogram(ps),
     });
   }
   return out;
@@ -941,24 +935,6 @@ const observedSeries = computed(() => {
               :menu="false"
             />
           </div>
-        </div>
-        <div v-if="trace.seedBins.data.length" class="trace-row">
-          <div class="trace-mini">
-            <p class="trace-label">
-              Seed observations (most seeds at k=1 ⇒ diverse particle
-              population; long right tail ⇒ a few seeds dominate)
-            </p>
-            <BarChart
-              :categories="trace.seedBins.categories"
-              :data="trace.seedBins.data"
-              :height="120"
-              :menu="false"
-              x-label="Observations per seed"
-              y-label="Number of seeds"
-            />
-          </div>
-          <div class="trace-mini trace-mini--empty" aria-hidden="true"></div>
-          <div class="trace-mini trace-mini--empty" aria-hidden="true"></div>
         </div>
       </div>
     </div>
