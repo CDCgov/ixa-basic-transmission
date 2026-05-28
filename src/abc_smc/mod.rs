@@ -78,6 +78,7 @@ mod tests {
             &priors,
             &gen0.particles,
             2.0,
+            0.0,
             &base,
             &observed,
             &mut rng,
@@ -113,7 +114,7 @@ mod tests {
             .collect();
         let base = params[2];
         for (factor, lo, hi) in [(1.0_f64, 1.5, 3.5), (2.0, 3.5, 6.5)] {
-            let kernel = PerturbationKernel::new(params.iter(), factor);
+            let kernel = PerturbationKernel::new(params.iter(), factor, 0.0);
             let mut rng = StdRng::seed_from_u64(99);
             let perturbed: Vec<f64> = (0..2000)
                 .map(|_| kernel.perturb(&base, &mut rng).r0)
@@ -126,6 +127,46 @@ mod tests {
                 (lo..hi).contains(&var),
                 "factor={factor}: variance {var}, expected ~{}",
                 factor * 2.5,
+            );
+        }
+    }
+
+    /// `weight()` includes the seed kernel transition probability:
+    ///   prob_keep_seed     if source.seed == proposed.seed
+    ///   1 - prob_keep_seed otherwise
+    /// At prob_keep_seed = 0.0, mismatched seeds contribute 1.0 (no
+    /// change vs. old behavior). Matched seeds contribute 0.0 — that
+    /// branch is unreachable in normal operation but locked in here.
+    #[test]
+    fn perturbation_kernel_weight_includes_seed_transition() {
+        let samples = [1.0_f64, 2.0, 3.0, 4.0, 5.0];
+        let params: Vec<CalibratedParams> = samples
+            .iter()
+            .map(|&r0| CalibratedParams {
+                r0,
+                initial_infections: 5,
+                seed: 0,
+            })
+            .collect();
+
+        for keep in [0.0, 0.1, 0.5, 0.9] {
+            let kernel = PerturbationKernel::new(params.iter(), 2.0, keep);
+            let src = CalibratedParams {
+                r0: 3.0,
+                initial_infections: 5,
+                seed: 42,
+            };
+            let same_seed = CalibratedParams { ..src };
+            let diff_seed = CalibratedParams { seed: 123, ..src };
+            // Same r0 + same initial_infections → r0 & ii contributions
+            // are identical; the only difference is the seed factor.
+            let w_same = kernel.weight(&src, &same_seed);
+            let w_diff = kernel.weight(&src, &diff_seed);
+            let ratio = w_same / w_diff.max(1e-300);
+            let expected = keep / (1.0 - keep).max(1e-300);
+            assert!(
+                (ratio - expected).abs() < 1e-9,
+                "keep={keep}: ratio {ratio} should equal keep/(1-keep) = {expected}"
             );
         }
     }

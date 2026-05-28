@@ -211,6 +211,10 @@ struct CalibrateBatchArgs {
     /// r0 kernel SD scaling — see `PerturbationKernel::new`. Default 2.0.
     #[serde(default = "default_variance_factor")]
     variance_factor: f64,
+    /// Probability a perturbed particle inherits its base particle's
+    /// seed. Default 0.0 = always replace. See `PerturbationKernel`.
+    #[serde(default)]
+    prob_keep_seed: f64,
     batch_size: u32,
     /// Just for ordering / output labels; does not affect the math.
     particle_offset: u32,
@@ -336,6 +340,7 @@ pub fn calibrate_batch(args: &str) -> JsValue {
             &priors,
             &prev,
             args.variance_factor,
+            args.prob_keep_seed,
             &base_params,
             &args.observed,
             &mut rng,

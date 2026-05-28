@@ -112,14 +112,16 @@ pub fn sample_from_prior_batch(
 /// Mirrors `def_abc_smc/src/step.rs::do_abc_smc_step` (lines 7–80).
 /// `previous_particles` already carry their stage-normalized weights
 /// (JS hands us either normalized or proportional weights — `WeightedIndex`
-/// only cares about proportion). `variance_factor` is passed through to
-/// `PerturbationKernel::new`.
+/// only cares about proportion). `variance_factor` and `prob_keep_seed`
+/// are passed through to `PerturbationKernel::new`.
+#[allow(clippy::too_many_arguments)]
 pub fn perturb_from_previous_batch(
     error_threshold: f64,
     batch_size: usize,
     priors: &Priors,
     previous_particles: &[Particle],
     variance_factor: f64,
+    prob_keep_seed: f64,
     base_params: &Parameters,
     observed: &[u64],
     rng: &mut impl Rng,
@@ -129,6 +131,7 @@ pub fn perturb_from_previous_batch(
     let kernel = PerturbationKernel::new(
         previous_particles.iter().map(|x| &x.parameters),
         variance_factor,
+        prob_keep_seed,
     );
 
     let mut n_attempts: u64 = 0;

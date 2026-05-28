@@ -79,7 +79,11 @@ pub fn apply(params: &CalibratedParams, base: &mut Parameters) {
 pub struct PerturbationKernel {
     r0: Normal,
     initial_infections: DiscreteUniform<i64>,
-    seed_replace_prob: f64,
+    /// Probability a perturbed particle inherits its base particle's
+    /// seed rather than drawing a fresh one. Matches cfa-calibration-
+    /// tools `SeedKernel.prob_keep` (`perturbation_kernel.py:173`).
+    /// `0.0` = always replace (max diversity); `1.0` = always inherit.
+    prob_keep_seed: f64,
 }
 
 impl PerturbationKernel {
@@ -90,6 +94,7 @@ impl PerturbationKernel {
     pub fn new<'a>(
         samples: impl Iterator<Item = &'a CalibratedParams>,
         variance_factor: f64,
+        prob_keep_seed: f64,
     ) -> Self {
         let mut r0_stats = MeanVarianceEstimator::new();
         let mut n: u64 = 0;
@@ -107,33 +112,36 @@ impl PerturbationKernel {
         PerturbationKernel {
             r0: Normal::new(0.0, sd),
             initial_infections: DiscreteUniform::new(0, 1),
-            seed_replace_prob: 1.0,
+            prob_keep_seed,
         }
     }
 
     pub fn perturb(&self, value: &CalibratedParams, rng: &mut impl Rng) -> CalibratedParams {
-        // initial_infections perturbation in def uses DiscreteUniform(0, 1)
-        // which only ever samples 0 (upper is exclusive). We keep that
-        // behavior so the port stays faithful — initial_infections never
-        // drifts from its base particle in v1. (Documented divergence
-        // candidate; see audit.)
         CalibratedParams {
             r0: value.r0 + self.r0.sample(rng),
             initial_infections: (value.initial_infections as i64
                 + self.initial_infections.sample(rng)) as u64,
-            seed: if rng.random_bool(self.seed_replace_prob) {
-                rng.next_u64()
-            } else {
+            seed: if rng.random_bool(self.prob_keep_seed) {
                 value.seed
+            } else {
+                rng.next_u64()
             },
         }
     }
 
     pub fn weight(&self, source: &CalibratedParams, value: &CalibratedParams) -> f64 {
-        // Ignores the seed-replacement contribution, matching def.
+        // Seed kernel transition probability: prob_keep_seed if the
+        // seed was kept, (1 - prob_keep_seed) otherwise. Matches
+        // cfa `SeedKernel.transition_probability` (perturbation_kernel.py:197).
+        let seed_p = if source.seed == value.seed {
+            self.prob_keep_seed
+        } else {
+            1.0 - self.prob_keep_seed
+        };
         self.r0.weight(value.r0 - source.r0)
             * self
                 .initial_infections
                 .weight(value.initial_infections as i64 - source.initial_infections as i64)
+            * seed_p
     }
 }
