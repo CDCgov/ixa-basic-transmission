@@ -193,10 +193,14 @@ struct CalibrateBatchArgs {
     // floor(max_time); value at day `d` is index `d - 1`).
     observed: Vec<u64>,
     /// 1-based days the target actually contains. The distance compares
-    /// cumulative incidence only at these days, skipping gaps (see
-    /// `data_distance`). Empty = compare every day (dense fallback).
+    /// only at these days, skipping gaps (see `data_distance`). Empty =
+    /// compare every day (dense fallback).
     #[serde(default)]
     observed_days: Vec<u64>,
+    /// `true` (default) = cumulative-incidence distance; `false` = per-day
+    /// (daily) distance. See `data_distance`.
+    #[serde(default = "default_cumulative")]
+    cumulative: bool,
 
     // Uniform prior bounds.
     initial_infections_lo: u32,
@@ -228,6 +232,10 @@ struct CalibrateBatchArgs {
 
 fn default_variance_factor() -> f64 {
     2.0
+}
+
+fn default_cumulative() -> bool {
+    true
 }
 
 /// SplitMix64 finalizer — fast 64→64 hash with full avalanche. Used to
@@ -321,6 +329,7 @@ pub fn calibrate_batch(args: &str) -> JsValue {
             &base_params,
             &args.observed,
             &args.observed_days,
+            args.cumulative,
             &mut rng,
         )
     } else {
@@ -350,6 +359,7 @@ pub fn calibrate_batch(args: &str) -> JsValue {
             &base_params,
             &args.observed,
             &args.observed_days,
+            args.cumulative,
             &mut rng,
         )
     };

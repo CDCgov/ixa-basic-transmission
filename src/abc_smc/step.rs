@@ -63,10 +63,18 @@ fn incidence_from_stats(stats: &ModelStats, max_time: f64) -> Vec<u64> {
 /// error = Σ_{d ∈ days} | Σ_{e ≤ d, e ∈ days} obs[e] − Σ_{e ≤ d, e ∈ days} sim[e] |
 /// ```
 ///
-/// With no gaps this is the L1 distance between the two cumulative-
-/// incidence curves. If `observed_days` is empty every day in `observed`
-/// is compared (dense fallback).
-pub fn data_distance(observed: &[u64], simulated: &[u64], observed_days: &[u64]) -> u64 {
+/// `cumulative = true` (the cfa default) compares running totals — with
+/// no gaps, the L1 distance between the two cumulative-incidence curves.
+/// `cumulative = false` compares the per-day incidence values directly
+/// (gap-aware daily L1): `Σ_{d ∈ days} |obs[d] − sim[d]|`. Either way only
+/// `observed_days` are scored. If `observed_days` is empty every day in
+/// `observed` is compared (dense fallback).
+pub fn data_distance(
+    observed: &[u64],
+    simulated: &[u64],
+    observed_days: &[u64],
+    cumulative: bool,
+) -> u64 {
     let mut days: Vec<usize> = if observed_days.is_empty() {
         (1..=observed.len()).collect()
     } else {
@@ -85,9 +93,15 @@ pub fn data_distance(observed: &[u64], simulated: &[u64], observed_days: &[u64])
             continue; // 1-based; day 0 is out of range.
         }
         let idx = d - 1;
-        cum_obs += i128::from(observed.get(idx).copied().unwrap_or(0));
-        cum_sim += i128::from(simulated.get(idx).copied().unwrap_or(0));
-        err += (cum_obs - cum_sim).unsigned_abs();
+        let o = i128::from(observed.get(idx).copied().unwrap_or(0));
+        let s = i128::from(simulated.get(idx).copied().unwrap_or(0));
+        if cumulative {
+            cum_obs += o;
+            cum_sim += s;
+            err += (cum_obs - cum_sim).unsigned_abs();
+        } else {
+            err += (o - s).unsigned_abs();
+        }
     }
     err as u64
 }
@@ -102,6 +116,7 @@ pub fn sample_from_prior_batch(
     base_params: &Parameters,
     observed: &[u64],
     observed_days: &[u64],
+    cumulative: bool,
     rng: &mut impl Rng,
 ) -> ABCStepOutput {
     let mut n_attempts: u64 = 0;
@@ -115,7 +130,7 @@ pub fn sample_from_prior_batch(
             apply(&proposed, &mut p);
             let model_output = model::run(p);
             let simulated = incidence_from_stats(&model_output, base_params.max_time);
-            let dist = data_distance(observed, &simulated, observed_days);
+            let dist = data_distance(observed, &simulated, observed_days, cumulative);
             if dist as f64 <= error_threshold {
                 particles.push(Particle {
                     parameters: proposed,
@@ -151,6 +166,7 @@ pub fn perturb_from_previous_batch(
     base_params: &Parameters,
     observed: &[u64],
     observed_days: &[u64],
+    cumulative: bool,
     rng: &mut impl Rng,
 ) -> ABCStepOutput {
     let weights: Vec<f64> = previous_particles.iter().map(|x| x.weight).collect();
@@ -180,7 +196,7 @@ pub fn perturb_from_previous_batch(
             apply(&proposed, &mut p);
             let model_output = model::run(p);
             let simulated = incidence_from_stats(&model_output, base_params.max_time);
-            let dist = data_distance(observed, &simulated, observed_days);
+            let dist = data_distance(observed, &simulated, observed_days, cumulative);
             if dist as f64 <= error_threshold {
                 // weight = prior(θ) / Σⱼ wⱼ K(θⱼ → θ). Matches def.
                 let proposal_weight: f64 = previous_particles

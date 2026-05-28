@@ -3,7 +3,13 @@ import { shallowReactive, ref, computed, onMounted, nextTick } from "vue";
 import { useRouter, useRoute } from "vue-router";
 import { runWasm } from "cfasim-ui/wasm";
 import type { ModelOutput } from "cfasim-ui/shared";
-import { NumberInput, Button, TextInput } from "cfasim-ui/components";
+import {
+  NumberInput,
+  Button,
+  TextInput,
+  SelectBox,
+} from "cfasim-ui/components";
+import type { SelectOption } from "cfasim-ui/components";
 // Native <dialog> element is used for the delete-confirmation modal —
 // no extra component dependency.
 import { BarChart, LineChart } from "cfasim-ui/charts";
@@ -50,6 +56,9 @@ const defaults = {
   seed: seed.seed,
   varianceFactor: seed.varianceFactor ?? 2.0,
   probKeepSeed: seed.probKeepSeed ?? 0.0,
+  distanceMetric: (seed.distanceMetric ?? "cumulative") as
+    | "cumulative"
+    | "daily",
   // Manual entry by default — the user can populate the table from a
   // model run or a CSV via the buttons next to the editor. `targetMode`
   // is provenance only (what last filled the table); it no longer drives
@@ -122,6 +131,11 @@ const observedDays = computed<number[]>(() => {
 // it back to "manual" (see markEdited).
 type TargetMode = "synthetic" | "csv" | "manual";
 
+const metricOptions: SelectOption[] = [
+  { value: "cumulative", label: "Cumulative incidence" },
+  { value: "daily", label: "Daily incidence" },
+];
+
 function parseStages(text: string): number[] {
   return text
     .split(",")
@@ -146,6 +160,7 @@ const config = computed<CalibrationConfig>(() => ({
   probKeepSeed: params.probKeepSeed,
   observed: observed.value,
   observedDays: observedDays.value,
+  distanceMetric: params.distanceMetric,
   target:
     params.targetMode === "synthetic"
       ? { mode: "synthetic" }
@@ -307,6 +322,7 @@ async function onSelectRun(id: string | number) {
     setParam("seed", c.seed);
     setParam("varianceFactor", c.varianceFactor ?? 2.0);
     setParam("probKeepSeed", c.probKeepSeed ?? 0.0);
+    setParam("distanceMetric", c.distanceMetric ?? "cumulative");
     // Rebuild the editable rows. Prefer `observedDays` so gaps survive a
     // reload; fall back to a contiguous dense expansion for older rows.
     if (c.observedDays && c.observedDays.length) {
@@ -948,6 +964,12 @@ const observedGapSections = computed(() => {
 
     <section class="cal-section">
       <h3>Calibration controls</h3>
+      <SelectBox
+        label="Distance metric"
+        :options="metricOptions"
+        :model-value="params.distanceMetric"
+        @update:model-value="(v) => setParam('distanceMetric', String(v) as 'cumulative' | 'daily')"
+      />
       <NumberInput v-model="params.nParticles" label="Particles per stage" :min="10" />
       <NumberInput v-model="params.batchSize" label="Batch size" :min="1" />
       <NumberInput v-model="params.seed" label="Seed" :min="0" />

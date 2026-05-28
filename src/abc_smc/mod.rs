@@ -64,8 +64,16 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(1);
 
         // Stage 0 with INF threshold.
-        let gen0 =
-            sample_from_prior_batch(f64::INFINITY, 60, &priors, &base, &observed, &[], &mut rng);
+        let gen0 = sample_from_prior_batch(
+            f64::INFINITY,
+            60,
+            &priors,
+            &base,
+            &observed,
+            &[],
+            true,
+            &mut rng,
+        );
         assert_eq!(gen0.particles.len(), 60);
 
         // One refinement stage at the 30th-percentile distance.
@@ -83,6 +91,7 @@ mod tests {
             &base,
             &observed,
             &[],
+            true,
             &mut rng,
         );
 
@@ -177,10 +186,21 @@ mod tests {
     fn data_distance_cumulative_dense() {
         // No gaps (observed_days empty → every day). Distance is the L1
         // distance between the two cumulative curves.
-        assert_eq!(data_distance(&[1, 2, 3], &[1, 2, 3], &[]), 0);
+        assert_eq!(data_distance(&[1, 2, 3], &[1, 2, 3], &[], true), 0);
         // obs cum = [0, 10]; sim cum = [5, 5]; |0-5| + |10-5| = 10.
-        assert_eq!(data_distance(&[0, 10], &[5, 0], &[]), 10);
-        assert_eq!(data_distance(&[], &[], &[]), 0);
+        assert_eq!(data_distance(&[0, 10], &[5, 0], &[], true), 10);
+        assert_eq!(data_distance(&[], &[], &[], true), 0);
+    }
+
+    #[test]
+    fn data_distance_daily_metric() {
+        // Per-day L1 (cumulative = false). |1-1| + |2-9| + |3-3| = 7
+        // (the cumulative metric would give 14 for the same input).
+        assert_eq!(data_distance(&[1, 2, 3], &[1, 9, 3], &[], false), 7);
+        assert_eq!(data_distance(&[1, 2, 3], &[1, 9, 3], &[], true), 14);
+        // Daily L1 also skips gaps: only days 1 & 3 scored.
+        // |5-5| + |4-1| = 3 (day-2 sim=99 ignored).
+        assert_eq!(data_distance(&[5, 0, 4], &[5, 99, 1], &[1, 3], false), 3);
     }
 
     #[test]
@@ -191,9 +211,9 @@ mod tests {
         // |5-5| + |9-6| = 3.
         let observed = [5, 0, 4];
         let simulated = [5, 99, 1];
-        assert_eq!(data_distance(&observed, &simulated, &[1, 3]), 3);
+        assert_eq!(data_distance(&observed, &simulated, &[1, 3], true), 3);
         // Order/duplicates in observed_days don't matter.
-        assert_eq!(data_distance(&observed, &simulated, &[3, 1, 1]), 3);
+        assert_eq!(data_distance(&observed, &simulated, &[3, 1, 1], true), 3);
     }
 
     #[test]
@@ -201,7 +221,7 @@ mod tests {
         // A day past the end of `simulated` contributes 0 on the sim side.
         // obs cum at days 1,2 = [2, 5]; sim has only day 1 (=2) so cum =
         // [2, 2]; |2-2| + |5-2| = 3.
-        assert_eq!(data_distance(&[2, 3], &[2], &[1, 2]), 3);
+        assert_eq!(data_distance(&[2, 3], &[2], &[1, 2], true), 3);
     }
 
     #[test]

@@ -219,6 +219,24 @@ test.describe("Calibration page", () => {
     await expect(page.getByRole("button", { name: "Clear" })).toBeDisabled();
   });
 
+  test("distance metric selector switches between cumulative and daily", async ({
+    page,
+  }) => {
+    await page.goto("/calibrate");
+    await expect(
+      page.getByRole("heading", { name: "Calibration", exact: true }),
+    ).toBeVisible();
+
+    const metric = page.getByRole("combobox", { name: "Distance metric" });
+    await expect(metric).toContainText("Cumulative incidence");
+    await metric.click();
+    await page.getByRole("option", { name: "Daily incidence" }).click();
+    await expect(metric).toContainText("Daily incidence");
+    await metric.click();
+    await page.getByRole("option", { name: "Cumulative incidence" }).click();
+    await expect(metric).toContainText("Cumulative incidence");
+  });
+
   test("nav lets the user switch between Simulate and Calibrate", async ({
     page,
   }) => {

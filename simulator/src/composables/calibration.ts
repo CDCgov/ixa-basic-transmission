@@ -101,10 +101,14 @@ export interface CalibrationConfig {
   /// day `d` lives at index `d - 1`; gap days are 0.
   observed: number[];
   /// 1-based days the target actually contains. The distance compares
-  /// cumulative incidence only at these days (cfa gap semantics — gaps
-  /// are skipped, not scored as zero). Empty/undefined → every day
-  /// (dense fallback, for rows persisted before this field existed).
+  /// only at these days (cfa gap semantics — gaps are skipped, not scored
+  /// as zero). Empty/undefined → every day (dense fallback, for rows
+  /// persisted before this field existed).
   observedDays?: number[];
+  /// Which incidence distance to calibrate against: `cumulative` (running
+  /// totals, the cfa default) or `daily` (per-day values). Undefined →
+  /// cumulative (older rows).
+  distanceMetric?: "cumulative" | "daily";
   target: TargetSpec;
 }
 
@@ -144,6 +148,7 @@ export function defaultConfig(): CalibrationConfig {
     probKeepSeed: 0.0,
     observed: [],
     observedDays: [],
+    distanceMetric: "cumulative",
     target: { mode: "manual" },
   };
 }
