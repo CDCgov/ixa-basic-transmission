@@ -220,6 +220,9 @@ export function useCalibration(): CalibrationRunner {
       maxTime: c.modelContext.maxTime,
       settings: c.modelContext.settings,
       observed: c.observed,
+      // Gap-aware distance: compare cumulative incidence only at these
+      // 1-based days (empty → every day). See `data_distance` in Rust.
+      observedDays: c.observedDays ?? [],
       initialInfectionsLo: c.priors.initialInfectionsLo,
       initialInfectionsHi: c.priors.initialInfectionsHi,
       r0Lo: c.priors.r0Lo,

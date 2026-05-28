@@ -64,7 +64,8 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(1);
 
         // Stage 0 with INF threshold.
-        let gen0 = sample_from_prior_batch(f64::INFINITY, 60, &priors, &base, &observed, &mut rng);
+        let gen0 =
+            sample_from_prior_batch(f64::INFINITY, 60, &priors, &base, &observed, &[], &mut rng);
         assert_eq!(gen0.particles.len(), 60);
 
         // One refinement stage at the 30th-percentile distance.
@@ -81,6 +82,7 @@ mod tests {
             0.0,
             &base,
             &observed,
+            &[],
             &mut rng,
         );
 
@@ -172,16 +174,34 @@ mod tests {
     }
 
     #[test]
-    fn data_distance_sums_absolute_differences() {
-        assert_eq!(data_distance(&[1, 2, 3], &[1, 2, 3]), 0);
-        assert_eq!(data_distance(&[0, 10], &[5, 0]), 15);
-        assert_eq!(data_distance(&[], &[]), 0);
+    fn data_distance_cumulative_dense() {
+        // No gaps (observed_days empty → every day). Distance is the L1
+        // distance between the two cumulative curves.
+        assert_eq!(data_distance(&[1, 2, 3], &[1, 2, 3], &[]), 0);
+        // obs cum = [0, 10]; sim cum = [5, 5]; |0-5| + |10-5| = 10.
+        assert_eq!(data_distance(&[0, 10], &[5, 0], &[]), 10);
+        assert_eq!(data_distance(&[], &[], &[]), 0);
     }
 
     #[test]
-    #[should_panic(expected = "data_distance requires equal-length series")]
-    fn data_distance_rejects_mismatched_lengths() {
-        let _ = data_distance(&[1, 2, 3], &[1, 2]);
+    fn data_distance_skips_gaps() {
+        // Only days 1 and 3 are observed; day 2 is a gap and must NOT be
+        // scored. obs[1]=5, obs[3]=4; sim[1]=5, sim[3]=1 (day-2 sim=99 is
+        // ignored). cum at observed days: obs=[5,9], sim=[5,6];
+        // |5-5| + |9-6| = 3.
+        let observed = [5, 0, 4];
+        let simulated = [5, 99, 1];
+        assert_eq!(data_distance(&observed, &simulated, &[1, 3]), 3);
+        // Order/duplicates in observed_days don't matter.
+        assert_eq!(data_distance(&observed, &simulated, &[3, 1, 1]), 3);
+    }
+
+    #[test]
+    fn data_distance_simulated_short_counts_as_zero() {
+        // A day past the end of `simulated` contributes 0 on the sim side.
+        // obs cum at days 1,2 = [2, 5]; sim has only day 1 (=2) so cum =
+        // [2, 2]; |2-2| + |5-2| = 3.
+        assert_eq!(data_distance(&[2, 3], &[2], &[1, 2]), 3);
     }
 
     #[test]

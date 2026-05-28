@@ -35,7 +35,11 @@ const PARTICLES_STORE = "particles";
 // v2: StoredParticle gained a `seed` field for the seed-observation
 //     diagnostic. Older v1 rows don't carry it, so loadRun's schema
 //     check rejects them — the user can discard via the delete dialog.
-export const SCHEMA_VERSION = 2;
+// v3: config gained `observedDays` and the distance metric changed to
+//     cumulative-incidence-over-observed-days (cfa gap semantics). v2
+//     particle distances were computed under the old daily-L1 metric, so
+//     resuming/mixing them would corrupt thresholds — reject v2 rows.
+export const SCHEMA_VERSION = 3;
 
 export type RunStatus = "idle" | "running" | "paused" | "complete" | "error";
 

@@ -97,15 +97,27 @@ export interface CalibrationConfig {
   /// seed. Default 0.0 = always replace; optional so older IDB rows
   /// rehydrate as 0.0.
   probKeepSeed?: number;
+  /// Dense per-day observed incidence, length floor(maxTime). Value at
+  /// day `d` lives at index `d - 1`; gap days are 0.
   observed: number[];
+  /// 1-based days the target actually contains. The distance compares
+  /// cumulative incidence only at these days (cfa gap semantics — gaps
+  /// are skipped, not scored as zero). Empty/undefined → every day
+  /// (dense fallback, for rows persisted before this field existed).
+  observedDays?: number[];
   target: TargetSpec;
 }
 
-/// Synthetic mode generates the observed series from the Model section's
-/// own infectionRate + initialInfections; CSV mode reads a user upload.
+/// How the observed series was sourced. `synthetic` regenerates it from
+/// the Model section's own infectionRate + initialInfections on each
+/// Start; `csv` reads a user upload; `manual` starts blank and is built
+/// by hand in the table editor. In every mode the values are editable in
+/// the table — the mode only decides how the series is initially seeded
+/// (and whether Start regenerates it, which only `synthetic` does).
 export type TargetSpec =
   | { mode: "synthetic" }
-  | { mode: "csv"; filename: string };
+  | { mode: "csv"; filename: string }
+  | { mode: "manual" };
 
 /// Default config for a fresh run. The model context defaults match
 /// `Page.vue`'s `defaults` so users see familiar values.
@@ -131,7 +143,8 @@ export function defaultConfig(): CalibrationConfig {
     varianceFactor: 2.0,
     probKeepSeed: 0.0,
     observed: [],
-    target: { mode: "synthetic" },
+    observedDays: [],
+    target: { mode: "manual" },
   };
 }
 

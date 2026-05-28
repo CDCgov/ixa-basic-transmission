@@ -1,15 +1,9 @@
 <script setup lang="ts">
-import { shallowReactive, ref, computed, onMounted } from "vue";
+import { shallowReactive, ref, computed, onMounted, nextTick } from "vue";
 import { useRouter, useRoute } from "vue-router";
 import { runWasm } from "cfasim-ui/wasm";
 import type { ModelOutput } from "cfasim-ui/shared";
-import {
-  NumberInput,
-  Button,
-  SelectBox,
-  TextInput,
-} from "cfasim-ui/components";
-import type { SelectOption } from "cfasim-ui/components";
+import { NumberInput, Button, TextInput } from "cfasim-ui/components";
 // Native <dialog> element is used for the delete-confirmation modal —
 // no extra component dependency.
 import { BarChart, LineChart } from "cfasim-ui/charts";
@@ -56,9 +50,11 @@ const defaults = {
   seed: seed.seed,
   varianceFactor: seed.varianceFactor ?? 2.0,
   probKeepSeed: seed.probKeepSeed ?? 0.0,
-  targetMode: (seed.target.mode === "synthetic" ? "synthetic" : "csv") as
-    | "synthetic"
-    | "csv",
+  // Manual entry by default — the user can populate the table from a
+  // model run or a CSV via the buttons next to the editor. `targetMode`
+  // is provenance only (what last filled the table); it no longer drives
+  // any behaviour on Start.
+  targetMode: "manual" as TargetMode,
   csvFilename: "",
   runName: defaultRunName(),
 };
@@ -77,12 +73,54 @@ function setParam<K extends keyof Params>(key: K, value: Params[K]): void {
 // Observed data isn't part of `params` because it shouldn't round-trip
 // through the URL (potentially long; synthetic mode regenerates; CSV
 // upload is session-local).
-const observed = ref<number[]>([]);
+// The editor's source of truth: one (day, value) row per observation.
+// Days are user-editable and may have gaps (e.g. weekly surveillance);
+// `observed` below densifies them into the per-day array the calibrator
+// consumes, zero-filling any missing days within [1, maxTime].
+const targetRows = ref<{ day: number; value: number }[]>([]);
 
-const targetModeOptions: SelectOption[] = [
-  { value: "synthetic", label: "Synthetic from \"true\" params" },
-  { value: "csv", label: "Uploaded CSV" },
-];
+function setRowsFromDense(arr: number[]) {
+  targetRows.value = arr.map((value, i) => ({ day: i + 1, value }));
+}
+
+/// Densify (day, value) rows into a per-day array of length `len`,
+/// zero-filling gaps. Rows whose day falls outside [1, len] are dropped
+/// (startRun validates against that so the user is warned rather than
+/// silently losing data). Duplicate days: last write wins.
+function densify(
+  rows: { day: number; value: number }[],
+  len: number,
+): number[] {
+  const out = new Array(Math.max(0, len)).fill(0);
+  for (const r of rows) {
+    if (r.day >= 1 && r.day <= out.length) out[r.day - 1] = r.value;
+  }
+  return out;
+}
+
+// Per-day dense series fed to the calibrator + per-stage overlays. Always
+// floor(maxTime) long so it lines up with each particle's simulated
+// trajectory.
+const observed = computed<number[]>(() =>
+  densify(targetRows.value, Math.floor(params.maxTime)),
+);
+
+// 1-based days the target actually contains (unique, in-range, sorted) —
+// the distance compares cumulative incidence only at these days, so gaps
+// are skipped rather than scored as zero. Kept consistent with `densify`
+// (same [1, floor(maxTime)] clamp; duplicates collapse).
+const observedDays = computed<number[]>(() => {
+  const maxDay = Math.floor(params.maxTime);
+  const seen = new Set<number>();
+  for (const r of targetRows.value) {
+    if (r.day >= 1 && r.day <= maxDay) seen.add(r.day);
+  }
+  return [...seen].sort((a, b) => a - b);
+});
+
+// Provenance of the data currently in the table. Editing a value flips
+// it back to "manual" (see markEdited).
+type TargetMode = "synthetic" | "csv" | "manual";
 
 function parseStages(text: string): number[] {
   return text
@@ -107,10 +145,13 @@ const config = computed<CalibrationConfig>(() => ({
   varianceFactor: params.varianceFactor,
   probKeepSeed: params.probKeepSeed,
   observed: observed.value,
+  observedDays: observedDays.value,
   target:
     params.targetMode === "synthetic"
       ? { mode: "synthetic" }
-      : { mode: "csv", filename: params.csvFilename },
+      : params.targetMode === "csv"
+        ? { mode: "csv", filename: params.csvFilename }
+        : { mode: "manual" },
 }));
 
 const runner = useCalibration();
@@ -119,6 +160,23 @@ const runner = useCalibration();
 // is running/paused/complete/error its config is frozen — the user must
 // create a new run to change anything.
 const paramsLocked = computed(() => runner.status.value !== "idle");
+
+// "Create new run" mints a fresh idle run; "Start" then runs the selected
+// idle run (the two are separate actions). Start only makes sense once a
+// run exists and is still idle (not running/paused/complete/error).
+const canStart = computed(
+  () => runner.runId.value !== null && runner.status.value === "idle",
+);
+// Make "Create new run" the primary CTA when there's no other primary
+// action on screen (no run yet, or the selected run finished); demote it
+// to secondary while Start/Pause/Resume are the focus.
+const createVariant = computed(() =>
+  canStart.value ||
+  runner.status.value === "running" ||
+  runner.status.value === "paused"
+    ? "secondary"
+    : "primary",
+);
 
 // --- Saved-run management ----------------------------------------------------
 
@@ -249,12 +307,23 @@ async function onSelectRun(id: string | number) {
     setParam("seed", c.seed);
     setParam("varianceFactor", c.varianceFactor ?? 2.0);
     setParam("probKeepSeed", c.probKeepSeed ?? 0.0);
-    observed.value = c.observed;
+    // Rebuild the editable rows. Prefer `observedDays` so gaps survive a
+    // reload; fall back to a contiguous dense expansion for older rows.
+    if (c.observedDays && c.observedDays.length) {
+      targetRows.value = c.observedDays.map((d) => ({
+        day: d,
+        value: c.observed[d - 1] ?? 0,
+      }));
+    } else {
+      setRowsFromDense(c.observed);
+    }
     if (c.target.mode === "synthetic") {
       setParam("targetMode", "synthetic");
-    } else {
+    } else if (c.target.mode === "csv") {
       setParam("targetMode", "csv");
       setParam("csvFilename", c.target.filename);
+    } else {
+      setParam("targetMode", "manual");
     }
     setParam("runName", runner.runName.value);
   }
@@ -282,9 +351,32 @@ async function generateSyntheticObserved(): Promise<number[]> {
   return cumulativeToIncidence(res.series.column("cumulative_infections_0"));
 }
 
-async function regenerateObservedPreview() {
-  if (params.targetMode !== "synthetic") return;
-  observed.value = await generateSyntheticObserved();
+/// Fill the table by running the model once with the sidebar's
+/// parameters (a one-shot populate, not a live link — the user can edit
+/// the result afterward).
+const generating = ref(false);
+async function generateFromParameters() {
+  generating.value = true;
+  try {
+    setRowsFromDense(await generateSyntheticObserved());
+    setParam("targetMode", "synthetic");
+  } catch (e) {
+    alert(`Generate failed: ${e instanceof Error ? e.message : String(e)}`);
+  } finally {
+    generating.value = false;
+  }
+}
+
+const csvInput = ref<HTMLInputElement | null>(null);
+function triggerCsvUpload() {
+  csvInput.value?.click();
+}
+
+/// Empty the table back to a blank manual slate.
+function clearData() {
+  targetRows.value = [];
+  setParam("targetMode", "manual");
+  setParam("csvFilename", "");
 }
 
 async function onUploadCsv(ev: Event) {
@@ -293,11 +385,73 @@ async function onUploadCsv(ev: Event) {
   if (!f) return;
   const text = await f.text();
   try {
-    observed.value = parseTargetCsv(text);
+    setRowsFromDense(parseTargetCsv(text));
+    setParam("targetMode", "csv");
     setParam("csvFilename", f.name);
   } catch (e) {
     alert(`CSV parse failed: ${e instanceof Error ? e.message : String(e)}`);
+  } finally {
+    // Allow re-uploading the same file (change won't fire otherwise).
+    input.value = "";
   }
+}
+
+/// Hand-editing the table makes the data user-curated, so record it as
+/// `manual` provenance regardless of how it was first populated.
+function markEdited() {
+  if (params.targetMode !== "manual") setParam("targetMode", "manual");
+}
+
+// --- Editable observed-data table -------------------------------------------
+// `targetRows` is reassigned wholesale (never mutated in place) so the
+// `ref` reactivity fires and `observed` + the plot + per-stage overlays
+// recompute.
+
+function setRowDay(i: number, day: number) {
+  const next = targetRows.value.slice();
+  next[i] = {
+    ...next[i],
+    day: Number.isFinite(day) ? Math.max(1, Math.round(day)) : next[i].day,
+  };
+  targetRows.value = next;
+  markEdited();
+}
+
+function setRowValue(i: number, value: number) {
+  const next = targetRows.value.slice();
+  next[i] = {
+    ...next[i],
+    value: Number.isFinite(value) ? Math.max(0, Math.round(value)) : 0,
+  };
+  targetRows.value = next;
+  markEdited();
+}
+
+const sheetScroll = ref<HTMLElement | null>(null);
+
+async function addObservedRow() {
+  // Default the new row's day to one past the current max so appended
+  // rows stay contiguous unless the user edits them.
+  const maxDay = targetRows.value.reduce((m, r) => Math.max(m, r.day), 0);
+  targetRows.value = [...targetRows.value, { day: maxDay + 1, value: 0 }];
+  markEdited();
+  // The new row has the largest day, so it lands at the bottom after the
+  // sorted render — scroll the sheet down to reveal it.
+  await nextTick();
+  const el = sheetScroll.value;
+  if (el) el.scrollTop = el.scrollHeight;
+}
+
+function removeObservedRow(i: number) {
+  targetRows.value = targetRows.value.filter((_, j) => j !== i);
+  markEdited();
+}
+
+/// Keep the table ordered by day. Called on a day field's commit (blur),
+/// not on every keystroke, so a row being edited doesn't jump around
+/// mid-typing — the plot already renders sorted regardless.
+function sortRowsByDay() {
+  targetRows.value = [...targetRows.value].sort((a, b) => a.day - b.day);
 }
 
 // --- Run lifecycle -----------------------------------------------------------
@@ -331,18 +485,20 @@ async function startRun() {
     return;
   }
   try {
-    if (params.targetMode === "synthetic") {
-      observed.value = await generateSyntheticObserved();
-    }
-    if (observed.value.length === 0) {
+    if (targetRows.value.length === 0) {
       errorMessage.value =
-        params.targetMode === "csv"
-          ? "Upload a CSV before starting."
-          : "Synthetic data was empty.";
+        "Add target data before starting — enter rows by hand, generate from parameters, or upload a CSV.";
       return;
     }
-    if (observed.value.length !== Math.floor(params.maxTime)) {
-      errorMessage.value = `Observed data length (${observed.value.length}) must equal floor(maxTime) (${Math.floor(params.maxTime)}).`;
+    // Days are clamped to [1, floor(maxTime)] when densified; flag any
+    // out-of-range rows so the user fixes them rather than silently
+    // losing those observations.
+    const maxDay = Math.floor(params.maxTime);
+    const offending = targetRows.value.find(
+      (r) => r.day < 1 || r.day > maxDay,
+    );
+    if (offending) {
+      errorMessage.value = `Day ${offending.day} is outside 1…${maxDay} (max time). Adjust the day or increase max time.`;
       return;
     }
     // Mint a fresh run when there's nothing selected OR when the
@@ -653,17 +809,56 @@ const summaryRows = computed(() =>
   })),
 );
 
+// Rows sorted by day — shared by the plot series and the gap shading so
+// their point indices line up (areaSections index into series[0]).
+const sortedRows = computed(() =>
+  [...targetRows.value].sort((a, b) => a.day - b.day),
+);
+
+// Plot the rows directly (sorted by day) so gaps read as spaced points
+// rather than zero-filled valleys. Dots on so sparse data stays visible.
 const observedSeries = computed(() => {
-  if (observed.value.length === 0) return [];
+  if (sortedRows.value.length === 0) return [];
   return [
     {
-      x: observed.value.map((_, i) => i + 1),
-      data: observed.value,
+      x: sortedRows.value.map((r) => r.day),
+      data: sortedRows.value.map((r) => r.value),
       color: "#0f766e",
       strokeWidth: 2,
-      dots: false,
+      dots: true,
     },
   ];
+});
+
+// Light-red bands over the day ranges with no observation — the same
+// gaps the distance skips. `areaSections` index into series[0]'s points
+// (mapped through its `x`/day values), so a section spanning indices
+// i→i+1 shades from one observed day to the next whenever they're more
+// than a day apart.
+const observedGapSections = computed(() => {
+  const rows = sortedRows.value;
+  const sections: {
+    startIndex: number;
+    endIndex: number;
+    color: string;
+    opacity: number;
+    strokeWidth: number;
+    legend: false;
+  }[] = [];
+  for (let i = 0; i < rows.length - 1; i++) {
+    if (rows[i + 1].day - rows[i].day > 1) {
+      sections.push({
+        startIndex: i,
+        endIndex: i + 1,
+        color: "#dc2626",
+        opacity: 0.1,
+        // 0 = no vertical boundary lines; just the translucent fill.
+        strokeWidth: 0,
+        legend: false,
+      });
+    }
+  }
+  return sections;
 });
 </script>
 
@@ -747,34 +942,6 @@ const observedSeries = computed(() => {
     </section>
 
     <section class="cal-section">
-      <h3>Target data</h3>
-      <SelectBox
-        label="Source"
-        :options="targetModeOptions"
-        :model-value="params.targetMode"
-        @update:model-value="(v) => setParam('targetMode', String(v) as 'synthetic' | 'csv')"
-      />
-      <template v-if="params.targetMode === 'synthetic'">
-        <p class="cal-csv-name">
-          Synthetic target is generated from the Model section above
-          (infection rate, population, initial infections, settings).
-        </p>
-        <Button variant="secondary" @click="regenerateObservedPreview">
-          Regenerate preview
-        </Button>
-      </template>
-      <template v-else>
-        <label class="cal-upload">
-          <span>Upload CSV (time,incident_cases)</span>
-          <input type="file" accept=".csv,text/csv" @change="onUploadCsv" />
-        </label>
-        <p v-if="params.csvFilename" class="cal-csv-name">
-          {{ params.csvFilename }} — {{ observed.length }} day(s)
-        </p>
-      </template>
-    </section>
-
-    <section class="cal-section">
       <h3>Priors</h3>
       <PriorEditor v-model="params.priors" />
     </section>
@@ -805,14 +972,9 @@ const observedSeries = computed(() => {
     </fieldset>
 
     <div class="sidebar-controls">
+      <Button v-if="canStart" @click="startRun">Start</Button>
       <Button
-        @click="startRun"
-        :disabled="runner.status.value === 'running'"
-      >
-        Start new run
-      </Button>
-      <Button
-        v-if="runner.status.value === 'running'"
+        v-else-if="runner.status.value === 'running'"
         variant="secondary"
         @click="pauseRun"
       >
@@ -824,6 +986,13 @@ const observedSeries = computed(() => {
         @click="resumeRun"
       >
         Resume
+      </Button>
+      <Button
+        :variant="createVariant"
+        :disabled="runner.status.value === 'running'"
+        @click="createNewRun"
+      >
+        Create new run
       </Button>
     </div>
   </Teleport>
@@ -852,16 +1021,103 @@ const observedSeries = computed(() => {
   <p v-if="errorMessage" class="error">{{ errorMessage }}</p>
   <p class="status">{{ statusLabel }}</p>
 
-  <section v-if="observed.length">
-    <h2>Observed data</h2>
-    <LineChart
-      :series="observedSeries"
-      :height="180"
-      x-label="Day"
-      y-label="Incident cases"
-      :menu="false"
-      tooltip-trigger="hover"
-    />
+  <section class="cal-target">
+    <h2>Target data</h2>
+
+    <div v-if="targetRows.length" class="cal-target__plot">
+      <LineChart
+        :series="observedSeries"
+        :area-sections="observedGapSections"
+        :height="180"
+        x-label="Day"
+        y-label="Incident cases"
+        :menu="false"
+        tooltip-trigger="hover"
+      />
+    </div>
+
+    <div v-if="!paramsLocked" class="obs-editor">
+      <div class="obs-editor__actions">
+        <Button
+          variant="secondary"
+          :disabled="generating"
+          @click="generateFromParameters"
+        >
+          {{ generating ? "Generating…" : "Generate from parameters" }}
+        </Button>
+        <Button variant="secondary" @click="triggerCsvUpload">
+          Upload CSV
+        </Button>
+        <Button
+          variant="secondary"
+          :disabled="!targetRows.length"
+          @click="clearData"
+        >
+          Clear
+        </Button>
+        <input
+          ref="csvInput"
+          type="file"
+          accept=".csv,text/csv"
+          class="obs-editor__file"
+          @change="onUploadCsv"
+        />
+      </div>
+      <fieldset class="cal-fieldset obs-editor__body">
+        <div ref="sheetScroll" class="obs-sheet-scroll">
+          <table class="obs-sheet">
+            <thead>
+              <tr>
+                <th scope="col">Day</th>
+                <th scope="col">Incident cases</th>
+                <th scope="col"><span class="sr-only">Remove</span></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="(row, i) in targetRows" :key="i">
+                <td>
+                  <input
+                    type="number"
+                    min="1"
+                    step="1"
+                    class="obs-cell"
+                    :aria-label="`Day for row ${i + 1}`"
+                    :value="row.day"
+                    @input="(e) => setRowDay(i, Number((e.target as HTMLInputElement).value))"
+                    @change="sortRowsByDay"
+                  />
+                </td>
+                <td>
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    class="obs-cell"
+                    :aria-label="`Incident cases for row ${i + 1}`"
+                    :value="row.value"
+                    @input="(e) => setRowValue(i, Number((e.target as HTMLInputElement).value))"
+                  />
+                </td>
+                <td class="obs-sheet__rm">
+                  <button
+                    type="button"
+                    class="obs-rm"
+                    :aria-label="`Remove row ${i + 1}`"
+                    @click="removeObservedRow(i)"
+                  >
+                    ×
+                  </button>
+                </td>
+              </tr>
+              <tr v-if="!targetRows.length">
+                <td colspan="3" class="cal-hint">No data yet.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <Button variant="secondary" @click="addObservedRow">Add row</Button>
+      </fieldset>
+    </div>
   </section>
 
   <section v-if="stageTraces.length">
@@ -1170,16 +1426,161 @@ const observedSeries = computed(() => {
   margin: 0;
   font-size: var(--font-size-md, 1rem);
 }
-.cal-upload {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-  font-size: var(--font-size-sm, 0.875rem);
-}
-.cal-csv-name {
+.cal-hint {
   margin: 0;
   font-size: var(--font-size-xs, 0.75rem);
   color: var(--color-text-secondary);
+}
+.cal-target {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-bottom: 1.5rem;
+}
+.cal-target__plot {
+  margin: 0;
+}
+.obs-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  align-items: flex-start;
+}
+.obs-editor__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+}
+.obs-editor__file {
+  display: none;
+}
+/* The editor body is a transparent (display:contents) fieldset; restore
+   a column flow so the sheet + Add row button stack with a gap. */
+.obs-editor__body.cal-fieldset {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  align-items: flex-start;
+  width: 100%;
+  max-width: 24rem;
+}
+.obs-sheet-scroll {
+  width: 100%;
+  max-height: 20rem;
+  overflow-y: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm, 4px);
+  background: var(--color-bg-0);
+  /* Firefox: thin scrollbar with a defined track so the gutter doesn't
+     read as a stray white strip. */
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border) var(--color-bg-1);
+}
+/* WebKit/Blink: give the scrollbar gutter a track background, a divider
+   from the cells, and a rounded thumb. */
+.obs-sheet-scroll::-webkit-scrollbar {
+  width: 12px;
+}
+.obs-sheet-scroll::-webkit-scrollbar-track {
+  background: var(--color-bg-1);
+  border-left: 1px solid var(--color-border);
+}
+.obs-sheet-scroll::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 6px;
+  border: 3px solid var(--color-bg-1);
+}
+.obs-sheet-scroll::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-secondary);
+}
+.obs-sheet {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: var(--font-size-sm, 0.875rem);
+  font-variant-numeric: tabular-nums;
+}
+.obs-sheet th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--color-bg-1);
+  text-align: right;
+  font-weight: 500;
+  font-size: var(--font-size-xs, 0.75rem);
+  color: var(--color-text-secondary);
+  padding: 0.3rem 0.55rem;
+  border-bottom: 1px solid var(--color-border);
+}
+.obs-sheet th:first-child {
+  width: 6rem;
+}
+.obs-sheet th:last-child {
+  width: 2.4rem;
+}
+/* Flush internal gridlines so the cells read as one continuous sheet. */
+.obs-sheet th:not(:last-child),
+.obs-sheet td:not(:last-child) {
+  border-right: 1px solid var(--color-border);
+}
+.obs-sheet td {
+  padding: 0;
+  border-bottom: 1px solid var(--color-border);
+}
+.obs-sheet tbody tr:last-child td {
+  border-bottom: none;
+}
+.obs-cell {
+  width: 100%;
+  box-sizing: border-box;
+  border: none;
+  background: transparent;
+  color: var(--color-text);
+  padding: 0.3rem 0.55rem;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+/* Drop the native spin buttons — they crowd the right-aligned numbers
+   and break the flush spreadsheet look. */
+.obs-cell::-webkit-outer-spin-button,
+.obs-cell::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.obs-cell:focus {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+  background: var(--color-bg-0);
+}
+.obs-sheet__rm {
+  text-align: center;
+}
+.obs-rm {
+  border: none;
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  font-size: 1rem;
+  line-height: 1;
+  padding: 0.25rem 0.45rem;
+}
+.obs-rm:hover {
+  color: var(--color-error);
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 .sidebar-controls {
   display: flex;

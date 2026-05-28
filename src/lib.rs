@@ -189,9 +189,14 @@ struct CalibrateBatchArgs {
     #[serde(default)]
     settings: Vec<SettingType>,
 
-    // Target data: per-integer-day observed incidence (length should be
-    // floor(max_time); the algorithm pairs by index).
+    // Target data: per-integer-day observed incidence (dense, length
+    // floor(max_time); value at day `d` is index `d - 1`).
     observed: Vec<u64>,
+    /// 1-based days the target actually contains. The distance compares
+    /// cumulative incidence only at these days, skipping gaps (see
+    /// `data_distance`). Empty = compare every day (dense fallback).
+    #[serde(default)]
+    observed_days: Vec<u64>,
 
     // Uniform prior bounds.
     initial_infections_lo: u32,
@@ -315,6 +320,7 @@ pub fn calibrate_batch(args: &str) -> JsValue {
             &priors,
             &base_params,
             &args.observed,
+            &args.observed_days,
             &mut rng,
         )
     } else {
@@ -343,6 +349,7 @@ pub fn calibrate_batch(args: &str) -> JsValue {
             args.prob_keep_seed,
             &base_params,
             &args.observed,
+            &args.observed_days,
             &mut rng,
         )
     };

@@ -47,35 +47,61 @@ fn incidence_from_stats(stats: &ModelStats, max_time: f64) -> Vec<u64> {
     out
 }
 
-/// Sum of `|observed - simulated|` per day. Lengths must match — `zip`
-/// would silently truncate to the shorter, which lets a too-short CSV
-/// upload (or a too-long simulated trajectory) compare cleanly on the
-/// overlap and ignore the tail, producing a spurious posterior. We
-/// enforce equality and treat any padding the caller provides (zeros)
-/// as part of the distance.
-pub fn data_distance(observed: &[u64], simulated: &[u64]) -> u64 {
-    assert_eq!(
-        observed.len(),
-        simulated.len(),
-        "data_distance requires equal-length series (observed={}, simulated={})",
-        observed.len(),
-        simulated.len(),
-    );
-    observed
-        .iter()
-        .zip(simulated.iter())
-        .map(|(x, y)| u64::abs_diff(*x, *y))
-        .sum()
+/// Distance between observed and simulated daily incidence, using the
+/// `cfa-calibration-tools` gap semantics (see
+/// `cfa-evd-2025-interventions/data_processors.py::_estimate_symptom_onset_error`):
+/// compare **cumulative** incidence, and only at the days the target
+/// actually contains (`observed_days`, 1-based) — gaps are skipped
+/// entirely, NOT scored as zero-vs-simulated.
+///
+/// `observed` / `simulated` are dense per-day series (value at day `d` is
+/// index `d - 1`). A day present in `observed_days` but past the end of
+/// `simulated` contributes 0 on the simulated side (the model produced no
+/// incidence there) — mirrors the reference's right-join + `fill_null(0)`.
+///
+/// ```text
+/// error = Σ_{d ∈ days} | Σ_{e ≤ d, e ∈ days} obs[e] − Σ_{e ≤ d, e ∈ days} sim[e] |
+/// ```
+///
+/// With no gaps this is the L1 distance between the two cumulative-
+/// incidence curves. If `observed_days` is empty every day in `observed`
+/// is compared (dense fallback).
+pub fn data_distance(observed: &[u64], simulated: &[u64], observed_days: &[u64]) -> u64 {
+    let mut days: Vec<usize> = if observed_days.is_empty() {
+        (1..=observed.len()).collect()
+    } else {
+        observed_days.iter().map(|&d| d as usize).collect()
+    };
+    // Cumulative sums only make sense in day order; the caller may hand us
+    // arbitrary order (and duplicates after a hand edit).
+    days.sort_unstable();
+    days.dedup();
+
+    let mut cum_obs: i128 = 0;
+    let mut cum_sim: i128 = 0;
+    let mut err: u128 = 0;
+    for &d in &days {
+        if d == 0 {
+            continue; // 1-based; day 0 is out of range.
+        }
+        let idx = d - 1;
+        cum_obs += i128::from(observed.get(idx).copied().unwrap_or(0));
+        cum_sim += i128::from(simulated.get(idx).copied().unwrap_or(0));
+        err += (cum_obs - cum_sim).unsigned_abs();
+    }
+    err as u64
 }
 
 /// Mirrors `def_abc_smc/src/step.rs::initialize_abc_smc` (lines 82–123),
 /// adapted to return a single batch instead of a full stage.
+#[allow(clippy::too_many_arguments)]
 pub fn sample_from_prior_batch(
     error_threshold: f64,
     batch_size: usize,
     priors: &Priors,
     base_params: &Parameters,
     observed: &[u64],
+    observed_days: &[u64],
     rng: &mut impl Rng,
 ) -> ABCStepOutput {
     let mut n_attempts: u64 = 0;
@@ -89,7 +115,7 @@ pub fn sample_from_prior_batch(
             apply(&proposed, &mut p);
             let model_output = model::run(p);
             let simulated = incidence_from_stats(&model_output, base_params.max_time);
-            let dist = data_distance(observed, &simulated);
+            let dist = data_distance(observed, &simulated, observed_days);
             if dist as f64 <= error_threshold {
                 particles.push(Particle {
                     parameters: proposed,
@@ -124,6 +150,7 @@ pub fn perturb_from_previous_batch(
     prob_keep_seed: f64,
     base_params: &Parameters,
     observed: &[u64],
+    observed_days: &[u64],
     rng: &mut impl Rng,
 ) -> ABCStepOutput {
     let weights: Vec<f64> = previous_particles.iter().map(|x| x.weight).collect();
@@ -153,7 +180,7 @@ pub fn perturb_from_previous_batch(
             apply(&proposed, &mut p);
             let model_output = model::run(p);
             let simulated = incidence_from_stats(&model_output, base_params.max_time);
-            let dist = data_distance(observed, &simulated);
+            let dist = data_distance(observed, &simulated, observed_days);
             if dist as f64 <= error_threshold {
                 // weight = prior(θ) / Σⱼ wⱼ K(θⱼ → θ). Matches def.
                 let proposal_weight: f64 = previous_particles
