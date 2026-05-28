@@ -68,6 +68,42 @@ test.describe("Calibration page", () => {
     await expect(page.getByText(/Stage 4/).first()).toBeVisible();
   });
 
+  test("refresh mid-run offers Resume (not a dead Pause) and continues", async ({
+    page,
+  }) => {
+    await page.goto("/calibrate");
+    await expect(
+      page.getByRole("heading", { name: "Calibration", exact: true }),
+    ).toBeVisible();
+
+    // Start a run and wait until it's actually in flight.
+    await page.getByRole("button", { name: "Start new run" }).click();
+    await expect(page.getByRole("button", { name: "Pause" })).toBeVisible({
+      timeout: 60_000,
+    });
+    await expect(page).toHaveURL(/runId=[0-9a-f]+/);
+    const url = page.url();
+
+    // Refresh while the run is still going. The persisted "running"
+    // status is stale (the loop lives only in memory), so the page must
+    // present Resume — not a Pause button that no loop is listening to.
+    await page.goto(url);
+    await expect(page.getByRole("button", { name: "Resume" })).toBeVisible({
+      timeout: 30_000,
+    });
+    // No live Pause control (exact match — the run-list item's "paused N"
+    // label is a substring match for "Pause" otherwise).
+    await expect(
+      page.getByRole("button", { name: "Pause", exact: true }),
+    ).toHaveCount(0);
+
+    // Resuming continues the run to completion.
+    await page.getByRole("button", { name: "Resume" }).click();
+    await expect(page.getByText(/Complete/)).toBeVisible({
+      timeout: 180_000,
+    });
+  });
+
   test("nav lets the user switch between Simulate and Calibrate", async ({
     page,
   }) => {

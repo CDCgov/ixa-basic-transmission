@@ -106,7 +106,11 @@ export function useCalibration(): CalibrationRunner {
     acceptance.value = [...loaded.run.acceptance];
     currentStage.value = loaded.run.currentStage;
     errorMessage.value = loaded.run.errorMessage;
-    status.value = loaded.run.status;
+    // A persisted "running" status is always stale: the loop only ever
+    // lives in memory, so if we're loading from IDB the page was
+    // refreshed/reopened and no loop is actually running. Present it as
+    // "paused" so the UI offers Resume (and `run()` doesn't no-op on it).
+    status.value = loaded.run.status === "running" ? "paused" : loaded.run.status;
   }
 
   /// Enter the batch loop for the currently-selected run. Idle/paused/
