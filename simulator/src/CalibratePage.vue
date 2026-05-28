@@ -917,7 +917,7 @@ const observedSeries = computed(() => {
                   dots: false,
                 },
               ]"
-              :height="120"
+              :height="180"
               :menu="false"
             />
           </div>
@@ -941,7 +941,7 @@ const observedSeries = computed(() => {
                 },
               ]"
               layout="overlay"
-              :height="120"
+              :height="180"
               :menu="false"
             />
           </div>
@@ -961,7 +961,7 @@ const observedSeries = computed(() => {
                   dots: false,
                 },
               ] : []"
-              :height="120"
+              :height="180"
               :menu="false"
             />
           </div>
@@ -970,6 +970,15 @@ const observedSeries = computed(() => {
     </div>
   </section>
 </template>
+
+<!-- Non-scoped: the calibrate page needs more horizontal room than the
+     SidebarLayout's default 1024px MainContent cap. Overrides the
+     cfasim-ui rule (`.MainContent[data-v-*]{max-width:1024px}`). -->
+<style>
+.MainContent {
+  max-width: 1400px !important;
+}
+</style>
 
 <style scoped>
 .sidebar-header {
