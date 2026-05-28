@@ -80,17 +80,14 @@ pub struct PerturbationKernel {
     r0: Normal,
     initial_infections: DiscreteUniform<i64>,
     /// Probability a perturbed particle inherits its base particle's
-    /// seed rather than drawing a fresh one. Matches cfa-calibration-
-    /// tools `SeedKernel.prob_keep` (`perturbation_kernel.py:173`).
-    /// `0.0` = always replace (max diversity); `1.0` = always inherit.
+    /// seed rather than drawing a fresh one. `0.0` = always replace
+    /// (max diversity); `1.0` = always inherit.
     prob_keep_seed: f64,
 }
 
 impl PerturbationKernel {
     /// r0 SD = `sqrt(variance_factor * sample_variance)`. Default 2.0 is
-    /// Beaumont 2009 / cfa-calibration-tools (`variance_adapter.py:102`).
-    /// We use Welford (divisor n-1); cfa's `np.var` uses n — < 1% SD
-    /// difference at n ≥ 50.
+    /// the Beaumont 2009 ABC-SMC random-walk recipe.
     pub fn new<'a>(
         samples: impl Iterator<Item = &'a CalibratedParams>,
         variance_factor: f64,
@@ -131,8 +128,7 @@ impl PerturbationKernel {
 
     pub fn weight(&self, source: &CalibratedParams, value: &CalibratedParams) -> f64 {
         // Seed kernel transition probability: prob_keep_seed if the
-        // seed was kept, (1 - prob_keep_seed) otherwise. Matches
-        // cfa `SeedKernel.transition_probability` (perturbation_kernel.py:197).
+        // seed was kept, (1 - prob_keep_seed) otherwise.
         let seed_p = if source.seed == value.seed {
             self.prob_keep_seed
         } else {

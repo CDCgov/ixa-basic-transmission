@@ -56,6 +56,7 @@ const defaults = {
   batchSize: seed.batchSize,
   seed: seed.seed,
   varianceFactor: seed.varianceFactor ?? 2.0,
+  probKeepSeed: seed.probKeepSeed ?? 0.0,
   targetMode: (seed.target.mode === "synthetic" ? "synthetic" : "csv") as
     | "synthetic"
     | "csv",
@@ -110,6 +111,7 @@ const config = computed<CalibrationConfig>(() => ({
   batchSize: params.batchSize,
   seed: params.seed,
   varianceFactor: params.varianceFactor,
+  probKeepSeed: params.probKeepSeed,
   observed: observed.value,
   target:
     params.targetMode === "synthetic"
@@ -248,6 +250,7 @@ async function onSelectRun(id: string | number) {
     setParam("batchSize", c.batchSize);
     setParam("seed", c.seed);
     setParam("varianceFactor", c.varianceFactor ?? 2.0);
+    setParam("probKeepSeed", c.probKeepSeed ?? 0.0);
     observed.value = c.observed;
     if (c.target.mode === "synthetic") {
       setParam("targetMode", "synthetic");
@@ -759,6 +762,13 @@ const observedSeries = computed(() => {
         label="Kernel variance factor (kernel SD = √(factor × Var); 2.0 recommended)"
         :min="0.01"
         :step="0.1"
+      />
+      <NumberInput
+        v-model="params.probKeepSeed"
+        label="Seed-keep probability (0 = always fresh; raise to expose particle degeneracy in the seed-observation chart)"
+        :min="0"
+        :max="1"
+        :step="0.01"
       />
       <TextInput
         v-model="params.stagesText"

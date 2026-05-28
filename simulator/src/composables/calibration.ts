@@ -82,9 +82,13 @@ export interface CalibrationConfig {
   batchSize: number;
   seed: number;
   /// r0 perturbation kernel SD scaling — passed to wasm
-  /// `PerturbationKernel::new`. Default 2.0 (Beaumont 2009 / cfa);
+  /// `PerturbationKernel::new`. Default 2.0 (Beaumont 2009);
   /// optional so older IDB rows rehydrate (treat undefined as 2.0).
   varianceFactor?: number;
+  /// Probability an accepted particle inherits its base particle's
+  /// seed. Default 0.0 = always replace; optional so older IDB rows
+  /// rehydrate as 0.0.
+  probKeepSeed?: number;
   observed: number[];
   target: TargetSpec;
 }
@@ -114,6 +118,7 @@ export function defaultConfig(): CalibrationConfig {
     batchSize: 10,
     seed: 0,
     varianceFactor: 2.0,
+    probKeepSeed: 0.0,
     observed: [],
     target: { mode: "synthetic", truthInitialInfections: 10, truthR0: 1.5 },
   };

@@ -310,8 +310,12 @@ describe("defaultConfig", () => {
     expect(rt).toEqual(c);
   });
 
-  it("defaults varianceFactor to 2.0 (Beaumont 2009 / cfa default)", () => {
+  it("defaults varianceFactor to 2.0 (Beaumont 2009 random-walk recipe)", () => {
     expect(defaultConfig().varianceFactor).toBe(2.0);
+  });
+
+  it("defaults probKeepSeed to 0.0 (every accepted particle gets a fresh seed)", () => {
+    expect(defaultConfig().probKeepSeed).toBe(0.0);
   });
 });
 

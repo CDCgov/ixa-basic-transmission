@@ -223,6 +223,8 @@ export function useCalibration(): CalibrationRunner {
       })),
       // Undefined for v2 runs → wasm side defaults to 2.0.
       varianceFactor: c.varianceFactor,
+      // Undefined → wasm side defaults to 0.0 (always replace seed).
+      probKeepSeed: c.probKeepSeed,
       batchSize,
       particleOffset: haveSoFar,
       seed: c.seed,
