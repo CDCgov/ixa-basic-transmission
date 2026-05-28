@@ -1,0 +1,172 @@
+// ABC-SMC ported from ~/gh/def/def_abc_smc/. Submodule layout mirrors
+// def's so the algorithmic pieces can be cross-referenced file-by-file.
+// JS owns the stage loop and persists particles per batch; this crate
+// only knows how to produce one batch within a given stage. See
+// CLAUDE.local.md for the wasm bridge shape.
+
+pub mod dist;
+pub mod particle;
+pub mod priors;
+pub mod stats;
+pub mod step;
+
+pub use particle::Particle;
+pub use priors::{apply, CalibratedParams, PerturbationKernel, Priors};
+pub use step::{
+    data_distance, perturb_from_previous_batch, sample_from_prior_batch, ABCStepOutput,
+};
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parameters::Parameters;
+    use crate::rate::InfectionRate;
+    use rand::{rngs::StdRng, SeedableRng};
+
+    fn truth_params() -> Parameters {
+        Parameters {
+            infection_rate: InfectionRate::Constant {
+                value: 0.5, // r0 = value * duration = 0.5 * 3 = 1.5
+                duration: 3.0,
+            },
+            population: 2000,
+            initial_infections: 10,
+            seed: 42,
+            max_time: 60.0,
+            settings: Vec::new(),
+        }
+    }
+
+    fn synthetic_observed(p: &Parameters) -> Vec<u64> {
+        let stats = crate::model::run(p.clone());
+        let (_, cum) = stats.timeseries(p.max_time);
+        let mut out = Vec::with_capacity(cum.len() - 1);
+        for w in cum.windows(2) {
+            out.push((w[1] - w[0]).max(0.0) as u64);
+        }
+        out
+    }
+
+    /// Smoke test: under a uniform prior that brackets the truth, the
+    /// final-stage posterior should be biased toward the true r0. We use
+    /// a small particle count + few stages for CI speed; the assertion is
+    /// loose (posterior mean within ±0.6 of true r0 = 1.5).
+    #[test]
+    fn recovers_true_r0_on_synthetic_data() {
+        let truth = truth_params();
+        let observed = synthetic_observed(&truth);
+        let true_r0 = 1.5;
+
+        let mut base = truth.clone();
+        base.initial_infections = 0;
+
+        let priors = Priors::new(5, 21, 0.5, 3.0);
+        let mut rng = StdRng::seed_from_u64(1);
+
+        // Stage 0 with INF threshold.
+        let gen0 = sample_from_prior_batch(f64::INFINITY, 60, &priors, &base, &observed, &mut rng);
+        assert_eq!(gen0.particles.len(), 60);
+
+        // One refinement stage at the 30th-percentile distance.
+        let mut dists: Vec<u64> = gen0.particles.iter().map(|p| p.data_distance).collect();
+        dists.sort();
+        let threshold = dists[(0.3 * dists.len() as f64) as usize - 1] as f64;
+
+        let gen1 = perturb_from_previous_batch(
+            threshold,
+            60,
+            &priors,
+            &gen0.particles,
+            &base,
+            &observed,
+            &mut rng,
+        );
+
+        // Weighted mean r0 of the posterior.
+        let total_w: f64 = gen1.particles.iter().map(|p| p.weight).sum();
+        let weighted_r0: f64 = gen1
+            .particles
+            .iter()
+            .map(|p| p.weight * p.parameters.r0)
+            .sum::<f64>()
+            / total_w;
+        assert!(
+            (weighted_r0 - true_r0).abs() < 0.6,
+            "posterior r0 mean {weighted_r0} too far from true {true_r0}"
+        );
+    }
+
+    /// Perturbation kernel: perturbing N times around a point with
+    /// `previous_particles` of varying r0 should give samples whose
+    /// variance is roughly the variance of the sample set.
+    #[test]
+    fn perturbation_kernel_uses_sample_variance() {
+        let samples = [1.0_f64, 2.0, 3.0, 4.0, 5.0];
+        let params: Vec<CalibratedParams> = samples
+            .iter()
+            .map(|&r0| CalibratedParams {
+                r0,
+                initial_infections: 5,
+                seed: 0,
+            })
+            .collect();
+        let kernel = PerturbationKernel::new(params.iter());
+        let base = params[2];
+        let mut rng = StdRng::seed_from_u64(99);
+        let perturbed: Vec<f64> = (0..2000)
+            .map(|_| kernel.perturb(&base, &mut rng).r0)
+            .collect();
+        let mean: f64 = perturbed.iter().sum::<f64>() / perturbed.len() as f64;
+        // Sample variance of [1..=5] is 2.5; perturbed values should
+        // cluster around base.r0 = 3.0 with comparable spread.
+        let var: f64 = perturbed.iter().map(|x| (x - mean).powi(2)).sum::<f64>()
+            / (perturbed.len() - 1) as f64;
+        assert!(
+            (mean - 3.0).abs() < 0.2,
+            "perturbation mean {mean} should be near base r0 = 3.0"
+        );
+        assert!(
+            var > 1.0 && var < 4.0,
+            "perturbation variance {var} unreasonable"
+        );
+    }
+
+    #[test]
+    fn data_distance_sums_absolute_differences() {
+        assert_eq!(data_distance(&[1, 2, 3], &[1, 2, 3]), 0);
+        assert_eq!(data_distance(&[0, 10], &[5, 0]), 15);
+        assert_eq!(data_distance(&[], &[]), 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "data_distance requires equal-length series")]
+    fn data_distance_rejects_mismatched_lengths() {
+        let _ = data_distance(&[1, 2, 3], &[1, 2]);
+    }
+
+    #[test]
+    fn apply_constant_maps_r0_to_value_over_duration() {
+        let mut p = Parameters {
+            infection_rate: InfectionRate::Constant {
+                value: 0.0,
+                duration: 4.0,
+            },
+            ..truth_params()
+        };
+        let cp = CalibratedParams {
+            r0: 2.0,
+            initial_infections: 3,
+            seed: 7,
+        };
+        apply(&cp, &mut p);
+        match p.infection_rate {
+            InfectionRate::Constant { value, duration } => {
+                assert!((value - 0.5).abs() < 1e-12);
+                assert!((duration - 4.0).abs() < 1e-12);
+            }
+            _ => panic!("expected Constant"),
+        }
+        assert_eq!(p.initial_infections, 3);
+        assert_eq!(p.seed, 7);
+    }
+}

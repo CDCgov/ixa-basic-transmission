@@ -55,6 +55,12 @@ git_hook = "pre-push"
 depends = ["ui.setup"]
 run = "vite preview"
 
+# JS unit tests (vitest). Covers pure helpers in `simulator/src/composables/`.
+[taskgroup.ui.unit]
+depends = ["ui.setup"]
+run = "vitest run"
+git_hook = "pre-push"
+
 # End-to-end browser tests (Playwright). Spins up its own vite dev server.
 [taskgroup.ui.e2e]
 depends = ["ui.setup"]

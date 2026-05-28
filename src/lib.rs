@@ -3,6 +3,7 @@
 // is still just `simulate` / `simulate_batch` (the `#[wasm_bindgen]`
 // items further down); nothing inside these modules is re-exported via
 // wasm-bindgen.
+pub mod abc_smc;
 pub mod model;
 pub mod normalize;
 pub mod parameters;
@@ -155,4 +156,229 @@ pub fn simulate_batch(args: &str) -> JsValue {
         ModelOutput::new(args.batch_size as usize).add_f64("attack_rate_per_run", ar_per_run);
 
     model_outputs([("series", series), ("per_run", per_run)])
+}
+
+// -----------------------------------------------------------------------------
+// ABC-SMC calibration — `calibrate_batch`
+//
+// Produces one batch of accepted particles for a given stage. JS owns the
+// stage loop (computing thresholds from previous stage distances, persisting
+// to IndexedDB between batches, etc). See `src/abc_smc/` for the algorithm
+// port and CLAUDE.local.md for the bridge contract.
+// -----------------------------------------------------------------------------
+
+/// One particle from the previous stage, passed back into the next batch so
+/// the wasm side can rebuild the perturbation kernel + WeightedIndex sampler
+/// without keeping any persistent state. `weight` need not be normalized;
+/// `WeightedIndex` treats it as proportional.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PriorParticle {
+    r0: f64,
+    initial_infections: u64,
+    weight: f64,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CalibrateBatchArgs {
+    // Model context (held fixed across the run).
+    infection_rate: InfectionRate,
+    population: u32,
+    max_time: f64,
+    #[serde(default)]
+    settings: Vec<SettingType>,
+
+    // Target data: per-integer-day observed incidence (length should be
+    // floor(max_time); the algorithm pairs by index).
+    observed: Vec<u64>,
+
+    // Uniform prior bounds.
+    initial_infections_lo: u32,
+    initial_infections_hi: u32,
+    r0_lo: f64,
+    r0_hi: f64,
+
+    // Batch context.
+    /// 0 = sample from prior; >0 = perturb from previous_particles.
+    stage: u32,
+    /// `None` (JS `null`) means accept everything (stage 0). JS sends
+    /// `null` for INFINITY because `JSON.stringify(Infinity)` is `"null"`
+    /// and f64 can't deserialize from a JSON null.
+    error_threshold: Option<f64>,
+    #[serde(default)]
+    previous_particles: Vec<PriorParticle>,
+    batch_size: u32,
+    /// Just for ordering / output labels; does not affect the math.
+    particle_offset: u32,
+    seed: u64,
+}
+
+/// SplitMix64 finalizer — fast 64→64 hash with full avalanche. Used to
+/// mix (seed, stage, offset) into a per-batch RNG seed without the
+/// additive collision the older scheme had.
+fn splitmix64(mut x: u64) -> u64 {
+    x = (x ^ (x >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    x = (x ^ (x >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    x ^ (x >> 31)
+}
+
+#[wasm_bindgen]
+pub fn calibrate_batch(args: &str) -> JsValue {
+    use abc_smc::{perturb_from_previous_batch, sample_from_prior_batch, Particle, Priors};
+    use rand::{rngs::StdRng, SeedableRng};
+
+    let args: CalibrateBatchArgs =
+        serde_json::from_str(args).expect("invalid calibrate_batch args");
+
+    let base_params = Parameters {
+        infection_rate: args.infection_rate,
+        population: args.population as usize,
+        initial_infections: 0, // overwritten per particle by `apply`
+        seed: 0,               // overwritten per particle by `apply`
+        max_time: args.max_time,
+        settings: args.settings,
+    };
+
+    // Validate at the wasm boundary so panics from `model::run` (which
+    // calls Parameters::validate.expect) can't reach here on
+    // pathological priors. Errors propagate to JS as wasm traps and
+    // surface in the runner's status line.
+    assert!(
+        args.r0_hi > args.r0_lo,
+        "r0_hi ({}) must be > r0_lo ({})",
+        args.r0_hi,
+        args.r0_lo,
+    );
+    assert!(
+        args.initial_infections_hi >= args.initial_infections_lo,
+        "initial_infections_hi ({}) must be >= initial_infections_lo ({})",
+        args.initial_infections_hi,
+        args.initial_infections_lo,
+    );
+    assert!(
+        args.initial_infections_hi as usize <= args.population as usize,
+        "initial_infections_hi ({}) must be <= population ({})",
+        args.initial_infections_hi,
+        args.population,
+    );
+    // Daily-incidence shape: `model::run` produces `floor(max_time)`
+    // values, so observed must match. Catches a too-short/too-long CSV
+    // upload before the data_distance assertion fires deeper in.
+    let expected_obs_len = args.max_time.floor().max(0.0) as usize;
+    assert_eq!(
+        args.observed.len(),
+        expected_obs_len,
+        "observed length ({}) must equal floor(max_time) ({})",
+        args.observed.len(),
+        expected_obs_len,
+    );
+    assert!(args.batch_size > 0, "batch_size must be >= 1");
+
+    let priors = Priors::new(
+        args.initial_infections_lo as u64,
+        // DiscreteUniform's upper is exclusive (matches def). The UI
+        // exposes an inclusive upper bound, so we add 1 at the wasm
+        // boundary — kept here so the JS side sees an inclusive range.
+        args.initial_infections_hi as u64 + 1,
+        args.r0_lo,
+        args.r0_hi,
+    );
+
+    // Deterministic batch seed via a 64-bit splitmix-style mix on the
+    // (seed, stage, offset) triple — avoids the additive collision the
+    // older `seed + stage*1_000_003 + offset` scheme could hit at large
+    // particle counts (offset >= 1_000_003 wraps onto the next stage).
+    let batch_seed = splitmix64(
+        args.seed
+            ^ splitmix64(args.stage as u64)
+            ^ splitmix64(args.particle_offset as u64).rotate_left(17),
+    );
+    let mut rng = StdRng::seed_from_u64(batch_seed);
+
+    let threshold = args.error_threshold.unwrap_or(f64::INFINITY);
+    let step = if args.previous_particles.is_empty() {
+        sample_from_prior_batch(
+            threshold,
+            args.batch_size as usize,
+            &priors,
+            &base_params,
+            &args.observed,
+            &mut rng,
+        )
+    } else {
+        // Rehydrate previous-stage particles. `model_output` isn't carried
+        // across (we don't need it to build the kernel or compute weights).
+        let prev: Vec<Particle> = args
+            .previous_particles
+            .iter()
+            .map(|p| Particle {
+                parameters: abc_smc::CalibratedParams {
+                    r0: p.r0,
+                    initial_infections: p.initial_infections,
+                    seed: 0,
+                },
+                model_output: crate::stats::ModelStats::new(0),
+                data_distance: 0,
+                weight: p.weight,
+            })
+            .collect();
+        perturb_from_previous_batch(
+            threshold,
+            args.batch_size as usize,
+            &priors,
+            &prev,
+            &base_params,
+            &args.observed,
+            &mut rng,
+        )
+    };
+
+    let n = step.particles.len();
+    let mut r0_col = Vec::with_capacity(n);
+    let mut ii_col = Vec::with_capacity(n);
+    let mut weight_col = Vec::with_capacity(n);
+    let mut dist_col = Vec::with_capacity(n);
+    for p in &step.particles {
+        r0_col.push(p.parameters.r0);
+        ii_col.push(p.parameters.initial_infections as f64);
+        weight_col.push(p.weight);
+        dist_col.push(p.data_distance as f64);
+    }
+
+    let particles = ModelOutput::new(n)
+        .add_f64("r0", r0_col)
+        .add_f64("initial_infections", ii_col)
+        .add_f64("weight", weight_col)
+        .add_f64("distance", dist_col);
+
+    // Per-particle daily-incidence trajectory, one column per particle.
+    // Length = floor(max_time) (the cumulative timeseries diff). Powers
+    // the per-stage trajectory overlay on the calibration page.
+    let max_t = args.max_time.floor().max(0.0) as usize;
+    let mut trajectories = ModelOutput::new(max_t);
+    let day: Vec<f64> = (1..=max_t).map(|i| i as f64).collect();
+    trajectories = trajectories.add_f64("day", day);
+    for (i, p) in step.particles.iter().enumerate() {
+        let (_, cum) = p.model_output.timeseries(args.max_time);
+        let mut inc = Vec::with_capacity(max_t);
+        for w in cum.windows(2) {
+            inc.push((w[1] - w[0]).max(0.0));
+        }
+        // Pad if cum was shorter than expected (shouldn't happen, but
+        // defensive — the ModelOutput requires all columns be same length).
+        while inc.len() < max_t {
+            inc.push(0.0);
+        }
+        inc.truncate(max_t);
+        trajectories = trajectories.add_f64(&format!("traj_{i}"), inc);
+    }
+
+    let batch_meta = ModelOutput::new(1).add_f64("n_attempts", vec![step.n_attempts as f64]);
+
+    model_outputs([
+        ("particles", particles),
+        ("trajectories", trajectories),
+        ("batch_meta", batch_meta),
+    ])
 }

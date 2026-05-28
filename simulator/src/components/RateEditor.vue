@@ -596,7 +596,7 @@ function formatRate(v: unknown): string {
 .schedule-hint {
   margin: 0;
   font-size: var(--font-size-sm, 0.875rem);
-  color: var(--cfa-color-text-muted, #666);
+  color: var(--color-text-secondary);
 }
 .points-editor {
   display: flex;
@@ -608,7 +608,7 @@ function formatRate(v: unknown): string {
   grid-template-columns: 1fr 1fr 2em;
   gap: 0.4em;
   font-size: var(--font-size-xs, 0.75rem);
-  color: var(--cfa-color-text-muted, #666);
+  color: var(--color-text-secondary);
 }
 .points-row {
   display: grid;
@@ -626,18 +626,19 @@ function formatRate(v: unknown): string {
   gap: 0.5em;
   margin-top: 0.5em;
   padding: 0.4em 0.6em;
-  border: 1px solid var(--cfa-color-border, #e5e5e5);
-  border-radius: 4px;
-  background: var(--cfa-color-surface-muted, #f7f7f7);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm, 4px);
+  background: var(--color-bg-1);
 }
 .rate-r0-label {
   font-size: var(--font-size-sm, 0.875rem);
-  color: var(--cfa-color-text-muted, #666);
+  color: var(--color-text-secondary);
 }
 .rate-r0-value {
   font-size: var(--font-size-sm, 0.875rem);
   font-variant-numeric: tabular-nums;
   font-weight: 600;
+  color: var(--color-text);
 }
 .library-actions {
   display: flex;
@@ -650,7 +651,7 @@ function formatRate(v: unknown): string {
 .library-error {
   margin: 0;
   font-size: var(--font-size-sm, 0.875rem);
-  color: #dc2626;
+  color: var(--color-error);
 }
 .library-grid {
   display: grid;
@@ -662,13 +663,13 @@ function formatRate(v: unknown): string {
   display: flex;
   flex-direction: column;
   gap: 0.2em;
-  border: 1px solid var(--cfa-color-border, #e5e5e5);
-  border-radius: 4px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm, 4px);
   padding: 4px;
 }
 .library-cell-label {
   font-size: var(--font-size-xs, 0.75rem);
-  color: var(--cfa-color-text-muted, #666);
+  color: var(--color-text-secondary);
 }
 .library-pager {
   display: flex;
@@ -679,7 +680,7 @@ function formatRate(v: unknown): string {
 }
 .library-page-info {
   font-size: var(--font-size-sm, 0.875rem);
-  color: var(--cfa-color-text-muted, #666);
+  color: var(--color-text-secondary);
 }
 .curve-tooltip {
   display: flex;

@@ -616,6 +616,7 @@ dependencies = [
  "cfasim-model",
  "criterion",
  "ixa",
+ "rand",
  "rand_distr",
  "serde",
  "serde_json",

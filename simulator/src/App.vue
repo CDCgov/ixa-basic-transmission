@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { RouterView } from "vue-router";
+import { RouterView, RouterLink } from "vue-router";
 import { SidebarLayout } from "cfasim-ui/components";
 </script>
 
@@ -9,6 +9,10 @@ import { SidebarLayout } from "cfasim-ui/components";
       <div id="model-sidebar" class="model-sidebar"></div>
     </template>
     <template #topbar>
+      <nav class="topbar-nav">
+        <RouterLink to="/" class="topbar-link">Simulate</RouterLink>
+        <RouterLink to="/calibrate" class="topbar-link">Calibrate</RouterLink>
+      </nav>
       <a
         href="https://github.com/CDCgov/ixa-basic-transmission"
         class="topbar-link"
@@ -32,6 +36,12 @@ import { SidebarLayout } from "cfasim-ui/components";
   flex-direction: column;
   gap: var(--space-3);
 }
+.topbar-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin-right: auto;
+}
 .topbar-link {
   display: inline-flex;
   align-items: center;
@@ -43,5 +53,9 @@ import { SidebarLayout } from "cfasim-ui/components";
 }
 .topbar-link:hover {
   color: var(--color-text);
+}
+.topbar-link.router-link-active {
+  color: var(--color-text);
+  background: var(--color-bg-subtle, rgba(0, 0, 0, 0.05));
 }
 </style>

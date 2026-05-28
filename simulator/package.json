@@ -5,14 +5,17 @@
   "packageManager": "pnpm@10.33.0",
   "dependencies": {
     "cfasim-ui": "^0.4.13",
+    "idb": "^8.0.3",
     "vue": "^3.5.30",
     "vue-router": "^5.0.7"
   },
   "devDependencies": {
     "@playwright/test": "^1.60.0",
     "@vitejs/plugin-vue": "^6.0.5",
+    "fake-indexeddb": "^6.2.5",
     "smol-toml": "^1.6.1",
     "typescript": "^6.0.3",
-    "vite": "^8.0.5"
+    "vite": "^8.0.5",
+    "vitest": "^4.1.7"
   }
 }
