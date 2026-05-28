@@ -1,0 +1,7 @@
+name = "No settings"
+description = "Global random mixing — every contact attempt picks uniformly from the whole population. The default; selecting this clears any configured contact structure."
+
+# Empty array (no setting types). The model's SettingsPlugin treats an
+# empty list as disabled and falls back to uniform sampling — same as
+# the user starting from a fresh page with `params.settings = []`.
+settings = []

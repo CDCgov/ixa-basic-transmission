@@ -264,8 +264,14 @@ function sizeChartData(s: SettingType) {
   margin-block: 0.5em;
 }
 
+.settings-header {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5em;
+}
+
 .settings-header h3 {
-  margin: 0 0 0.25em 0;
+  margin: 0;
 }
 
 .settings-header .muted {
