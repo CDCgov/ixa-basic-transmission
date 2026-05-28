@@ -25,7 +25,6 @@ import {
   withR0,
   cumulativeToIncidence,
   type CalibrationConfig,
-  type KdeResult,
   type Particle,
 } from "./composables/calibration";
 import { useCalibration } from "./composables/useCalibration";
@@ -424,6 +423,15 @@ interface TrajectorySeries {
   dots: boolean;
 }
 
+/// KDE in BarChart `summaryLines` shape: `x` is in category-index
+/// space (0 = first bar center, N-1 = last), so it's drawn on top of
+/// the corresponding histogram. The line autoscales independently of
+/// the bar y-axis — no bin-width rescaling needed.
+interface KdeOverlay {
+  x: number[];
+  data: number[];
+}
+
 interface StageTrace {
   stage: number;
   stageLabel: string;
@@ -432,8 +440,8 @@ interface StageTrace {
   r0Bins: { categories: string[]; data: number[] };
   iiBins: { categories: string[]; data: number[] };
   cumBins: { categories: string[]; data: number[] };
-  r0Kde: KdeResult;
-  cumKde: KdeResult;
+  r0KdeOverlay: KdeOverlay;
+  cumKdeOverlay: KdeOverlay;
   cumDay: number;
   trajectorySeries: TrajectorySeries[];
 }
@@ -477,9 +485,9 @@ const stageTraces = computed<StageTrace[]>(() => {
       cumHi = cumMax + pad;
     }
   }
-  // Bar bin widths — used to rescale each KDE so its peak height aligns
-  // with bar heights (KDE is a density, area=1; multiplying by binWidth
-  // converts to weight-per-bar units that match the bars sum-to-1 form).
+  // Bin widths — used to project KDE x positions (in value space) into
+  // BarChart category-index space so the overlay sits over the right
+  // bars. category_idx = (x - lo) / binWidth - 0.5.
   const r0BinWidth = (params.priors.r0Hi - params.priors.r0Lo) / 18;
   const cumBinWidth = cumHi > cumLo ? (cumHi - cumLo) / 18 : 0;
   for (let s = 0; s < stages.length; s++) {
@@ -581,16 +589,18 @@ const stageTraces = computed<StageTrace[]>(() => {
         categories: cumBins.map((b) => b.center.toFixed(0)),
         data: cumBins.map((b) => b.weight),
       },
-      // Rescale each KDE (a density, area=1) by its bar-bin width so the
-      // peak aligns visually with the corresponding bar heights — bars
-      // and KDE then share the same y-axis interpretation.
-      r0Kde: {
-        x: r0Kde.x,
-        y: r0Kde.y.map((v) => v * r0BinWidth),
+      // BarChart summaryLines autoscale to their own value extent, so
+      // the y values stay raw (density). x is projected into category-
+      // index space.
+      r0KdeOverlay: {
+        x: r0Kde.x.map((v) => (v - params.priors.r0Lo) / r0BinWidth - 0.5),
+        data: r0Kde.y,
       },
-      cumKde: {
-        x: cumKde.x,
-        y: cumKde.y.map((v) => v * cumBinWidth),
+      cumKdeOverlay: {
+        x: cumBinWidth > 0
+          ? cumKde.x.map((v) => (v - cumLo) / cumBinWidth - 0.5)
+          : [],
+        data: cumBinWidth > 0 ? cumKde.y : [],
       },
       cumDay: ps[0].trajectory.length,
       trajectorySeries,
@@ -867,15 +877,26 @@ const observedSeries = computed(() => {
         </div>
         <div class="trace-row">
           <div class="trace-mini">
-            <p class="trace-label">R₀</p>
+            <p class="trace-label">R₀ (KDE overlay)</p>
             <BarChart
               :categories="trace.r0Bins.categories"
               :data="trace.r0Bins.data"
+              :summary-lines="[
+                {
+                  x: trace.r0KdeOverlay.x,
+                  data: trace.r0KdeOverlay.data,
+                  color: '#2563eb',
+                  strokeWidth: 2,
+                  dots: false,
+                },
+              ]"
               :height="120"
               :menu="false"
             />
           </div>
           <div class="trace-mini">
+            <!-- Initial-infections is discrete + frozen by the
+                 perturbation kernel, so no KDE overlay. -->
             <p class="trace-label">Initial infections</p>
             <BarChart
               :categories="trace.iiBins.categories"
@@ -886,51 +907,20 @@ const observedSeries = computed(() => {
           </div>
           <div class="trace-mini">
             <p class="trace-label">
-              Cumulative infections (day {{ trace.cumDay }})
+              Cumulative infections (day {{ trace.cumDay }}, KDE overlay)
             </p>
             <BarChart
               :categories="trace.cumBins.categories"
               :data="trace.cumBins.data"
-              :height="120"
-              :menu="false"
-            />
-          </div>
-        </div>
-        <div class="trace-row">
-          <div class="trace-mini">
-            <p class="trace-label">R₀ (KDE)</p>
-            <LineChart
-              :series="[
+              :summary-lines="trace.cumKdeOverlay.data.length ? [
                 {
-                  x: trace.r0Kde.x,
-                  data: trace.r0Kde.y,
+                  x: trace.cumKdeOverlay.x,
+                  data: trace.cumKdeOverlay.data,
                   color: '#2563eb',
                   strokeWidth: 2,
                   dots: false,
                 },
-              ]"
-              :height="120"
-              :menu="false"
-            />
-          </div>
-          <!-- No initial-infections KDE: it's discrete + frozen by the
-               perturbation kernel. See "Calibration semantics" in
-               CLAUDE.md for the rationale. -->
-          <div class="trace-mini trace-mini--empty" aria-hidden="true"></div>
-          <div class="trace-mini">
-            <p class="trace-label">
-              Cumulative infections (KDE)
-            </p>
-            <LineChart
-              :series="[
-                {
-                  x: trace.cumKde.x,
-                  data: trace.cumKde.y,
-                  color: '#2563eb',
-                  strokeWidth: 2,
-                  dots: false,
-                },
-              ]"
+              ] : []"
               :height="120"
               :menu="false"
             />
