@@ -458,18 +458,8 @@ function totalCumInfections(trajectory: number[]): number {
   return s;
 }
 
-/// Stage 0 is unconstrained prior sampling. Stage 1 is rejection-sample
-/// from prior at the first scheduled quantile. Stage k≥2 is perturbation
-/// from the previous stage at quantile stages[k-1] of stage-0 distances.
-function stageLabelFor(s: number, stages: number[]): string {
-  if (s === 0) return "Prior (∞)";
-  if (s === 1) {
-    const q = stages[0];
-    return q !== undefined
-      ? `Prior @ ${(q * 100).toFixed(0)}%`
-      : "Prior";
-  }
-  return `Stage ${s} (perturb)`;
+function stageLabelFor(s: number): string {
+  return s === 0 ? "Prior (∞)" : `Stage ${s}`;
 }
 
 const stageTraces = computed<StageTrace[]>(() => {
@@ -585,7 +575,7 @@ const stageTraces = computed<StageTrace[]>(() => {
     }
     out.push({
       stage: s,
-      stageLabel: stageLabelFor(s, parseStages(params.stagesText)),
+      stageLabel: stageLabelFor(s),
       n: ps.length,
       acceptance: a ? acceptanceRatio(a.nAccepted, a.nAttempts) : null,
       // Bar heights are bin weights summing to 1 across the panel
