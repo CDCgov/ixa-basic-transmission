@@ -8,9 +8,10 @@
 //     stage). The raw weights returned here remain proportional to the
 //     correct posterior weights, so `WeightedIndex` on the next stage
 //     works whether the inputs are pre-normalized or not.
-//   - Distance is computed from `ModelStats`: convert the cumulative
-//     timeseries to daily incidence (matching def's
-//     `symptomatic_incidence: Vec<u64>` shape) and sum |obs - sim|.
+//   - Distance is computed from `ModelStats`: `comparison_series` derives
+//     a per-day series (daily incidence, or its running total when the
+//     target is expressed as cumulative incidence) and `data_distance`
+//     takes the gap-aware L1 against the observed target on the same scale.
 
 use rand::Rng;
 use rand_distr::{weighted::WeightedIndex, Distribution as RandDistribution};
@@ -47,46 +48,37 @@ fn incidence_from_stats(stats: &ModelStats, max_time: f64) -> Vec<u64> {
     out
 }
 
-/// Distance between observed and simulated daily incidence, using the
-/// `cfa-calibration-tools` gap semantics (see
+/// Gap-aware L1 distance between observed and simulated series, scored
+/// only at the days the target actually contains (`observed_days`,
+/// 1-based) — gaps are skipped entirely, NOT scored as zero-vs-simulated
+/// (the `cfa-calibration-tools` gap semantics; see
 /// `cfa-evd-2025-interventions/data_processors.py::_estimate_symptom_onset_error`):
-/// compare **cumulative** incidence, and only at the days the target
-/// actually contains (`observed_days`, 1-based) — gaps are skipped
-/// entirely, NOT scored as zero-vs-simulated.
+///
+/// ```text
+/// error = Σ_{d ∈ days} | obs[d] − sim[d] |
+/// ```
+///
+/// The function is **representation-agnostic**: it's plain L1, so whether
+/// it measures distance between daily-incidence or cumulative-incidence
+/// curves depends purely on what the caller passes in. Both `observed`
+/// and `simulated` must be on the SAME scale (the batch fns build the
+/// simulated series to match `observed` via `comparison_series`).
 ///
 /// `observed` / `simulated` are dense per-day series (value at day `d` is
 /// index `d - 1`). A day present in `observed_days` but past the end of
-/// `simulated` contributes 0 on the simulated side (the model produced no
-/// incidence there) — mirrors the reference's right-join + `fill_null(0)`.
-///
-/// ```text
-/// error = Σ_{d ∈ days} | Σ_{e ≤ d, e ∈ days} obs[e] − Σ_{e ≤ d, e ∈ days} sim[e] |
-/// ```
-///
-/// `cumulative = true` (the cfa default) compares running totals — with
-/// no gaps, the L1 distance between the two cumulative-incidence curves.
-/// `cumulative = false` compares the per-day incidence values directly
-/// (gap-aware daily L1): `Σ_{d ∈ days} |obs[d] − sim[d]|`. Either way only
-/// `observed_days` are scored. If `observed_days` is empty every day in
-/// `observed` is compared (dense fallback).
-pub fn data_distance(
-    observed: &[u64],
-    simulated: &[u64],
-    observed_days: &[u64],
-    cumulative: bool,
-) -> u64 {
+/// either array contributes 0 there. If `observed_days` is empty every
+/// day in `observed` is compared (dense fallback).
+pub fn data_distance(observed: &[u64], simulated: &[u64], observed_days: &[u64]) -> u64 {
     let mut days: Vec<usize> = if observed_days.is_empty() {
         (1..=observed.len()).collect()
     } else {
         observed_days.iter().map(|&d| d as usize).collect()
     };
-    // Cumulative sums only make sense in day order; the caller may hand us
-    // arbitrary order (and duplicates after a hand edit).
+    // The caller may hand us arbitrary order (and duplicates after a hand
+    // edit); dedup so a repeated day isn't double-counted.
     days.sort_unstable();
     days.dedup();
 
-    let mut cum_obs: i128 = 0;
-    let mut cum_sim: i128 = 0;
     let mut err: u128 = 0;
     for &d in &days {
         if d == 0 {
@@ -95,15 +87,30 @@ pub fn data_distance(
         let idx = d - 1;
         let o = i128::from(observed.get(idx).copied().unwrap_or(0));
         let s = i128::from(simulated.get(idx).copied().unwrap_or(0));
-        if cumulative {
-            cum_obs += o;
-            cum_sim += s;
-            err += (cum_obs - cum_sim).unsigned_abs();
-        } else {
-            err += (o - s).unsigned_abs();
-        }
+        err += (o - s).unsigned_abs();
     }
     err as u64
+}
+
+/// Build the simulated series on the same scale as the observed target.
+/// `cumulative = false` → daily incidence (the per-day diffs of the
+/// model's cumulative counter). `cumulative = true` → cumulative
+/// incidence (the running total of those daily values, so index `d - 1`
+/// holds the case count through day `d`). The observed side is supplied
+/// by the caller already in the matching representation.
+fn comparison_series(stats: &ModelStats, max_time: f64, cumulative: bool) -> Vec<u64> {
+    let daily = incidence_from_stats(stats, max_time);
+    if !cumulative {
+        return daily;
+    }
+    let mut running: u64 = 0;
+    daily
+        .into_iter()
+        .map(|v| {
+            running += v;
+            running
+        })
+        .collect()
 }
 
 /// Mirrors `def_abc_smc/src/step.rs::initialize_abc_smc` (lines 82–123),
@@ -129,8 +136,8 @@ pub fn sample_from_prior_batch(
             let mut p = base_params.clone();
             apply(&proposed, &mut p);
             let model_output = model::run(p);
-            let simulated = incidence_from_stats(&model_output, base_params.max_time);
-            let dist = data_distance(observed, &simulated, observed_days, cumulative);
+            let simulated = comparison_series(&model_output, base_params.max_time, cumulative);
+            let dist = data_distance(observed, &simulated, observed_days);
             if dist as f64 <= error_threshold {
                 particles.push(Particle {
                     parameters: proposed,
@@ -195,8 +202,8 @@ pub fn perturb_from_previous_batch(
             let mut p = base_params.clone();
             apply(&proposed, &mut p);
             let model_output = model::run(p);
-            let simulated = incidence_from_stats(&model_output, base_params.max_time);
-            let dist = data_distance(observed, &simulated, observed_days, cumulative);
+            let simulated = comparison_series(&model_output, base_params.max_time, cumulative);
+            let dist = data_distance(observed, &simulated, observed_days);
             if dist as f64 <= error_threshold {
                 // weight = prior(θ) / Σⱼ wⱼ K(θⱼ → θ). Matches def.
                 let proposal_weight: f64 = previous_particles

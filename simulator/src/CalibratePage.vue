@@ -24,8 +24,9 @@ import {
   parseTargetCsv,
   acceptanceRatio,
   cumulativeToIncidence,
+  incidenceToCumulative,
+  densify,
   type CalibrationConfig,
-  type Particle,
 } from "./composables/calibration";
 import { useCalibration } from "./composables/useCalibration";
 import {
@@ -92,32 +93,27 @@ function setRowsFromDense(arr: number[]) {
   targetRows.value = arr.map((value, i) => ({ day: i + 1, value }));
 }
 
-/// Densify (day, value) rows into a per-day array of length `len`,
-/// zero-filling gaps. Rows whose day falls outside [1, len] are dropped
-/// (startRun validates against that so the user is warned rather than
-/// silently losing data). Duplicate days: last write wins.
-function densify(
-  rows: { day: number; value: number }[],
-  len: number,
-): number[] {
-  const out = new Array(Math.max(0, len)).fill(0);
-  for (const r of rows) {
-    if (r.day >= 1 && r.day <= out.length) out[r.day - 1] = r.value;
-  }
-  return out;
-}
+// `densify` lives in composables/calibration.ts so it's unit-tested
+// directly.
 
-// Per-day dense series fed to the calibrator + per-stage overlays. Always
-// floor(maxTime) long so it lines up with each particle's simulated
-// trajectory.
+// Whether the target data is expressed (and compared) as cumulative case
+// totals vs daily incidence — the single shared toggle that also drives
+// the distance scale (`distanceMetric`).
+const isCumulative = computed(() => params.distanceMetric === "cumulative");
+
+// Per-day dense series fed to the calibrator. Always floor(maxTime) long
+// so it lines up with each particle's simulated trajectory. The typed
+// value (daily or cumulative, per scale) lands at its observed-day index;
+// gap days are 0 but never scored — the gap-aware L1 only reads
+// `observedDays`, and Rust cumulates the simulated side to match.
 const observed = computed<number[]>(() =>
   densify(targetRows.value, Math.floor(params.maxTime)),
 );
 
 // 1-based days the target actually contains (unique, in-range, sorted) —
-// the distance compares cumulative incidence only at these days, so gaps
-// are skipped rather than scored as zero. Kept consistent with `densify`
-// (same [1, floor(maxTime)] clamp; duplicates collapse).
+// the gap-aware L1 distance is scored only at these days (on whichever
+// scale is active), so gaps are skipped rather than scored as zero. Kept
+// consistent with `densify` (same [1, floor(maxTime)] clamp; dups collapse).
 const observedDays = computed<number[]>(() => {
   const maxDay = Math.floor(params.maxTime);
   const seen = new Set<number>();
@@ -135,6 +131,20 @@ const metricOptions: SelectOption[] = [
   { value: "cumulative", label: "Cumulative incidence" },
   { value: "daily", label: "Daily incidence" },
 ];
+
+// Axis / column label tracking the active scale, so the table, the target
+// plot, and the per-stage trajectory overlay all read consistently.
+const valueLabel = computed(() =>
+  isCumulative.value ? "Cumulative cases" : "Incident cases",
+);
+
+// Human label for the selected scale (the matching option label), used in
+// the read-only readout shown once a run locks the choice.
+const metricLabel = computed(
+  () =>
+    metricOptions.find((o) => o.value === params.distanceMetric)?.label ??
+    params.distanceMetric,
+);
 
 function parseStages(text: string): number[] {
   return text
@@ -374,7 +384,10 @@ const generating = ref(false);
 async function generateFromParameters() {
   generating.value = true;
   try {
-    setRowsFromDense(await generateSyntheticObserved());
+    // generateSyntheticObserved returns daily incidence; lift it onto the
+    // cumulative scale when that's how the table is expressed.
+    const daily = await generateSyntheticObserved();
+    setRowsFromDense(isCumulative.value ? incidenceToCumulative(daily) : daily);
     setParam("targetMode", "synthetic");
   } catch (e) {
     alert(`Generate failed: ${e instanceof Error ? e.message : String(e)}`);
@@ -517,6 +530,18 @@ async function startRun() {
       errorMessage.value = `Day ${offending.day} is outside 1…${maxDay} (max time). Adjust the day or increase max time.`;
       return;
     }
+    // Cumulative case totals are monotone by definition — a decrease is a
+    // data-entry mistake (and would calibrate against an impossible
+    // target). Flag it so the user fixes the entry instead.
+    if (isCumulative.value) {
+      const sorted = [...targetRows.value].sort((a, b) => a.day - b.day);
+      for (let i = 1; i < sorted.length; i++) {
+        if (sorted[i].value < sorted[i - 1].value) {
+          errorMessage.value = `Cumulative cases must be non-decreasing, but day ${sorted[i].day} (${sorted[i].value}) is less than day ${sorted[i - 1].day} (${sorted[i - 1].value}).`;
+          return;
+        }
+      }
+    }
     // Mint a fresh run when there's nothing selected OR when the
     // selected run is already finished. Overwriting a complete/error
     // run's config would silently corrupt its history and the loop
@@ -618,21 +643,8 @@ interface StageTrace {
   acceptance: number | null;
   r0Bins: OverlayBarSeries;
   iiBins: OverlayBarSeries;
-  cumBins: { categories: string[]; data: number[] };
   r0KdeOverlay: KdeOverlay;
-  cumKdeOverlay: KdeOverlay;
-  cumDay: number;
   trajectorySeries: TrajectorySeries[];
-}
-
-/// Posterior-predictive over total epidemic size: sum each particle's
-/// daily-incidence trajectory. Same statistic as the "Cumulative
-/// infections on <date>" forecasts CDC publishes — just keyed on the
-/// last simulated day rather than a calendar date.
-function totalCumInfections(trajectory: number[]): number {
-  let s = 0;
-  for (const v of trajectory) s += v;
-  return s;
 }
 
 function stageLabelFor(s: number): string {
@@ -643,36 +655,10 @@ const stageTraces = computed<StageTrace[]>(() => {
   const stages = runner.particlesByStage.value;
   const acc = runner.acceptance.value;
   const out: StageTrace[] = [];
-  // Shared bin range for the cumulative-infections histogram across
-  // every stage so panels are directly comparable. Includes the prior
-  // (stage 0) so the contraction story is visible.
-  let cumLo = 0;
-  let cumHi = 1;
-  let cumMin = Infinity;
-  let cumMax = -Infinity;
-  for (const ps of stages) {
-    if (!ps) continue;
-    for (const p of ps) {
-      const c = totalCumInfections(p.trajectory);
-      if (c < cumMin) cumMin = c;
-      if (c > cumMax) cumMax = c;
-    }
-  }
-  if (cumMin !== Infinity) {
-    if (cumMax <= cumMin) {
-      cumLo = Math.max(0, cumMin - 0.5);
-      cumHi = cumMin + 0.5;
-    } else {
-      const pad = (cumMax - cumMin) * 0.05;
-      cumLo = Math.max(0, cumMin - pad);
-      cumHi = cumMax + pad;
-    }
-  }
-  // Bin widths — used to project KDE x positions (in value space) into
+  // Bin width — used to project KDE x positions (in value space) into
   // BarChart category-index space so the overlay sits over the right
   // bars. category_idx = (x - lo) / binWidth - 0.5.
   const r0BinWidth = (params.priors.r0Hi - params.priors.r0Lo) / 18;
-  const cumBinWidth = cumHi > cumLo ? (cumHi - cumLo) / 18 : 0;
   for (let s = 0; s < stages.length; s++) {
     const ps = stages[s];
     if (!ps || ps.length === 0) continue;
@@ -698,20 +684,12 @@ const stageTraces = computed<StageTrace[]>(() => {
       params.priors.initialInfectionsLo - 0.5,
       params.priors.initialInfectionsHi + 0.5,
     );
-    const cumValues = ps.map((p) => totalCumInfections(p.trajectory));
-    const cumBins = weightedHistogram(
-      cumValues,
-      normalizedWeights,
-      18,
-      cumLo,
-      cumHi,
-    );
-    // Weighted Gaussian KDEs for the continuous parameters — shown
-    // beside (or below) the bars as smoothed, bin-independent renderings
-    // of the same posterior. No KDE for `initial_infections`: it's
-    // discrete and the perturbation kernel never moves it, so a smooth
-    // curve would imply density between integers and exploration that
-    // the algorithm structurally doesn't perform.
+    // Weighted Gaussian KDE for r0 — shown beside the bars as a smoothed,
+    // bin-independent rendering of the same posterior. No KDE for
+    // `initial_infections`: it's discrete and the perturbation kernel
+    // never moves it, so a smooth curve would imply density between
+    // integers and exploration that the algorithm structurally doesn't
+    // perform.
     const r0Kde = weightedKde(
       ps.map((p) => p.r0),
       normalizedWeights,
@@ -719,35 +697,37 @@ const stageTraces = computed<StageTrace[]>(() => {
       params.priors.r0Hi,
       120,
     );
-    const cumKde = weightedKde(
-      cumValues,
-      normalizedWeights,
-      cumLo,
-      cumHi,
-      120,
-    );
     const a = acc[s];
     // Particle trajectories as faint gray lines; observed (if loaded) as
     // a bolder teal overlay so the eye can compare.
-    const trajX = observed.value.length
-      ? observed.value.map((_, i) => i + 1)
-      : ps[0].trajectory.map((_, i) => i + 1);
+    // Particle trajectories as faint gray lines. Stored as daily
+    // incidence; lift onto the cumulative scale for display when that's
+    // the active representation so they line up with the observed overlay.
     const trajectorySeries: TrajectorySeries[] = ps
       .filter((p) => p.trajectory.length > 0)
-      .map((p) => ({
-        x: trajX.slice(0, p.trajectory.length),
-        data: p.trajectory,
-        color: "rgba(100, 116, 139, 0.35)",
-        strokeWidth: 1,
-        dots: false,
-      }));
-    if (observed.value.length) {
+      .map((p) => {
+        const data = isCumulative.value
+          ? incidenceToCumulative(p.trajectory)
+          : p.trajectory;
+        return {
+          x: data.map((_, i) => i + 1),
+          data,
+          color: "rgba(100, 116, 139, 0.35)",
+          strokeWidth: 1,
+          dots: false,
+        };
+      });
+    // Observed target as a bolder teal line + dots through the days it
+    // actually contains (sparse — connects real observations by day, no
+    // densified fill). Values are already on the active scale (the typed
+    // daily or cumulative counts).
+    if (sortedRows.value.length) {
       trajectorySeries.push({
-        x: trajX,
-        data: observed.value,
+        x: sortedRows.value.map((r) => r.day),
+        data: sortedRows.value.map((r) => r.value),
         color: "#14b8a6",
         strokeWidth: 2.5,
-        dots: false,
+        dots: true,
       });
     }
     out.push({
@@ -756,10 +736,7 @@ const stageTraces = computed<StageTrace[]>(() => {
       n: ps.length,
       acceptance: a ? acceptanceRatio(a.nAccepted, a.nAttempts) : null,
       // Bar heights are bin weights summing to 1 across the panel
-      // ("probability mass per bin"). Density (area=1) would put cum-
-      // infections values in the ~1e-4 range — unreadable — since
-      // density scales as 1/x-range. Weight stays in [0, ~0.5] for
-      // typical posteriors.
+      // ("probability mass per bin").
       // Prior series: uniform PDF integrates to 1 over its support, so
       // each of N bins gets mass 1/N. Drawn under the posterior so the
       // "departure from flat" pops visually.
@@ -773,10 +750,6 @@ const stageTraces = computed<StageTrace[]>(() => {
         prior: iiBins.map(() => 1 / iiBins.length),
         posterior: iiBins.map((b) => b.weight),
       },
-      cumBins: {
-        categories: cumBins.map((b) => b.center.toFixed(0)),
-        data: cumBins.map((b) => b.weight),
-      },
       // BarChart summaryLines autoscale to their own value extent, so
       // the y values stay raw (density). x is projected into category-
       // index space.
@@ -784,13 +757,6 @@ const stageTraces = computed<StageTrace[]>(() => {
         x: r0Kde.x.map((v) => (v - params.priors.r0Lo) / r0BinWidth - 0.5),
         data: r0Kde.y,
       },
-      cumKdeOverlay: {
-        x: cumBinWidth > 0
-          ? cumKde.x.map((v) => (v - cumLo) / cumBinWidth - 0.5)
-          : [],
-        data: cumBinWidth > 0 ? cumKde.y : [],
-      },
-      cumDay: ps[0].trajectory.length,
       trajectorySeries,
     });
   }
@@ -831,8 +797,9 @@ const sortedRows = computed(() =>
   [...targetRows.value].sort((a, b) => a.day - b.day),
 );
 
-// Plot the rows directly (sorted by day) so gaps read as spaced points
-// rather than zero-filled valleys. Dots on so sparse data stays visible.
+// Plot the rows directly (sorted by day) as a line + dots so gaps read as
+// spaced points rather than zero-filled valleys (the gap shading below
+// marks the ranges the line bridges).
 const observedSeries = computed(() => {
   if (sortedRows.value.length === 0) return [];
   return [
@@ -964,12 +931,6 @@ const observedGapSections = computed(() => {
 
     <section class="cal-section">
       <h3>Calibration controls</h3>
-      <SelectBox
-        label="Distance metric"
-        :options="metricOptions"
-        :model-value="params.distanceMetric"
-        @update:model-value="(v) => setParam('distanceMetric', String(v) as 'cumulative' | 'daily')"
-      />
       <NumberInput v-model="params.nParticles" label="Particles per stage" :min="10" />
       <NumberInput v-model="params.batchSize" label="Batch size" :min="1" />
       <NumberInput v-model="params.seed" label="Seed" :min="0" />
@@ -1035,13 +996,40 @@ const observedGapSections = computed(() => {
 
   <h1>Calibration</h1>
   <p>
-    Calibrates the transmission model to observed daily-incidence data
-    via ABC-SMC. Pick priors, set an error schedule, then watch the
-    posterior tighten across stages. Runs persist in your browser, so
-    if even if you close the tab, you can resume later.
+    Calibrates the transmission model to an observed incidence series via
+    ABC-SMC. Pick priors, set an error schedule, then watch the posterior
+    tighten across stages. Runs persist in your browser, so even if you
+    close the tab, you can resume later.
   </p>
   <p v-if="errorMessage" class="error">{{ errorMessage }}</p>
   <p class="status">{{ statusLabel }}</p>
+
+  <section class="cal-metric">
+    <h2>Distance metric</h2>
+    <p class="cal-metric__desc">
+      Fit is scored with a <strong>gap-aware L1 distance</strong> — the sum
+      of absolute differences between the target and the model output,
+      taken only on the days the target actually contains (gaps are
+      skipped, not counted as zero). Choose whether that comparison happens
+      on the cumulative or daily scale; the target table and the model
+      output are both expressed that way.
+    </p>
+    <!-- The scale is part of the run's frozen config: switching it would
+         reinterpret a started run's stored target. Once locked, show the
+         chosen scale read-only instead of the (reka-ui) combobox, which a
+         disabled fieldset can't actually disable. -->
+    <SelectBox
+      v-if="!paramsLocked"
+      label="Express target data as"
+      :options="metricOptions"
+      :model-value="params.distanceMetric"
+      @update:model-value="(v) => setParam('distanceMetric', String(v) as 'cumulative' | 'daily')"
+    />
+    <p v-else class="cal-metric__locked">
+      Scale: <strong>{{ metricLabel }}</strong>
+      <span class="cal-hint">(locked for this run)</span>
+    </p>
+  </section>
 
   <section class="cal-target">
     <h2>Target data</h2>
@@ -1052,7 +1040,7 @@ const observedGapSections = computed(() => {
         :area-sections="observedGapSections"
         :height="180"
         x-label="Day"
-        y-label="Incident cases"
+        :y-label="valueLabel"
         :menu="false"
         tooltip-trigger="hover"
       />
@@ -1091,7 +1079,7 @@ const observedGapSections = computed(() => {
             <thead>
               <tr>
                 <th scope="col">Day</th>
-                <th scope="col">Incident cases</th>
+                <th scope="col">{{ valueLabel }}</th>
                 <th scope="col"><span class="sr-only">Remove</span></th>
               </tr>
             </thead>
@@ -1115,7 +1103,7 @@ const observedGapSections = computed(() => {
                     min="0"
                     step="1"
                     class="obs-cell"
-                    :aria-label="`Incident cases for row ${i + 1}`"
+                    :aria-label="`${valueLabel} for row ${i + 1}`"
                     :value="row.value"
                     @input="(e) => setRowValue(i, Number((e.target as HTMLInputElement).value))"
                   />
@@ -1173,7 +1161,7 @@ const observedGapSections = computed(() => {
             :series="trace.trajectorySeries"
             :height="160"
             x-label="Day"
-            y-label="Incident cases"
+            :y-label="valueLabel"
             :menu="false"
           />
         </div>
@@ -1233,28 +1221,6 @@ const observedGapSections = computed(() => {
                 },
               ]"
               layout="overlay"
-              :height="180"
-              :menu="false"
-              tooltip-trigger="hover"
-              tooltip-value-format="%.4f"
-            />
-          </div>
-          <div class="trace-mini">
-            <p class="trace-label">
-              Cumulative infections (day {{ trace.cumDay }}, KDE overlay)
-            </p>
-            <BarChart
-              :categories="trace.cumBins.categories"
-              :data="trace.cumBins.data"
-              :summary-lines="trace.cumKdeOverlay.data.length ? [
-                {
-                  x: trace.cumKdeOverlay.x,
-                  data: trace.cumKdeOverlay.data,
-                  color: '#dc2626',
-                  strokeWidth: 2,
-                  dots: false,
-                },
-              ] : []"
               :height="180"
               :menu="false"
               tooltip-trigger="hover"
@@ -1452,6 +1418,25 @@ const observedGapSections = computed(() => {
   margin: 0;
   font-size: var(--font-size-xs, 0.75rem);
   color: var(--color-text-secondary);
+}
+.cal-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-bottom: 1.5rem;
+  max-width: 38rem;
+}
+.cal-metric__desc {
+  margin: 0;
+  font-size: var(--font-size-sm, 0.875rem);
+  color: var(--color-text-secondary);
+}
+.cal-metric__locked {
+  margin: 0;
+  display: flex;
+  gap: 0.4rem;
+  align-items: baseline;
+  font-size: var(--font-size-sm, 0.875rem);
 }
 .cal-target {
   display: flex;
@@ -1657,7 +1642,7 @@ const observedGapSections = computed(() => {
 }
 .trace-row {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(2, 1fr);
   gap: 1rem;
 }
 .trace-mini {

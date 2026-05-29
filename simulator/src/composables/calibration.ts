@@ -38,6 +38,46 @@ export function cumulativeToIncidence(cumulative: ArrayLike<number>): number[] {
   return out;
 }
 
+/// Running total of a daily-incidence series — the inverse of
+/// `cumulativeToIncidence` (modulo its day-0 baseline). `out[i]` is the
+/// cumulative case count through day `i + 1`. Used when the target data
+/// is expressed on the cumulative scale (`distanceMetric === "cumulative"`):
+/// the model's daily trajectory is run through this so the per-stage
+/// overlay and the synthetic-target generator match the cumulative
+/// representation the Rust `comparison_series` builds for the distance.
+export function incidenceToCumulative(daily: ArrayLike<number>): number[] {
+  const out: number[] = [];
+  let sum = 0;
+  for (let i = 0; i < daily.length; i++) {
+    sum += daily[i];
+    out.push(sum);
+  }
+  return out;
+}
+
+/// One editable target-data row: a 1-based day and its observed value
+/// (incident or cumulative cases, depending on the active scale).
+export interface ObservedRow {
+  day: number;
+  value: number;
+}
+
+/// Densify (day, value) rows into a per-day array of length `len`,
+/// zero-filling gaps. Used for the dense array the calibrator consumes:
+/// the gap-aware distance only reads the days the target contains
+/// (`observedDays`), so gap fill is never scored — it just keeps the
+/// array `floor(maxTime)` long. Works for both scales (the value at an
+/// observed day is the typed daily or cumulative count). Rows outside
+/// [1, len] are dropped (the caller validates that range); duplicate
+/// days: last write wins.
+export function densify(rows: ObservedRow[], len: number): number[] {
+  const out = new Array(Math.max(0, len)).fill(0);
+  for (const r of rows) {
+    if (r.day >= 1 && r.day <= out.length) out[r.day - 1] = r.value;
+  }
+  return out;
+}
+
 // One particle stored after a wasm batch returns. Weights are the raw
 // values out of wasm; renormalization to Σ w = 1 is computed on demand
 // for display (histograms, posterior moments) and is not stored.
@@ -97,17 +137,21 @@ export interface CalibrationConfig {
   /// seed. Default 0.0 = always replace; optional so older IDB rows
   /// rehydrate as 0.0.
   probKeepSeed?: number;
-  /// Dense per-day observed incidence, length floor(maxTime). Value at
-  /// day `d` lives at index `d - 1`; gap days are 0.
+  /// Dense per-day observed series, length floor(maxTime). Value at day
+  /// `d` lives at index `d - 1`. Expressed on the scale named by
+  /// `distanceMetric`: `daily` → per-day incidence (gap days are 0);
+  /// `cumulative` → running case total (carried forward across gaps).
   observed: number[];
   /// 1-based days the target actually contains. The distance compares
   /// only at these days (cfa gap semantics — gaps are skipped, not scored
   /// as zero). Empty/undefined → every day (dense fallback, for rows
   /// persisted before this field existed).
   observedDays?: number[];
-  /// Which incidence distance to calibrate against: `cumulative` (running
-  /// totals, the cfa default) or `daily` (per-day values). Undefined →
-  /// cumulative (older rows).
+  /// How the target data is expressed (and the scale the model output is
+  /// built to match before the single gap-aware L1 distance): `cumulative`
+  /// (running case totals, the default) or `daily` (per-day incidence).
+  /// The distance itself is always plain gap-aware L1; this only picks the
+  /// representation both sides are compared on. Undefined → cumulative.
   distanceMetric?: "cumulative" | "daily";
   target: TargetSpec;
 }

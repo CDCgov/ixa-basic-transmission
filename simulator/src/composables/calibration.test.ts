@@ -9,6 +9,8 @@ import {
   defaultConfig,
   withR0,
   cumulativeToIncidence,
+  incidenceToCumulative,
+  densify,
   type Particle,
 } from "./calibration";
 import type { InfectionRate } from "./infectionRate";
@@ -302,6 +304,55 @@ describe("cumulativeToIncidence", () => {
 
   it("rounds fractional diffs to nearest integer", () => {
     expect(cumulativeToIncidence([0, 0.4, 1.5])).toEqual([0, 1]);
+  });
+});
+
+describe("incidenceToCumulative", () => {
+  it("returns empty for empty input", () => {
+    expect(incidenceToCumulative([])).toEqual([]);
+  });
+
+  it("accumulates a running total", () => {
+    expect(incidenceToCumulative([1, 2, 4])).toEqual([1, 3, 7]);
+  });
+
+  it("round-trips with cumulativeToIncidence (sans the day-0 baseline)", () => {
+    const daily = [1, 2, 4];
+    // cumulativeToIncidence drops the first element (the day-0 anchor), so
+    // prepend a 0 to recover the original daily series.
+    expect(cumulativeToIncidence([0, ...incidenceToCumulative(daily)])).toEqual(
+      daily,
+    );
+  });
+});
+
+describe("densify", () => {
+  it("zero-fills gaps and places values at day-1 indices", () => {
+    expect(densify([{ day: 1, value: 5 }, { day: 3, value: 4 }], 4)).toEqual([
+      5, 0, 4, 0,
+    ]);
+  });
+
+  it("drops out-of-range days and resolves dup days last-write-wins", () => {
+    expect(
+      densify(
+        [
+          { day: 0, value: 9 },
+          { day: 5, value: 9 },
+          { day: 2, value: 1 },
+          { day: 2, value: 7 },
+        ],
+        3,
+      ),
+    ).toEqual([0, 7, 0]);
+  });
+
+  it("places cumulative totals at observed-day indices (gaps stay 0, unscored)", () => {
+    // Cumulative scale: the typed totals land at their day index; the gap
+    // at day 3 stays 0 (never read by the gap-aware distance).
+    expect(
+      densify([{ day: 2, value: 5 }, { day: 4, value: 12 }], 5),
+    ).toEqual([0, 5, 0, 12, 0]);
   });
 });
 

@@ -37,12 +37,18 @@ mod tests {
         }
     }
 
+    /// Cumulative-incidence target for the truth params. The batch fns
+    /// below run with `cumulative = true` (the production default), so the
+    /// observed series must be on the cumulative scale too — running total
+    /// of the daily diffs.
     fn synthetic_observed(p: &Parameters) -> Vec<u64> {
         let stats = crate::model::run(p.clone());
         let (_, cum) = stats.timeseries(p.max_time);
+        let mut running: u64 = 0;
         let mut out = Vec::with_capacity(cum.len() - 1);
         for w in cum.windows(2) {
-            out.push((w[1] - w[0]).max(0.0) as u64);
+            running += (w[1] - w[0]).max(0.0) as u64;
+            out.push(running);
         }
         out
     }
@@ -183,45 +189,35 @@ mod tests {
     }
 
     #[test]
-    fn data_distance_cumulative_dense() {
-        // No gaps (observed_days empty → every day). Distance is the L1
-        // distance between the two cumulative curves.
-        assert_eq!(data_distance(&[1, 2, 3], &[1, 2, 3], &[], true), 0);
-        // obs cum = [0, 10]; sim cum = [5, 5]; |0-5| + |10-5| = 10.
-        assert_eq!(data_distance(&[0, 10], &[5, 0], &[], true), 10);
-        assert_eq!(data_distance(&[], &[], &[], true), 0);
-    }
-
-    #[test]
-    fn data_distance_daily_metric() {
-        // Per-day L1 (cumulative = false). |1-1| + |2-9| + |3-3| = 7
-        // (the cumulative metric would give 14 for the same input).
-        assert_eq!(data_distance(&[1, 2, 3], &[1, 9, 3], &[], false), 7);
-        assert_eq!(data_distance(&[1, 2, 3], &[1, 9, 3], &[], true), 14);
-        // Daily L1 also skips gaps: only days 1 & 3 scored.
-        // |5-5| + |4-1| = 3 (day-2 sim=99 ignored).
-        assert_eq!(data_distance(&[5, 0, 4], &[5, 99, 1], &[1, 3], false), 3);
+    fn data_distance_dense() {
+        // No gaps (observed_days empty → every day). Plain gap-aware L1:
+        // Σ |obs[d] - sim[d]|.
+        assert_eq!(data_distance(&[1, 2, 3], &[1, 2, 3], &[]), 0);
+        // |1-1| + |2-9| + |3-3| = 7.
+        assert_eq!(data_distance(&[1, 2, 3], &[1, 9, 3], &[]), 7);
+        // |0-5| + |10-0| = 15.
+        assert_eq!(data_distance(&[0, 10], &[5, 0], &[]), 15);
+        assert_eq!(data_distance(&[], &[], &[]), 0);
     }
 
     #[test]
     fn data_distance_skips_gaps() {
         // Only days 1 and 3 are observed; day 2 is a gap and must NOT be
-        // scored. obs[1]=5, obs[3]=4; sim[1]=5, sim[3]=1 (day-2 sim=99 is
-        // ignored). cum at observed days: obs=[5,9], sim=[5,6];
-        // |5-5| + |9-6| = 3.
+        // scored. |5-5| + |4-1| = 3 (day-2 sim=99 is ignored). The metric
+        // is representation-agnostic, so the values may be daily or
+        // cumulative — the caller puts both sides on the same scale.
         let observed = [5, 0, 4];
         let simulated = [5, 99, 1];
-        assert_eq!(data_distance(&observed, &simulated, &[1, 3], true), 3);
+        assert_eq!(data_distance(&observed, &simulated, &[1, 3]), 3);
         // Order/duplicates in observed_days don't matter.
-        assert_eq!(data_distance(&observed, &simulated, &[3, 1, 1], true), 3);
+        assert_eq!(data_distance(&observed, &simulated, &[3, 1, 1]), 3);
     }
 
     #[test]
-    fn data_distance_simulated_short_counts_as_zero() {
+    fn data_distance_short_arrays_count_as_zero() {
         // A day past the end of `simulated` contributes 0 on the sim side.
-        // obs cum at days 1,2 = [2, 5]; sim has only day 1 (=2) so cum =
-        // [2, 2]; |2-2| + |5-2| = 3.
-        assert_eq!(data_distance(&[2, 3], &[2], &[1, 2], true), 3);
+        // |2-2| + |3-0| = 3 (day 2 missing from sim → 0).
+        assert_eq!(data_distance(&[2, 3], &[2], &[1, 2]), 3);
     }
 
     #[test]

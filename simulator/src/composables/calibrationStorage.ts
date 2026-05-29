@@ -39,7 +39,12 @@ const PARTICLES_STORE = "particles";
 //     cumulative-incidence-over-observed-days (cfa gap semantics). v2
 //     particle distances were computed under the old daily-L1 metric, so
 //     resuming/mixing them would corrupt thresholds — reject v2 rows.
-export const SCHEMA_VERSION = 3;
+// v4: the distance collapsed to a single gap-aware L1, and the
+//     cumulative/daily choice became a target-data *representation* — a
+//     `cumulative` run now stores `observed` as cumulative case totals
+//     (not daily incidence), so v3 distances are no longer comparable.
+//     Reject v3 rows.
+export const SCHEMA_VERSION = 4;
 
 export type RunStatus = "idle" | "running" | "paused" | "complete" | "error";
 

@@ -189,16 +189,18 @@ struct CalibrateBatchArgs {
     #[serde(default)]
     settings: Vec<SettingType>,
 
-    // Target data: per-integer-day observed incidence (dense, length
-    // floor(max_time); value at day `d` is index `d - 1`).
+    // Target data: per-integer-day observed series (dense, length
+    // floor(max_time); value at day `d` is index `d - 1`). Expressed on
+    // the scale selected by `cumulative` — daily or cumulative incidence.
     observed: Vec<u64>,
     /// 1-based days the target actually contains. The distance compares
     /// only at these days, skipping gaps (see `data_distance`). Empty =
     /// compare every day (dense fallback).
     #[serde(default)]
     observed_days: Vec<u64>,
-    /// `true` (default) = cumulative-incidence distance; `false` = per-day
-    /// (daily) distance. See `data_distance`.
+    /// Scale the target is expressed on (and the model output is built to
+    /// match before the gap-aware L1): `true` (default) = cumulative
+    /// incidence, `false` = daily incidence. See `comparison_series`.
     #[serde(default = "default_cumulative")]
     cumulative: bool,
 
@@ -286,9 +288,9 @@ pub fn calibrate_batch(args: &str) -> JsValue {
         args.initial_infections_hi,
         args.population,
     );
-    // Daily-incidence shape: `model::run` produces `floor(max_time)`
-    // values, so observed must match. Catches a too-short/too-long CSV
-    // upload before the data_distance assertion fires deeper in.
+    // Series shape: `model::run` produces `floor(max_time)` per-day
+    // values (daily or cumulative — same length), so observed must match.
+    // Catches a too-short/too-long CSV upload before the distance runs.
     let expected_obs_len = args.max_time.floor().max(0.0) as usize;
     assert_eq!(
         args.observed.len(),

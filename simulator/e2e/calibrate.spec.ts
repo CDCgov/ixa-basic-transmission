@@ -16,11 +16,16 @@ import { test, expect, type Page } from "@playwright/test";
 // Target data is empty by default (manual entry). Populate it from the
 // model parameters so a run has something to calibrate against. Resolves
 // once the editor reflects the generated rows.
+// The target value column is labelled by the active scale: "Cumulative
+// cases" (the default, distanceMetric === "cumulative") or "Incident
+// cases" (daily). Default runs are cumulative.
 async function generateTargetData(page: Page) {
   await page.getByRole("button", { name: "Generate from parameters" }).click();
   // The model run builds the wasm worker on first use; wait for the
   // populated table (row 1 appears) before continuing.
-  await expect(page.getByLabel("Incident cases for row 1", { exact: true })).toBeVisible({
+  await expect(
+    page.getByLabel("Cumulative cases for row 1", { exact: true }),
+  ).toBeVisible({
     timeout: 120_000,
   });
 }
@@ -140,6 +145,10 @@ test.describe("Calibration page", () => {
     const population = page.getByLabel("Population", { exact: true });
     await expect(population).toBeEnabled();
     await expect(page.getByText("This run is read-only")).toHaveCount(0);
+    // The scale selector is interactive while idle.
+    await expect(
+      page.getByRole("combobox", { name: "Express target data as" }),
+    ).toBeVisible();
 
     // The target-data editor is available while idle — including after
     // "Create new run" (a freshly-created run is still idle/editable).
@@ -159,7 +168,13 @@ test.describe("Calibration page", () => {
     await expect(
       page.getByRole("button", { name: "Generate from parameters" }),
     ).toHaveCount(0);
-    await expect(page.getByLabel("Incident cases for row 1", { exact: true })).toHaveCount(0);
+    await expect(page.getByLabel("Cumulative cases for row 1", { exact: true })).toHaveCount(0);
+    // The scale choice is frozen too: the combobox is replaced by a
+    // read-only readout so it can't be switched mid-run.
+    await expect(
+      page.getByRole("combobox", { name: "Express target data as" }),
+    ).toHaveCount(0);
+    await expect(page.getByText(/Scale:/)).toBeVisible();
 
     // Still locked after it completes.
     await expect(page.getByText(/Complete/)).toBeVisible({ timeout: 180_000 });
@@ -190,22 +205,22 @@ test.describe("Calibration page", () => {
     await addRow.click();
     await addRow.click();
 
-    await page.getByLabel("Incident cases for row 1", { exact: true }).fill("5");
-    await page.getByLabel("Incident cases for row 2", { exact: true }).fill("8");
-    await page.getByLabel("Incident cases for row 3", { exact: true }).fill("3");
+    await page.getByLabel("Cumulative cases for row 1", { exact: true }).fill("5");
+    await page.getByLabel("Cumulative cases for row 2", { exact: true }).fill("8");
+    await page.getByLabel("Cumulative cases for row 3", { exact: true }).fill("3");
 
     // Days are editable (gaps allowed). Push row 1 to day 9 — out of
     // order — then blur to commit, which auto-sorts the table by day so
     // the rows become (2, 8), (3, 3), (9, 5).
     await page.getByLabel("Day for row 1", { exact: true }).fill("9");
-    await page.getByLabel("Incident cases for row 3", { exact: true }).click();
+    await page.getByLabel("Cumulative cases for row 3", { exact: true }).click();
 
     await expect(page.getByLabel("Day for row 1", { exact: true })).toHaveValue("2");
-    await expect(page.getByLabel("Incident cases for row 1", { exact: true })).toHaveValue("8");
+    await expect(page.getByLabel("Cumulative cases for row 1", { exact: true })).toHaveValue("8");
     await expect(page.getByLabel("Day for row 2", { exact: true })).toHaveValue("3");
-    await expect(page.getByLabel("Incident cases for row 2", { exact: true })).toHaveValue("3");
+    await expect(page.getByLabel("Cumulative cases for row 2", { exact: true })).toHaveValue("3");
     await expect(page.getByLabel("Day for row 3", { exact: true })).toHaveValue("9");
-    await expect(page.getByLabel("Incident cases for row 3", { exact: true })).toHaveValue("5");
+    await expect(page.getByLabel("Cumulative cases for row 3", { exact: true })).toHaveValue("5");
 
     // Removing the middle row drops it and leaves days 2 and 9.
     await page.getByRole("button", { name: "Remove row 2" }).click();
@@ -219,7 +234,7 @@ test.describe("Calibration page", () => {
     await expect(page.getByRole("button", { name: "Clear" })).toBeDisabled();
   });
 
-  test("distance metric selector switches between cumulative and daily", async ({
+  test("scale selector switches between cumulative and daily and relabels the table", async ({
     page,
   }) => {
     await page.goto("/calibrate");
@@ -227,14 +242,37 @@ test.describe("Calibration page", () => {
       page.getByRole("heading", { name: "Calibration", exact: true }),
     ).toBeVisible();
 
-    const metric = page.getByRole("combobox", { name: "Distance metric" });
+    // The Distance metric section lives in the main area and the scale
+    // selector drives both the comparison scale AND how the table reads.
+    await expect(
+      page.getByRole("heading", { name: "Distance metric" }),
+    ).toBeVisible();
+    const metric = page.getByRole("combobox", {
+      name: "Express target data as",
+    });
+
+    // Add a row so the value column header is rendered.
+    await page.getByRole("button", { name: "Add row" }).click();
+
+    // Default is cumulative → the value column reads "Cumulative cases".
     await expect(metric).toContainText("Cumulative incidence");
+    await expect(
+      page.getByRole("columnheader", { name: "Cumulative cases" }),
+    ).toBeVisible();
+
     await metric.click();
     await page.getByRole("option", { name: "Daily incidence" }).click();
     await expect(metric).toContainText("Daily incidence");
+    await expect(
+      page.getByRole("columnheader", { name: "Incident cases" }),
+    ).toBeVisible();
+
     await metric.click();
     await page.getByRole("option", { name: "Cumulative incidence" }).click();
     await expect(metric).toContainText("Cumulative incidence");
+    await expect(
+      page.getByRole("columnheader", { name: "Cumulative cases" }),
+    ).toBeVisible();
   });
 
   test("nav lets the user switch between Simulate and Calibrate", async ({
