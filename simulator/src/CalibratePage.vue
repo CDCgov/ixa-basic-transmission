@@ -194,11 +194,10 @@ const canStart = computed(
 );
 // Make "Create new run" the primary CTA when there's no other primary
 // action on screen (no run yet, or the selected run finished); demote it
-// to secondary while Start/Pause/Resume are the focus.
+// to secondary while Pause/Resume are the focus. (It's hidden entirely
+// when a selected run is idle — Start is the action there.)
 const createVariant = computed(() =>
-  canStart.value ||
-    runner.status.value === "running" ||
-    runner.status.value === "paused"
+  runner.status.value === "running" || runner.status.value === "paused"
     ? "secondary"
     : "primary",
 );
@@ -1037,7 +1036,14 @@ const observedGapSections = computed(() => {
       <Button v-else-if="runner.status.value === 'paused'" variant="secondary" @click="resumeRun">
         Resume
       </Button>
-      <Button :variant="createVariant" :disabled="runner.status.value === 'running'" @click="createNewRun">
+      <!-- Hidden while a selected run is idle (Start is the action there);
+           shown with no run yet, or once a run is paused/complete/error. -->
+      <Button
+        v-if="!canStart"
+        :variant="createVariant"
+        :disabled="runner.status.value === 'running'"
+        @click="createNewRun"
+      >
         Create new run
       </Button>
     </div>
