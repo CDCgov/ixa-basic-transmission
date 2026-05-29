@@ -66,6 +66,17 @@ test.describe("Calibration page", () => {
       timeout: 180_000,
     });
 
+    // The all-stages overlay section renders both per-parameter charts
+    // (an SVG each: the R₀ KDE-per-stage line chart and the initial-
+    // infections overlaid-posterior bar chart).
+    const overlay = page
+      .locator("section.overlay-section")
+      .filter({ hasText: "Posterior across stages" });
+    await expect(
+      overlay.getByRole("heading", { name: "Posterior across stages" }),
+    ).toBeVisible();
+    await expect(overlay.locator(".overlay-cell svg")).toHaveCount(2);
+
     // The per-stage trace section renders with the summary table.
     await expect(
       page.getByRole("heading", { name: "Per-stage parameter trace" }),
