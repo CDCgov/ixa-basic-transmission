@@ -7,9 +7,12 @@
 //   - constant    → flat λ = value on [0, duration]
 //   - empirical   → curve area-normalized to 1, ×scale
 //   - parametric  → kernel sampled on a grid, area-normalized, ×scale
-//   - library     → pointwise MEAN curve, area-normalized, ×scale
-//                   (the model normalizes the library's mean area to 1, so
-//                    the mean person's expected total is `scale`)
+//   - library     → ONE assigned per-person curve (by index), scaled by
+//                   `scale / mean-library-area` so it keeps its relative size.
+//                   The model assigns each person a uniform-random curve at
+//                   setup and normalizes the library's MEAN area to R₀, so an
+//                   individual's expected total can sit above or below `scale`
+//                   (per-curve heterogeneity preserved).
 
 import type { InfectionRate } from "./infectionRate";
 import { parametricPoints } from "./infectionRate";
@@ -27,9 +30,6 @@ export interface RateCurve {
   total: number;
 }
 
-/** Pointwise samples used to approximate a Library's mean curve. */
-const MEAN_SAMPLES = 101;
-
 function cumulativeTrapezoid(x: number[], y: number[]): number[] {
   const cum = [0];
   for (let i = 1; i < x.length; i++) {
@@ -43,48 +43,33 @@ function area(x: number[], y: number[]): number {
   return cum[cum.length - 1] ?? 0;
 }
 
-/** Linear interpolation of a piecewise-linear curve at τ; 0 outside its range. */
-function rateAt(curve: [number, number][], t: number): number {
-  if (!curve.length) return 0;
-  if (t < curve[0][0] || t > curve[curve.length - 1][0]) return 0;
-  for (let i = 1; i < curve.length; i++) {
-    const [t0, r0] = curve[i - 1];
-    const [t1, r1] = curve[i];
-    if (t <= t1) {
-      const span = t1 - t0;
-      if (span === 0) return r1;
-      return r0 + ((t - t0) / span) * (r1 - r0);
-    }
-  }
-  return 0;
-}
-
-/** Pointwise mean of a library of curves, sampled on a 0 → maxSupport grid. */
-function libraryMeanCurve(rates: [number, number][][]): {
-  x: number[];
-  y: number[];
-} {
-  if (!rates.length) return { x: [0, 1], y: [0, 0] };
-  let tMax = 0;
+/**
+ * Mean curve-area across a library (= ∫ of the pointwise mean, by linearity).
+ * The model normalizes this mean to R₀, leaving each person's curve at its own
+ * relative size — so dividing a person's curve by the mean area (×scale)
+ * preserves the per-curve heterogeneity.
+ */
+function libraryMeanArea(rates: [number, number][][]): number {
+  if (!rates.length) return 0;
+  let sum = 0;
   for (const c of rates) {
-    const last = c[c.length - 1]?.[0] ?? 0;
-    if (last > tMax) tMax = last;
+    sum += area(
+      c.map((p) => p[0]),
+      c.map((p) => p[1]),
+    );
   }
-  if (tMax <= 0) return { x: [0, 1], y: [0, 0] };
-  const x: number[] = [];
-  const y: number[] = [];
-  for (let i = 0; i < MEAN_SAMPLES; i++) {
-    const t = (tMax * i) / (MEAN_SAMPLES - 1);
-    x.push(t);
-    let sum = 0;
-    for (const c of rates) sum += rateAt(c, t);
-    y.push(sum / rates.length);
-  }
-  return { x, y };
+  return sum / rates.length;
 }
 
-/** The effective λ(τ) curve the model samples for `rate`. */
-export function effectiveRateCurve(rate: InfectionRate): RateCurve {
+/**
+ * The effective λ(τ) curve the model samples for `rate`. For a Library rate,
+ * `libraryIndex` selects which per-person curve to show (the model assigns each
+ * person a uniform-random curve at setup); ignored for the other variants.
+ */
+export function effectiveRateCurve(
+  rate: InfectionRate,
+  libraryIndex = 0,
+): RateCurve {
   if (rate.type === "constant") {
     const x = [0, rate.duration];
     const lambda = [rate.value, rate.value];
@@ -99,23 +84,32 @@ export function effectiveRateCurve(rate: InfectionRate): RateCurve {
 
   let x: number[];
   let rawY: number[];
+  // Area-normalize the shape, then scale to R₀ — mirrors the model's
+  // `normalize_to_r0` so the demo's expected total matches the simulation.
+  // Empirical/Parametric normalize their own area to 1; Library normalizes by
+  // the *mean* library area so each assigned curve keeps its relative size.
+  let factor: number;
   if (rate.type === "empirical") {
     x = rate.points.map((p) => p[0]);
     rawY = rate.points.map((p) => p[1]);
+    const a = area(x, rawY);
+    factor = a > 0 ? rate.scale / a : 0;
   } else if (rate.type === "parametric") {
     const pts = parametricPoints(rate.dist, rate.duration);
     x = pts.map((p) => p[0]);
     rawY = pts.map((p) => p[1]);
+    const a = area(x, rawY);
+    factor = a > 0 ? rate.scale / a : 0;
   } else {
-    const mean = libraryMeanCurve(rate.rates);
-    x = mean.x;
-    rawY = mean.y;
+    const n = rate.rates.length;
+    const idx = n ? ((libraryIndex % n) + n) % n : 0;
+    const picked: [number, number][] = n ? rate.rates[idx] : [[0, 0], [1, 0]];
+    x = picked.map((p) => p[0]);
+    rawY = picked.map((p) => p[1]);
+    const meanArea = libraryMeanArea(rate.rates);
+    factor = meanArea > 0 ? rate.scale / meanArea : 0;
   }
 
-  // Area-normalize the shape to 1, then scale to R₀ — mirrors the model's
-  // `normalize_to_r0` so the demo's expected total matches the simulation.
-  const a = area(x, rawY);
-  const factor = a > 0 ? rate.scale / a : 0;
   const lambda = rawY.map((v) => v * factor);
   const cum = cumulativeTrapezoid(x, lambda);
   return {
@@ -223,7 +217,7 @@ export function rateFunctionDefs(rate: InfectionRate): RateFunctionDefs {
   let dHere: string;
   switch (rate.type) {
     case "constant":
-      rHere = `a flat ${fmt(rate.value)} per day`;
+      rHere = `${fmt(rate.value)}`;
       cHere = `${fmt(rate.value)} · t (a straight line)`;
       dHere = `t = c / ${fmt(rate.value)} (Exponential inter-event times)`;
       break;
@@ -247,36 +241,31 @@ export function rateFunctionDefs(rate: InfectionRate): RateFunctionDefs {
         "t solves c(t) = c on the piecewise-linear rate (inverted numerically)";
       break;
     case "library":
-      rHere = "R₀ × the population-mean curve, area-normalized to 1";
-      cHere = "R₀ × the area under the mean curve up to t, computed by trapezoidal integration";
-      dHere =
-        "t solves c(t) = c on the mean curve (inverted numerically)";
+      rHere =
+        "the curve assigned to this individual from the library (the library is scaled so its mean area = R₀, so each person keeps their relative size)";
+      cHere = "the area under the assigned curve up to t, computed by trapezoidal integration";
+      dHere = "t solves c(t) = c on the assigned curve (inverted numerically)";
       break;
   }
   return {
-    r: `Expected infection attempts per day at time t since infection; the area under it is R₀. In this case, r(t) = ${rHere}.`,
+    r: `Expected infections generated per day; the area under it is R₀. In this case, r(t) = ${rHere}.`,
     c: `Expected attempts by time t = ∫₀ᵗ r(s) ds, where r(s) is the rate function. In this case, c(t) = ${cHere}`,
     d: `Given accumulated attempts c, it returns the time t. For this rate function, ${dHere}.`,
   };
 }
 
-/** Title + one-line description of `rate` for the explorer header. */
-export function describeRate(rate: InfectionRate): {
-  title: string;
-  subtitle: string;
-} {
+/** One-line description of `rate` for the explorer header. */
+export function describeRate(rate: InfectionRate): { title: string } {
   switch (rate.type) {
     case "constant":
       return {
-        title: "Constant rate",
-        subtitle: `${fmt(rate.value)} infection${
+        title: `Constant rate of ${fmt(rate.value)} infection${
           rate.value === 1 ? "" : "s"
         } per day for ${fmt(rate.duration)} days`,
       };
     case "empirical":
       return {
-        title: "Empirical curve",
-        subtitle: `${rate.points.length} anchor points · R₀ = ${fmt(rate.scale)}`,
+        title: `Empirical curve of ${rate.points.length} anchor points · R₀ = ${fmt(rate.scale)}`,
       };
     case "parametric": {
       const d = rate.dist;
@@ -286,14 +275,12 @@ export function describeRate(rate: InfectionRate): {
           ? `μ=${fmt(d.mu)}, σ=${fmt(d.sigma)}`
           : `shape=${fmt(d.shape)}, scale=${fmt(d.scale)}`;
       return {
-        title: name,
-        subtitle: `${params}, R₀ = ${fmt(rate.scale)} over t ∈ [0, ${fmt(rate.duration)}]`,
+        title: `${name} distributed ${params}, R₀ = ${fmt(rate.scale)} over t in [0, ${fmt(rate.duration)}]`,
       };
     }
     case "library":
       return {
-        title: "Library (mean curve)",
-        subtitle: `mean of ${rate.rates.length} per-person curves · R₀ = ${fmt(rate.scale)}`,
+        title: `Library of ${rate.rates.length} per-person curves · mean R₀ = ${fmt(rate.scale)}`,
       };
   }
 }

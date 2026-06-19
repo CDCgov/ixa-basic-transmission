@@ -73,7 +73,7 @@ describe("rateExplorer", () => {
     expect(cumulativeRate(pc, tau as number)).toBeCloseTo(1.0, 6);
   });
 
-  it("library mean curve normalizes to scale", () => {
+  it("library assigns one curve, scaled so the library's mean R₀ = scale", () => {
     const rate: InfectionRate = {
       type: "library",
       rates: [
@@ -81,16 +81,26 @@ describe("rateExplorer", () => {
           [0, 0],
           [4, 1],
           [8, 0],
-        ],
+        ], // area 4
         [
           [0, 0],
           [2, 2],
           [6, 0],
-        ],
+        ], // area 6
       ],
       scale: 2,
     };
-    expect(effectiveRateCurve(rate).total).toBeCloseTo(2, 6);
+    // Each assigned curve keeps its relative size: factor = scale / meanArea
+    // = 2 / 5. So per-person R₀ differs (4·0.4, 6·0.4)…
+    expect(effectiveRateCurve(rate, 0).total).toBeCloseTo(1.6, 6);
+    expect(effectiveRateCurve(rate, 1).total).toBeCloseTo(2.4, 6);
+    // …and the per-curve totals average to scale — heterogeneity preserved.
+    const mean =
+      (effectiveRateCurve(rate, 0).total + effectiveRateCurve(rate, 1).total) /
+      2;
+    expect(mean).toBeCloseTo(2, 6);
+    // Index wraps, so an out-of-range pick stays valid.
+    expect(effectiveRateCurve(rate, 2).total).toBeCloseTo(1.6, 6);
   });
 
   it("event markers sit on the dense c(t) polyline (not the sparse chords)", () => {
@@ -170,23 +180,22 @@ describe("rateExplorer", () => {
     expect(lognormal.d).toContain("truncated");
 
     const constant = rateFunctionDefs({ type: "constant", value: 0.5, duration: 3 });
-    expect(constant.r).toContain("flat");
+    expect(constant.r).toContain("r(t) = 0.5");
     expect(constant.d).toContain("c / 0.5");
   });
 
-  it("describeRate produces a human title + subtitle", () => {
+  it("describeRate produces a human title", () => {
     expect(describeRate({ type: "constant", value: 1, duration: 2 })).toEqual({
-      title: "Constant rate",
-      subtitle: "1 infection per day for 2 days",
+      title: "Constant rate of 1 infection per day for 2 days",
     });
-    // The distribution name is the (bold) title; params live on the subtitle.
+    // The distribution name and its params share one title line.
     const gamma = describeRate({
       type: "parametric",
       dist: { dist: "gamma", shape: 3, scale: 1.5 },
       duration: 12,
       scale: 3,
     });
-    expect(gamma.title).toBe("Gamma");
-    expect(gamma.subtitle).toContain("shape=3, scale=1.5");
+    expect(gamma.title).toContain("Gamma");
+    expect(gamma.title).toContain("shape=3, scale=1.5");
   });
 });

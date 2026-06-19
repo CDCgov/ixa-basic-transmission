@@ -12,10 +12,13 @@ test.describe("Rate explorer tab", () => {
     await page.goto("/");
     await page.getByRole("tab", { name: "Explore rate" }).click();
 
-    // Header reflects the default Constant rate.
+    // Header titles the explorer; the subtitle reflects the default Constant rate.
     await expect(
-      page.getByRole("heading", { name: "Constant rate" }),
+      page.getByRole("heading", { name: "Intrinsic Infectiousness" }),
     ).toBeVisible();
+    await expect(page.locator(".explorer-subtitle")).toContainText(
+      "Constant rate",
+    );
 
     // Empty until the first draw — no table yet.
     const draw = page.getByRole("button", { name: "Draw next" });
@@ -94,7 +97,7 @@ test.describe("Rate explorer tab", () => {
     await page.getByRole("tab", { name: "Explore rate" }).click();
 
     const toggle = page.getByRole("switch", { name: "Generalized" });
-    const title = page.getByRole("heading", { name: "Constant rate" });
+    const title = page.getByRole("heading", { name: "Intrinsic Infectiousness" });
     const subtitle = page.locator(".explorer-subtitle");
     await expect(toggle).toBeVisible();
 
@@ -128,7 +131,38 @@ test.describe("Rate explorer tab", () => {
     await page.getByRole("option", { name: "Parametric", exact: true }).click();
 
     await page.getByRole("tab", { name: "Explore rate" }).click();
-    await expect(page.getByRole("heading", { name: /Gamma/ })).toBeVisible();
+    await expect(page.locator(".explorer-subtitle")).toContainText("Gamma");
+  });
+
+  test("a shared rate notes every individual gets the same function", async ({
+    page,
+  }) => {
+    await page.goto("/");
+    await page.getByRole("tab", { name: "Explore rate" }).click();
+    await expect(page.locator(".explorer-note-text")).toHaveText(
+      "Every individual gets the same rate function.",
+    );
+  });
+
+  test("a library rate assigns a random curve, re-rollable via a button", async ({
+    page,
+  }) => {
+    await page.goto("/");
+    // Switch the rate to Library in the sidebar.
+    await page.getByRole("combobox", { name: "Infectiousness" }).click();
+    await page.getByRole("option", { name: "Library" }).click();
+
+    await page.getByRole("tab", { name: "Explore rate" }).click();
+
+    // The note explains each individual gets a random assigned curve.
+    const note = page.locator(".explorer-note-text");
+    await expect(note).toContainText("assigned a random curve");
+    const before = await note.textContent();
+
+    // Re-roll → a different assigned curve (the bundled library has 10, and
+    // the picker avoids repeating the current one).
+    await page.getByRole("button", { name: "New random curve" }).click();
+    await expect(note).not.toHaveText(before ?? "");
   });
 
   test("switching back to Simulate shows the charts", async ({ page }) => {
@@ -148,7 +182,7 @@ test.describe("Rate explorer tab", () => {
     // Reloading the /explore URL lands directly on the explorer.
     await page.reload();
     await expect(
-      page.getByRole("heading", { name: "Constant rate" }),
+      page.getByRole("heading", { name: "Intrinsic Infectiousness" }),
     ).toBeVisible();
 
     // Back to Simulate drops the /explore segment.

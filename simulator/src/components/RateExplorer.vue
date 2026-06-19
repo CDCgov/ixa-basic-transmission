@@ -14,9 +14,34 @@ import {
 
 const props = defineProps<{ modelValue: InfectionRate }>();
 
-const curve = computed(() => effectiveRateCurve(props.modelValue));
+// Library rates assign each person a random curve at setup; the explorer shows
+// one such assigned curve, re-rollable via "New random curve". The other rate
+// types are shared by every individual, so there's nothing to assign.
+const isLibrary = computed(() => props.modelValue.type === "library");
+const libraryCount = computed(() =>
+  props.modelValue.type === "library" ? props.modelValue.rates.length : 0,
+);
+const libraryIndex = ref(0);
+
+const curve = computed(() =>
+  effectiveRateCurve(props.modelValue, libraryIndex.value),
+);
 const desc = computed(() => describeRate(props.modelValue));
 const defs = computed(() => rateFunctionDefs(props.modelValue));
+
+/** A random curve index, preferring one different from the current pick. */
+function randomLibraryIndex(): number {
+  const n = libraryCount.value;
+  if (n <= 1) return 0;
+  let i = Math.floor(Math.random() * n);
+  if (i === libraryIndex.value) i = (i + 1) % n;
+  return i;
+}
+
+function assignRandomCurve() {
+  libraryIndex.value = randomLibraryIndex();
+  draws.value = []; // the assigned curve changed → drawn τ's no longer apply
+}
 
 // A constant rate is a homogeneous Poisson process: the gaps between events
 // are simply Exp(rate). By default we present it that way (gap ~ Exp(rate),
@@ -88,12 +113,19 @@ function reset() {
   draws.value = [];
 }
 
-// A new rate invalidates the drawn τ's (different Λ), so start fresh.
+// A new rate invalidates the drawn τ's (different Λ), so start fresh. When the
+// library's curve set changes (or we switch into a library rate) assign a fresh
+// random curve; plain scale edits keep the same assigned curve.
+let prevLibrarySig: string | null = null;
 watch(
   () => props.modelValue,
-  () => {
+  (rate) => {
     draws.value = [];
+    const sig = rate.type === "library" ? `library:${rate.rates.length}` : null;
+    if (sig && sig !== prevLibrarySig) libraryIndex.value = randomLibraryIndex();
+    prevLibrarySig = sig;
   },
+  { immediate: true },
 );
 
 function fmt(v: number): string {
@@ -214,21 +246,33 @@ function fmtTau(v: unknown): string {
 <template>
   <section class="explorer">
     <header class="explorer-header">
-      <h2>{{ desc.title }}</h2>
+      <h2>Intrinsic Infectiousness</h2>
       <div class="explorer-subline">
-        <p class="explorer-subtitle">{{ desc.subtitle }}</p>
+        <p class="explorer-subtitle">{{ desc.title }}</p>
         <!-- Constant rate only: switch the right panel between the simple
              homogeneous-Poisson view and the general inverse-CDF method. -->
         <Toggle v-if="isConstant" :model-value="generalized" label="Generalized"
           hint="Show the general inverse-CDF method (Λ⁻¹) instead of drawing gaps straight from Exp(rate)."
           class="explorer-mode-toggle" @update:model-value="(v: boolean) => (generalized = v)" />
       </div>
+      <!-- Library rates assign each person a random curve; everything else is
+           shared by all individuals. -->
+      <div class="explorer-note">
+        <template v-if="isLibrary">
+          <p class="explorer-note-text">
+            Each individual is assigned a random curve from the library — showing
+            curve #{{ libraryIndex + 1 }} of {{ libraryCount }} (R₀ ≈ {{ fmt(curve.total) }}).
+          </p>
+          <Button variant="secondary" @click="assignRandomCurve">New random curve</Button>
+        </template>
+        <p v-else class="explorer-note-text">Every individual gets the same rate function.</p>
+      </div>
     </header>
 
     <div class="explorer-grid">
       <!-- Left: the rate function λ(τ) and its area (= expected attempts). -->
       <div class="explorer-panel">
-        <h3>Infectiousness rate r(t)</h3>
+        <h3>Rate function r(t)</h3>
         <p class="explorer-hint">{{ defs.r }}</p>
         <LineChart :series="rateSeries" :areas="rateAreas" :height="240" :y-min="0" :menu="false"
           x-label="t (days since infected)" y-label="r(t)" tooltip-trigger="hover">
@@ -316,8 +360,7 @@ function fmtTau(v: unknown): string {
               <th>gap ~ Exp(rate)</th>
               <th>
                 τ = Σ
-                <Hint
-                  text="Event time since infection: the running sum of the gaps so far (τ = Σ gap)." />
+                <Hint text="Event time since infection: the running sum of the gaps so far (τ = Σ gap)." />
               </th>
             </tr>
             <tr v-else>
@@ -329,8 +372,7 @@ function fmtTau(v: unknown): string {
               </th>
               <th>
                 τ = Σ
-                <Hint
-                  text="Event time since infection: the running sum of the gaps so far (τ = Σ gap)." />
+                <Hint text="Event time since infection: the running sum of the gaps so far (τ = Σ gap)." />
               </th>
             </tr>
           </thead>
@@ -376,9 +418,11 @@ function fmtTau(v: unknown): string {
   flex-direction: column;
   gap: 0.2em;
 }
+
 .explorer-header h2 {
   margin: 0;
 }
+
 /* Subtitle and the (constant-rate) view toggle share a row, wrapping the
    toggle below the description when there isn't room beside it. */
 .explorer-subline {
@@ -388,11 +432,27 @@ function fmtTau(v: unknown): string {
   justify-content: space-between;
   gap: 0.4em 1em;
 }
+
 .explorer-mode-toggle {
   flex-shrink: 0;
 }
+
 .explorer-subtitle {
   margin: 0;
+  color: var(--color-text-secondary);
+}
+
+/* The per-rate note ("same rate function" / library assignment + re-roll). */
+.explorer-note {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4em 0.8em;
+}
+
+.explorer-note-text {
+  margin: 0;
+  font-size: var(--font-size-sm, 0.875rem);
   color: var(--color-text-secondary);
 }
 
