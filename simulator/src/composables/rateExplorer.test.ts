@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import type { InfectionRate } from "./infectionRate";
 import {
   effectiveRateCurve,
+  libraryOverlay,
   cumulativeRate,
   inverseCumulativeRate,
   sampledCumulative,
@@ -9,6 +10,15 @@ import {
   describeRate,
   rateFunctionDefs,
 } from "./rateExplorer";
+
+// Trapezoidal area under a polyline (x, y).
+function trapz(x: number[], y: number[]): number {
+  let a = 0;
+  for (let i = 1; i < x.length; i++) {
+    a += 0.5 * (y[i - 1] + y[i]) * (x[i] - x[i - 1]);
+  }
+  return a;
+}
 
 // Linear interpolation of a polyline (x, y) at xp — what a line chart draws.
 function interp(x: number[], y: number[], xp: number): number {
@@ -101,6 +111,36 @@ describe("rateExplorer", () => {
     expect(mean).toBeCloseTo(2, 6);
     // Index wraps, so an out-of-range pick stays valid.
     expect(effectiveRateCurve(rate, 2).total).toBeCloseTo(1.6, 6);
+  });
+
+  it("libraryOverlay normalizes every curve and the red mean to R₀", () => {
+    const rate: InfectionRate = {
+      type: "library",
+      rates: [
+        [
+          [0, 0],
+          [4, 1],
+          [8, 0],
+        ], // area 4, peak 1
+        [
+          [0, 0],
+          [2, 2],
+          [6, 0],
+        ], // area 6, peak 2
+      ],
+      scale: 2,
+    };
+    const o = libraryOverlay(rate);
+    expect(o.curves).toHaveLength(2);
+    // factor = scale / meanArea = 2 / 5 = 0.4 → peaks scale by 0.4.
+    expect(Math.max(...o.curves[0].lambda)).toBeCloseTo(0.4, 9);
+    expect(Math.max(...o.curves[1].lambda)).toBeCloseTo(0.8, 9);
+    // The red mean integrates to R₀ (= scale).
+    expect(trapz(o.mean.x, o.mean.data)).toBeCloseTo(2, 2);
+    // Non-library rates have no overlay.
+    expect(
+      libraryOverlay({ type: "constant", value: 1, duration: 2 }).curves,
+    ).toHaveLength(0);
   });
 
   it("event markers sit on the dense c(t) polyline (not the sparse chords)", () => {

@@ -159,6 +159,12 @@ test.describe("Rate explorer tab", () => {
     await expect(note).toContainText("assigned a random curve");
     const before = await note.textContent();
 
+    // The population overlay (all curves + red mean) renders below r(t).
+    const overlay = page.locator(".explorer-overlay");
+    await expect(overlay).toBeVisible();
+    await expect(overlay.getByText("Library curves")).toBeVisible();
+    await expect(overlay.locator("svg")).toBeVisible();
+
     // Re-roll → a different assigned curve (the bundled library has 10, and
     // the picker avoids repeating the current one).
     await page.getByRole("button", { name: "New random curve" }).click();

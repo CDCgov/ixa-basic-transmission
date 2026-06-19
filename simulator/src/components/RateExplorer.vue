@@ -5,6 +5,7 @@ import { LineChart } from "cfasim-ui/charts";
 import type { InfectionRate } from "../composables/infectionRate";
 import {
   effectiveRateCurve,
+  libraryOverlay,
   inverseCumulativeRate,
   sampledCumulative,
   expFromUniform,
@@ -135,6 +136,7 @@ function fmt(v: number): string {
 const BLUE = "#2563eb";
 const PURPLE = "#7c3aed";
 const GUIDE = "#9ca3af";
+const RED = "#dc2626";
 
 // Left: λ(τ) with the area underneath shaded (∫λ = R₀).
 const rateSeries = computed(() => [
@@ -149,6 +151,47 @@ const rateAreas = computed(() => [
     opacity: 0.18,
   },
 ]);
+
+// Library only: every per-person curve (faint blue) + the population mean
+// (red), with the currently-assigned curve drawn bold on top — same normalized
+// axes as the r(t) chart above. The mean is series[0] so the tooltip binds to
+// it (it spans the full τ range, unlike the individual curves).
+const overlaySeries = computed(() => {
+  const o = libraryOverlay(props.modelValue);
+  const series: Array<{
+    x: number[];
+    data: number[];
+    color: string;
+    opacity?: number;
+    strokeWidth?: number;
+    showInTooltip?: boolean;
+  }> = [];
+  if (o.mean.x.length) {
+    series.push({ x: o.mean.x, data: o.mean.data, color: RED, strokeWidth: 2 });
+  }
+  o.curves.forEach((c, i) => {
+    if (i === libraryIndex.value) return; // the assigned curve is drawn on top
+    series.push({
+      x: c.x,
+      data: c.lambda,
+      color: BLUE,
+      opacity: 0.22,
+      strokeWidth: 1,
+      showInTooltip: false,
+    });
+  });
+  const assigned = o.curves[libraryIndex.value];
+  if (assigned) {
+    series.push({
+      x: assigned.x,
+      data: assigned.lambda,
+      color: BLUE,
+      strokeWidth: 2,
+      showInTooltip: false,
+    });
+  }
+  return series;
+});
 
 // Right: Λ(τ) plus event markers and guide lines for the latest draw,
 // showing how an Exp(1) increment on the y-axis inverts to a τ on the x.
@@ -283,6 +326,26 @@ function fmtTau(v: unknown): string {
             </div>
           </template>
         </LineChart>
+
+        <!-- Library only: the whole population of curves with the mean in red,
+             so the assigned curve above can be read in context. -->
+        <div v-if="isLibrary" class="explorer-overlay">
+          <h4>Library curves <span class="explorer-overlay-mean">(mean)</span></h4>
+          <p class="explorer-hint">
+            Every per-person curve in the library, with the population mean in
+            <span class="explorer-overlay-mean">red</span>. The bold blue curve
+            is the one assigned above.
+          </p>
+          <LineChart :series="overlaySeries" :height="180" :y-min="0" :menu="false"
+            x-label="t (days since infected)" y-label="r(t)" tooltip-trigger="hover">
+            <template #tooltip="{ xLabel, values }">
+              <div class="explorer-tooltip">
+                <div v-if="xLabel != null">t = {{ fmtTau(xLabel) }}</div>
+                <div>mean = {{ fmtTau(values[0]?.value) }}</div>
+              </div>
+            </template>
+          </LineChart>
+        </div>
       </div>
 
       <!-- Right: inverse-CDF sampling. Draw Exp(1) deltas, accumulate them,
@@ -487,6 +550,24 @@ function fmtTau(v: unknown): string {
 .explorer-panel h3 {
   margin: 0;
   font-size: var(--font-size-md, 1rem);
+}
+
+.explorer-overlay {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4em;
+  margin-top: 0.8em;
+  padding-top: 0.8em;
+  border-top: 1px solid var(--color-border);
+}
+
+.explorer-overlay h4 {
+  margin: 0;
+  font-size: var(--font-size-md, 1rem);
+}
+
+.explorer-overlay-mean {
+  color: #dc2626;
 }
 
 .explorer-hint {

@@ -43,6 +43,22 @@ function area(x: number[], y: number[]): number {
   return cum[cum.length - 1] ?? 0;
 }
 
+/** Linear interpolation of a piecewise-linear curve at τ; 0 outside its range. */
+function rateAt(curve: [number, number][], t: number): number {
+  if (!curve.length) return 0;
+  if (t < curve[0][0] || t > curve[curve.length - 1][0]) return 0;
+  for (let i = 1; i < curve.length; i++) {
+    const [t0, r0] = curve[i - 1];
+    const [t1, r1] = curve[i];
+    if (t <= t1) {
+      const span = t1 - t0;
+      if (span === 0) return r1;
+      return r0 + ((t - t0) / span) * (r1 - r0);
+    }
+  }
+  return 0;
+}
+
 /**
  * Mean curve-area across a library (= ∫ of the pointwise mean, by linearity).
  * The model normalizes this mean to R₀, leaving each person's curve at its own
@@ -119,6 +135,49 @@ export function effectiveRateCurve(
     duration: x[x.length - 1] ?? 0,
     total: cum[cum.length - 1] ?? 0,
   };
+}
+
+export interface LibraryOverlay {
+  /** Each library curve, on the same normalized scale as `effectiveRateCurve`. */
+  curves: { x: number[]; lambda: number[] }[];
+  /** Pointwise mean of the normalized curves (red overlay); its area = R₀. */
+  mean: { x: number[]; data: number[] };
+}
+
+const OVERLAY_MEAN_SAMPLES = 101;
+
+/**
+ * Every per-person curve in a Library, plus their pointwise mean — all scaled
+ * by the same `scale / mean-library-area` factor `effectiveRateCurve` uses, so
+ * the overlay sits on the same axes as the assigned-curve chart and the red
+ * mean integrates to R₀. Empty for non-Library / empty rates.
+ */
+export function libraryOverlay(rate: InfectionRate): LibraryOverlay {
+  if (rate.type !== "library" || !rate.rates.length) {
+    return { curves: [], mean: { x: [], data: [] } };
+  }
+  const meanArea = libraryMeanArea(rate.rates);
+  const factor = meanArea > 0 ? rate.scale / meanArea : 0;
+  const curves = rate.rates.map((c) => ({
+    x: c.map((p) => p[0]),
+    lambda: c.map((p) => p[1] * factor),
+  }));
+
+  let tMax = 0;
+  for (const c of rate.rates) {
+    const last = c[c.length - 1]?.[0] ?? 0;
+    if (last > tMax) tMax = last;
+  }
+  const x: number[] = [];
+  const data: number[] = [];
+  for (let i = 0; i < OVERLAY_MEAN_SAMPLES; i++) {
+    const t = tMax > 0 ? (tMax * i) / (OVERLAY_MEAN_SAMPLES - 1) : 0;
+    x.push(t);
+    let sum = 0;
+    for (const c of rate.rates) sum += rateAt(c, t);
+    data.push((sum / rate.rates.length) * factor);
+  }
+  return { curves, mean: { x, data } };
 }
 
 /** Λ(τ) — cumulative hazard at time `t` (linear within a segment). */
