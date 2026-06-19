@@ -73,6 +73,13 @@ pub fn apply(params: &CalibratedParams, base: &mut Parameters) {
             rates: rates.clone(),
             scale: params.r0,
         },
+        // Same `scale = r0` contract as Empirical/Library (the shape is fixed;
+        // r0 maps onto the scale). Lowered to Empirical when the model runs.
+        InfectionRate::Parametric { dist, duration, .. } => InfectionRate::Parametric {
+            dist: dist.clone(),
+            duration: *duration,
+            scale: params.r0,
+        },
     };
 }
 

@@ -12,12 +12,12 @@ test.describe("Rate preview", () => {
     await expect(preview.locator("svg")).toBeVisible();
   });
 
-  test("re-renders with dots when switching to Time-varying", async ({
+  test("re-renders with dots when switching to Empirical", async ({
     page,
   }) => {
     await page.goto("/");
     await page.getByRole("combobox", { name: "Infectiousness" }).click();
-    await page.getByRole("option", { name: "Time-varying" }).click();
+    await page.getByRole("option", { name: "Empirical", exact: true }).click();
     const preview = page.locator(".rate-preview");
     // 5 default anchors → 5 dot circles. LineChart draws each dot as a
     // <circle> with the series color (#2563eb in our config).

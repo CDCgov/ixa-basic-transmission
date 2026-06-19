@@ -11,7 +11,23 @@
 export type InfectionRate =
   | { type: "constant"; value: number; duration: number }
   | { type: "empirical"; points: [number, number][]; scale: number }
-  | { type: "library"; rates: [number, number][][]; scale: number };
+  | { type: "library"; rates: [number, number][][]; scale: number }
+  | {
+      type: "parametric";
+      dist: ParametricDist;
+      duration: number;
+      scale: number;
+    };
+
+// A parametric infectiousness shape, mirroring Rust's `ParametricDist`.
+// The kernel is the density up to a constant — the model area-normalizes at
+// runtime so `scale` reads as the expected R₀ (same as Empirical). The wasm
+// side lowers `parametric` to an `empirical` grid before simulating; this
+// type exists so the UI/URL/preset can round-trip the compact form.
+export type ParametricDist =
+  | { dist: "gamma"; shape: number; scale: number }
+  | { dist: "lognormal"; mu: number; sigma: number }
+  | { dist: "weibull"; shape: number; scale: number };
 
 // Used when switching Constant → Empirical from a UI with no curve yet.
 // Values are raw shape — Rust's `normalize::normalize_to_r0` rescales
@@ -37,6 +53,57 @@ export const DEFAULT_CONSTANT: InfectionRate = {
 /// area = 1), `scale` is the expected R₀ under random mixing.
 export const DEFAULT_R0_SCALE = 3.0;
 
+/// Default distribution when switching to the parametric variant: a
+/// Gamma(shape 3, scale 1.5) → mean 4.5, most mass within ~12 days.
+export const DEFAULT_PARAMETRIC_DIST: ParametricDist = {
+  dist: "gamma",
+  shape: 3,
+  scale: 1.5,
+};
+/// Default truncation / recovery time for the parametric variant.
+export const DEFAULT_PARAMETRIC_DURATION = 12;
+/// Grid resolution for sampling the kernel into a preview / lowered curve.
+/// Matches Rust's `PARAMETRIC_GRID` so the JS preview tracks the simulated
+/// shape.
+export const PARAMETRIC_GRID = 128;
+
+/// Unnormalized density at τ — mirrors Rust's `ParametricDist::kernel`.
+/// Zero for τ ≤ 0 and for any non-finite evaluation (the area
+/// normalization absorbs the dropped constant + clipped singularities).
+export function parametricKernel(d: ParametricDist, t: number): number {
+  if (t <= 0) return 0;
+  let v: number;
+  switch (d.dist) {
+    case "gamma":
+      v = Math.pow(t, d.shape - 1) * Math.exp(-t / d.scale);
+      break;
+    case "lognormal": {
+      const z = (Math.log(t) - d.mu) / d.sigma;
+      v = (1 / t) * Math.exp(-0.5 * z * z);
+      break;
+    }
+    case "weibull":
+      v = Math.pow(t, d.shape - 1) * Math.exp(-Math.pow(t / d.scale, d.shape));
+      break;
+  }
+  return Number.isFinite(v) ? v : 0;
+}
+
+/// Sample the kernel on a grid over `[0, duration]` — the same lowering the
+/// wasm side does, used here for the chart preview.
+export function parametricPoints(
+  d: ParametricDist,
+  duration: number,
+  n: number = PARAMETRIC_GRID,
+): [number, number][] {
+  const pts: [number, number][] = [];
+  for (let i = 0; i < n; i++) {
+    const t = (duration * i) / (n - 1);
+    pts.push([t, parametricKernel(d, t)]);
+  }
+  return pts;
+}
+
 /// Last anchor's time = the deterministic infectious duration for Empirical.
 export function empiricalDuration(rate: InfectionRate): number {
   if (rate.type !== "empirical" || rate.points.length === 0) return 0;
@@ -54,6 +121,11 @@ function expectedAttempts(rate: InfectionRate): number {
   }
   if (rate.type === "library") {
     return rate.rates.length ? rate.scale : 0;
+  }
+  // Parametric (lowered to a unit-area curve) and Empirical both read as
+  // `scale` under random mixing.
+  if (rate.type === "parametric") {
+    return rate.scale;
   }
   return rate.points.length ? rate.scale : 0;
 }
@@ -91,15 +163,29 @@ export function expectedR0(
 /// here — the library payload lives in `virtual:rateLibrary`).
 export function withRateType(
   current: InfectionRate,
-  next: "constant" | "empirical" | "library",
+  next: "constant" | "empirical" | "library" | "parametric",
   defaultLibrary?: [number, number][][],
 ): InfectionRate {
   if (next === current.type) return current;
+  // Best-effort carry-over of the infectious-period length.
+  const currentDuration =
+    current.type === "parametric"
+      ? current.duration
+      : empiricalDuration(current) ||
+        (current.type === "constant" ? current.duration : 0);
   if (next === "constant") {
     return {
       type: "constant",
       value: 0.5,
-      duration: empiricalDuration(current) || 3.0,
+      duration: currentDuration || 3.0,
+    };
+  }
+  if (next === "parametric") {
+    return {
+      type: "parametric",
+      dist: { ...DEFAULT_PARAMETRIC_DIST },
+      duration: currentDuration || DEFAULT_PARAMETRIC_DURATION,
+      scale: DEFAULT_R0_SCALE,
     };
   }
   // Both curve variants are area-normalized so `scale` reads as the
@@ -178,6 +264,9 @@ export function normalizeInfectionRate(rate: InfectionRate): InfectionRate {
   const scale = Number.isFinite(rate.scale) ? rate.scale : 1.0;
   if (rate.type === "empirical") {
     return { type: "empirical", points: rate.points, scale };
+  }
+  if (rate.type === "parametric") {
+    return { type: "parametric", dist: rate.dist, duration: rate.duration, scale };
   }
   return { type: "library", rates: rate.rates, scale };
 }

@@ -14,6 +14,7 @@ import type { SettingType } from "./settings";
 ///                                 `normalize_to_r0`)
 ///   - `Library`   → `scale = r0` (same normalization, applied to the
 ///                                 mean curve)
+///   - `Parametric` → `scale = r0` (lowered to a unit-area curve at runtime)
 export function withR0(rate: InfectionRate, r0: number): InfectionRate {
   if (rate.type === "constant") {
     return { type: "constant", value: r0 / rate.duration, duration: rate.duration };

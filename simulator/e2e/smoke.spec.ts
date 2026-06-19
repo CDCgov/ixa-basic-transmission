@@ -84,11 +84,11 @@ test.describe("Simulator smoke", () => {
     page,
   }) => {
     await page.goto("/");
-    // Switching from Constant → Time-varying should write
+    // Switching from Constant → Empirical should write
     // `infectionRate=<json>` into the URL (the tagged-union codec).
     const rateType = page.getByRole("combobox", { name: "Infectiousness" });
     await rateType.click();
-    await page.getByRole("option", { name: "Time-varying" }).click();
+    await page.getByRole("option", { name: "Empirical", exact: true }).click();
     await expect(page).toHaveURL(/infectionRate=.*empirical/);
 
     // Library mode serializes a compact `{"type":"library","scale":…}`

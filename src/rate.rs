@@ -40,10 +40,137 @@ pub enum InfectionRate {
         #[serde(default = "default_scale")]
         scale: f64,
     },
+    /// Parametric time-varying shape: λ(τ) = `scale` · g(τ), where g is the
+    /// density of `dist` truncated to `[0, duration]`. **Lowered to
+    /// `Empirical` at model entry** (`materialize_parametric`) by sampling
+    /// the kernel on a grid, so the whole pipeline downstream is identical to
+    /// `Empirical`. `normalize_to_r0` then sets the curve area to 1, so
+    /// `scale` is the expected R₀ under random mixing — same contract as
+    /// `Empirical`. `duration` is the truncation point and the deterministic
+    /// recovery time.
+    Parametric {
+        dist: ParametricDist,
+        duration: f64,
+        #[serde(default = "default_scale")]
+        scale: f64,
+    },
 }
 
 fn default_scale() -> f64 {
     1.0
+}
+
+/// Number of grid anchors `materialize_parametric` samples the kernel at over
+/// `[0, duration]`. A smooth density is captured well at this resolution; the
+/// per-event curve walk is ~3 ns regardless (see `benches/run.rs`).
+pub const PARAMETRIC_GRID: usize = 128;
+
+/// A parametric infectiousness shape. Each variant's [`kernel`](Self::kernel)
+/// is the distribution's density **up to a multiplicative constant** — the
+/// model normalizes the curve area to 1 (`normalize_to_r0`), so the
+/// normalizing constant (and any special functions, e.g. `Γ`, it would need)
+/// cancels out and never has to be computed. Parameters use the standard
+/// conventions noted per variant.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(
+    tag = "dist",
+    rename_all = "lowercase",
+    rename_all_fields = "camelCase"
+)]
+pub enum ParametricDist {
+    /// Gamma with shape `k` and scale `θ`. Kernel `τ^(k−1)·e^(−τ/θ)`; mean `kθ`.
+    Gamma { shape: f64, scale: f64 },
+    /// Lognormal with log-space mean `mu` and SD `sigma` (`sigma > 0`).
+    /// Kernel `(1/τ)·e^(−(ln τ − mu)² / (2·sigma²))`.
+    Lognormal { mu: f64, sigma: f64 },
+    /// Weibull with shape `k` and scale `λ`. Kernel `τ^(k−1)·e^(−(τ/λ)^k)`.
+    Weibull { shape: f64, scale: f64 },
+}
+
+impl ParametricDist {
+    /// Unnormalized density at `τ`. Zero for `τ ≤ 0` (and for any non-finite
+    /// evaluation, e.g. the integrable singularity at 0 when `shape < 1`),
+    /// which the area normalization then absorbs.
+    #[inline]
+    #[must_use]
+    pub fn kernel(&self, t: f64) -> f64 {
+        if t <= 0.0 {
+            return 0.0;
+        }
+        let v = match *self {
+            ParametricDist::Gamma { shape, scale } => t.powf(shape - 1.0) * (-t / scale).exp(),
+            ParametricDist::Lognormal { mu, sigma } => {
+                let z = (t.ln() - mu) / sigma;
+                (1.0 / t) * (-0.5 * z * z).exp()
+            }
+            ParametricDist::Weibull { shape, scale } => {
+                t.powf(shape - 1.0) * (-(t / scale).powf(shape)).exp()
+            }
+        };
+        if v.is_finite() {
+            v
+        } else {
+            0.0
+        }
+    }
+
+    /// Sample the kernel on `PARAMETRIC_GRID` anchors over `[0, duration]`.
+    fn points(&self, duration: f64) -> Vec<[f64; 2]> {
+        let n = PARAMETRIC_GRID;
+        (0..n)
+            .map(|i| {
+                let t = duration * (i as f64) / ((n - 1) as f64);
+                [t, self.kernel(t)]
+            })
+            .collect()
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        let check = |name: &str, x: f64, strictly_positive: bool| {
+            if !x.is_finite() || x < 0.0 || (strictly_positive && x <= 0.0) {
+                Err(format!(
+                    "parametric {name} must be a finite {}, got {x}",
+                    if strictly_positive {
+                        "positive number"
+                    } else {
+                        "non-negative number"
+                    }
+                ))
+            } else {
+                Ok(())
+            }
+        };
+        match *self {
+            ParametricDist::Gamma { shape, scale } | ParametricDist::Weibull { shape, scale } => {
+                check("shape", shape, true)?;
+                check("scale", scale, true)?;
+            }
+            ParametricDist::Lognormal { mu, sigma } => {
+                if !mu.is_finite() {
+                    return Err(format!("parametric mu must be finite, got {mu}"));
+                }
+                check("sigma", sigma, true)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Lower a `Parametric` rate to the equivalent `Empirical` curve by sampling
+/// its kernel on a grid. No-op for every other variant. Call once at model
+/// entry, **before** `normalize_to_r0` (which then makes the curve area 1, so
+/// `scale = R₀`). Idempotent in effect — once lowered the rate is `Empirical`.
+pub fn materialize_parametric(rate: &mut InfectionRate) {
+    if let InfectionRate::Parametric {
+        dist,
+        duration,
+        scale,
+    } = rate
+    {
+        let points = dist.points(*duration);
+        let scale = *scale;
+        *rate = InfectionRate::Empirical { points, scale };
+    }
 }
 
 /// Cumulative hazard `Λ(τ)` for a single piecewise-linear empirical
@@ -355,6 +482,11 @@ impl InfectionRate {
             InfectionRate::Constant { value, .. } => *value,
             InfectionRate::Empirical { points, scale } => scale * rate_at_curve(points, t),
             InfectionRate::Library { .. } => 0.0,
+            InfectionRate::Parametric {
+                dist,
+                duration,
+                scale,
+            } => scale * rate_at_curve(&dist.points(*duration), t),
         }
     }
 
@@ -372,6 +504,11 @@ impl InfectionRate {
             InfectionRate::Library { .. } => {
                 panic!("cum_rate called on Library variant; use the per-person curve")
             }
+            InfectionRate::Parametric {
+                dist,
+                duration,
+                scale,
+            } => scale * empirical_cum_rate(&dist.points(*duration), t),
         }
     }
 
@@ -403,6 +540,16 @@ impl InfectionRate {
             InfectionRate::Library { .. } => {
                 panic!("inverse_cum_rate called on Library variant; use the per-person curve")
             }
+            InfectionRate::Parametric {
+                dist,
+                duration,
+                scale,
+            } => {
+                if *scale <= 0.0 {
+                    return None;
+                }
+                empirical_inverse_cum_rate(&dist.points(*duration), c / scale)
+            }
         }
     }
 
@@ -422,6 +569,7 @@ impl InfectionRate {
                 let total: f64 = rates.iter().map(|r| empirical_curve_duration(r)).sum();
                 total / rates.len() as f64
             }
+            InfectionRate::Parametric { duration, .. } => *duration,
         }
     }
 
@@ -452,6 +600,19 @@ impl InfectionRate {
                 for (i, curve) in rates.iter().enumerate() {
                     validate_empirical_points(curve)
                         .map_err(|e| format!("infection_rate library curve #{i}: {e}"))?;
+                }
+                validate_scale(*scale)?;
+            }
+            InfectionRate::Parametric {
+                dist,
+                duration,
+                scale,
+            } => {
+                dist.validate()?;
+                if !duration.is_finite() || *duration <= 0.0 {
+                    return Err(format!(
+                        "infection_rate parametric duration must be a finite positive number, got {duration}"
+                    ));
                 }
                 validate_scale(*scale)?;
             }
@@ -890,5 +1051,140 @@ mod tests {
         assert_eq!(curve.duration(), 7.3);
         let empty = Curve::new(vec![]);
         assert_eq!(empty.duration(), 0.0);
+    }
+
+    // --- Parametric (distribution-based time-varying rate) ------------
+
+    #[test]
+    fn parametric_kernels_match_closed_forms() {
+        // Gamma(shape=1): kernel = e^{-t/scale}. At t=2, scale=2 → e^{-1}.
+        let g = ParametricDist::Gamma {
+            shape: 1.0,
+            scale: 2.0,
+        };
+        assert!((g.kernel(2.0) - (-1.0_f64).exp()).abs() < 1e-12);
+        // Lognormal(mu=0, sigma=1): kernel = (1/t)·e^{-(ln t)²/2}. At t=1 → 1.
+        let ln = ParametricDist::Lognormal {
+            mu: 0.0,
+            sigma: 1.0,
+        };
+        assert!((ln.kernel(1.0) - 1.0).abs() < 1e-12);
+        // Weibull(shape=2, scale=1): kernel = t·e^{-t²}. At t=1 → e^{-1}.
+        let w = ParametricDist::Weibull {
+            shape: 2.0,
+            scale: 1.0,
+        };
+        assert!((w.kernel(1.0) - (-1.0_f64).exp()).abs() < 1e-12);
+        // Zero (and non-finite) for τ ≤ 0.
+        assert_eq!(g.kernel(0.0), 0.0);
+        assert_eq!(ln.kernel(-1.0), 0.0);
+    }
+
+    #[test]
+    fn parametric_validate_rejects_bad_params() {
+        assert!(ParametricDist::Gamma {
+            shape: 0.0,
+            scale: 1.0
+        }
+        .validate()
+        .is_err());
+        assert!(ParametricDist::Weibull {
+            shape: 1.0,
+            scale: -1.0
+        }
+        .validate()
+        .is_err());
+        assert!(ParametricDist::Lognormal {
+            mu: 0.0,
+            sigma: 0.0
+        }
+        .validate()
+        .is_err());
+        assert!(ParametricDist::Lognormal {
+            mu: f64::NAN,
+            sigma: 1.0
+        }
+        .validate()
+        .is_err());
+        // A non-positive duration is rejected at the InfectionRate level.
+        let bad_dur = InfectionRate::Parametric {
+            dist: ParametricDist::Gamma {
+                shape: 2.0,
+                scale: 1.0,
+            },
+            duration: 0.0,
+            scale: 1.0,
+        };
+        assert!(bad_dur.validate().is_err());
+    }
+
+    #[test]
+    fn materialize_parametric_lowers_to_empirical_curve() {
+        let mut r = InfectionRate::Parametric {
+            dist: ParametricDist::Gamma {
+                shape: 2.0,
+                scale: 2.0,
+            },
+            duration: 12.0,
+            scale: 2.5,
+        };
+        materialize_parametric(&mut r);
+        match &r {
+            InfectionRate::Empirical { points, scale } => {
+                assert_eq!(points.len(), PARAMETRIC_GRID);
+                assert_eq!(points[0][0], 0.0);
+                assert!((points.last().unwrap()[0] - 12.0).abs() < 1e-12);
+                // Scale is carried through untouched (normalize sets R₀ later).
+                assert_eq!(*scale, 2.5);
+                // Times strictly increasing.
+                assert!(points.windows(2).all(|w| w[1][0] > w[0][0]));
+            }
+            _ => panic!("Parametric should lower to Empirical"),
+        }
+        // Idempotent: a second call is a no-op (already Empirical).
+        let again = r.clone();
+        materialize_parametric(&mut r);
+        assert_eq!(r, again);
+    }
+
+    #[test]
+    fn parametric_serde_roundtrip_json() {
+        let r = InfectionRate::Parametric {
+            dist: ParametricDist::Weibull {
+                shape: 2.0,
+                scale: 3.0,
+            },
+            duration: 15.0,
+            scale: 1.0,
+        };
+        let json = serde_json::to_string(&r).unwrap();
+        assert!(json.contains("\"type\":\"parametric\""));
+        assert!(json.contains("\"dist\":\"weibull\""));
+        let back: InfectionRate = serde_json::from_str(&json).unwrap();
+        assert_eq!(r, back);
+    }
+
+    #[test]
+    fn parametric_enum_math_matches_lowered_empirical() {
+        // The enum's cum/inverse for Parametric must agree with the Empirical
+        // it lowers to (same kernel grid, same scale).
+        let dist = ParametricDist::Gamma {
+            shape: 3.0,
+            scale: 1.5,
+        };
+        let para = InfectionRate::Parametric {
+            dist: dist.clone(),
+            duration: 14.0,
+            scale: 2.0,
+        };
+        let mut lowered = para.clone();
+        materialize_parametric(&mut lowered);
+        for t in [0.5, 2.0, 5.0, 9.0, 14.0] {
+            assert!((para.cum_rate(t) - lowered.cum_rate(t)).abs() < 1e-12);
+            assert!((para.rate_at(t) - lowered.rate_at(t)).abs() < 1e-12);
+        }
+        for c in [0.1, 0.5, 1.0, 1.9] {
+            assert_eq!(para.inverse_cum_rate(c), lowered.inverse_cum_rate(c));
+        }
     }
 }

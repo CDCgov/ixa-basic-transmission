@@ -88,6 +88,10 @@ impl InfectionLoop for Context {
                 let rate_id = self.get_property::<_, AssignedRate>(p);
                 self.get_data(RateLibraryPlugin).curve(rate_id).duration()
             }
+            // Lowered to `Empirical` at `run`/`setup_only` entry; never seen here.
+            InfectionRate::Parametric { .. } => {
+                unreachable!("Parametric is materialized to Empirical before setup")
+            }
         };
         let recovery_time = t_inf + recovery_dt;
         self.add_plan(recovery_time, move |context| {
@@ -113,6 +117,10 @@ impl InfectionLoop for Context {
                     curve,
                     scale: *scale,
                 }
+            }
+            // Lowered to `Empirical` at `run`/`setup_only` entry; never seen here.
+            InfectionRate::Parametric { .. } => {
+                unreachable!("Parametric is materialized to Empirical before setup")
             }
         }
     }
@@ -307,6 +315,10 @@ pub fn run(params: Parameters) -> ModelStats {
     // mixing — the model owns this contract so it holds for every
     // caller (wasm UI, benchmarks, future external embedders).
     let mut params = params;
+    // Lower a `Parametric` rate to its `Empirical` curve first, so the rest
+    // of the pipeline (normalize, setup, hot path) only ever sees the three
+    // concrete variants. `normalize_to_r0` then makes `scale = R₀`.
+    crate::rate::materialize_parametric(&mut params.infection_rate);
     crate::normalize::normalize_to_r0(&mut params.infection_rate);
     let mut ctx = Context::new();
     ctx.set_global_property_value(Params, params).unwrap();
@@ -323,6 +335,10 @@ pub fn run(params: Parameters) -> ModelStats {
 pub fn setup_only(params: Parameters) {
     params.validate().expect("invalid Parameters");
     let mut params = params;
+    // Lower a `Parametric` rate to its `Empirical` curve first, so the rest
+    // of the pipeline (normalize, setup, hot path) only ever sees the three
+    // concrete variants. `normalize_to_r0` then makes `scale = R₀`.
+    crate::rate::materialize_parametric(&mut params.infection_rate);
     crate::normalize::normalize_to_r0(&mut params.infection_rate);
     let mut ctx = Context::new();
     ctx.set_global_property_value(Params, params).unwrap();
@@ -358,6 +374,35 @@ mod tests {
             stats.cum_incidence() > 0,
             "default params should produce some infections"
         );
+    }
+
+    #[test]
+    fn parametric_run_matches_lowered_empirical_run() {
+        // A Parametric rate is lowered to its Empirical grid at run entry, so
+        // running it must be bit-for-bit identical to running the Empirical
+        // curve it lowers to (same points, same seed → same RNG stream).
+        let para = Parameters {
+            infection_rate: InfectionRate::Parametric {
+                dist: crate::rate::ParametricDist::Gamma {
+                    shape: 3.0,
+                    scale: 1.5,
+                },
+                duration: 14.0,
+                scale: 2.0,
+            },
+            ..Parameters::default()
+        };
+        let mut lowered = para.clone();
+        crate::rate::materialize_parametric(&mut lowered.infection_rate);
+        // Sanity: lowering really produced an Empirical curve.
+        assert!(matches!(
+            lowered.infection_rate,
+            InfectionRate::Empirical { .. }
+        ));
+        let a = run(para);
+        let b = run(lowered);
+        assert_eq!(a.cum_incidence(), b.cum_incidence());
+        assert_eq!(a.timeseries(50.0), b.timeseries(50.0));
     }
 
     // Kolmogorov-Smirnov statistic against a theoretical CDF. Returns the

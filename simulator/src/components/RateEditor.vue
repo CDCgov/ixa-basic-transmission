@@ -6,6 +6,7 @@ import { LineChart } from "cfasim-ui/charts";
 import defaultLibrary from "virtual:rateLibrary";
 import {
   type InfectionRate,
+  type ParametricDist,
   empiricalDuration,
   expectedR0,
   withRateType,
@@ -13,6 +14,8 @@ import {
   withPointAdded,
   withPointRemoved,
   parseRateLibraryCsv,
+  parametricPoints,
+  DEFAULT_PARAMETRIC_DIST,
   DEFAULT_R0_SCALE,
 } from "../composables/infectionRate";
 
@@ -26,9 +29,24 @@ const emit = defineEmits<{
 
 const rateTypeOptions: SelectOption[] = [
   { value: "constant", label: "Constant" },
-  { value: "empirical", label: "Time-varying" },
+  { value: "parametric", label: "Parametric" },
+  { value: "empirical", label: "Empirical" },
   { value: "library", label: "Library" },
 ];
+
+const distTypeOptions: SelectOption[] = [
+  { value: "gamma", label: "Gamma" },
+  { value: "lognormal", label: "Lognormal" },
+  { value: "weibull", label: "Weibull" },
+];
+
+// Default params seeded when switching distribution family, so each swap
+// lands on a sensible shape rather than carrying mismatched fields.
+const DIST_DEFAULTS: Record<ParametricDist["dist"], ParametricDist> = {
+  gamma: { dist: "gamma", shape: 3, scale: 1.5 },
+  lognormal: { dist: "lognormal", mu: 1.4, sigma: 0.5 },
+  weibull: { dist: "weibull", shape: 2, scale: 5 },
+};
 
 // Two-way bridges for the constant-mode sliders. Each setter emits a
 // fresh `Constant` object so the parent's reactivity picks up the
@@ -66,21 +84,78 @@ const empiricalPoints = computed<[number, number][]>(() =>
 
 const empiricalRecoveryAt = computed(() => empiricalDuration(props.modelValue));
 
-// Shared `scale` two-way binding for both Empirical and Library variants
-// (Constant has no scale — the slider isn't mounted there).
+// Shared `scale` two-way binding for the Empirical, Library, and Parametric
+// variants (Constant has no scale — the slider isn't mounted there).
 const rateScale = computed<number>({
   get: () =>
-    props.modelValue.type === "empirical" || props.modelValue.type === "library"
+    props.modelValue.type === "empirical" ||
+    props.modelValue.type === "library" ||
+    props.modelValue.type === "parametric"
       ? props.modelValue.scale
       : 1,
   set: (s) => {
-    if (props.modelValue.type === "empirical") {
-      emit("update:modelValue", { ...props.modelValue, scale: s });
-    } else if (props.modelValue.type === "library") {
+    if (
+      props.modelValue.type === "empirical" ||
+      props.modelValue.type === "library" ||
+      props.modelValue.type === "parametric"
+    ) {
       emit("update:modelValue", { ...props.modelValue, scale: s });
     }
   },
 });
+
+// --- Parametric (distribution-based) bindings -----------------------------
+const parametricDist = computed<ParametricDist>(() =>
+  props.modelValue.type === "parametric"
+    ? props.modelValue.dist
+    : DEFAULT_PARAMETRIC_DIST,
+);
+
+const parametricDuration = computed<number>({
+  get: () =>
+    props.modelValue.type === "parametric" ? props.modelValue.duration : 0,
+  set: (d) => {
+    if (props.modelValue.type !== "parametric") return;
+    emit("update:modelValue", { ...props.modelValue, duration: d });
+  },
+});
+
+// Per-family editable fields (label + key), so the template renders the
+// right inputs for the selected distribution.
+const distParamFields = computed<
+  { key: string; label: string; value: number; step: number }[]
+>(() => {
+  const d = parametricDist.value;
+  if (d.dist === "lognormal") {
+    return [
+      { key: "mu", label: "μ (log-mean)", value: d.mu, step: 0.1 },
+      { key: "sigma", label: "σ (log-SD)", value: d.sigma, step: 0.05 },
+    ];
+  }
+  // gamma and weibull share shape + scale.
+  return [
+    { key: "shape", label: "Shape", value: d.shape, step: 0.1 },
+    { key: "scale", label: "Scale", value: d.scale, step: 0.1 },
+  ];
+});
+
+function setDistType(next: string) {
+  if (props.modelValue.type !== "parametric") return;
+  const key = next as ParametricDist["dist"];
+  if (!(key in DIST_DEFAULTS)) return;
+  emit("update:modelValue", {
+    ...props.modelValue,
+    dist: { ...DIST_DEFAULTS[key] },
+  });
+}
+
+function setDistParam(key: string, value: number) {
+  if (props.modelValue.type !== "parametric" || !Number.isFinite(value)) return;
+  emit("update:modelValue", {
+    ...props.modelValue,
+    dist: { ...props.modelValue.dist, [key]: value },
+  });
+}
 
 const libraryRates = computed<[number, number][][]>(() =>
   props.modelValue.type === "library" ? props.modelValue.rates : [],
@@ -115,7 +190,12 @@ function nextPage() {
 }
 
 function setRateType(next: string) {
-  if (next !== "constant" && next !== "empirical" && next !== "library") {
+  if (
+    next !== "constant" &&
+    next !== "empirical" &&
+    next !== "library" &&
+    next !== "parametric"
+  ) {
     return;
   }
   if (next === "library") {
@@ -222,6 +302,19 @@ const previewSeries = computed(() => {
         color: "#2563eb",
         strokeWidth: 2,
         dots: true,
+      },
+    ];
+  }
+  if (rate.type === "parametric") {
+    // Sample the kernel — the same shape the model lowers to. Drawn as a
+    // smooth line (no dots: the grid is dense).
+    const pts = parametricPoints(rate.dist, rate.duration);
+    return [
+      {
+        x: pts.map((p) => p[0]),
+        data: pts.map((p) => p[1]),
+        color: "#2563eb",
+        strokeWidth: 2,
       },
     ];
   }
@@ -393,7 +486,7 @@ function formatRate(v: unknown): string {
   </template>
   <template v-else-if="modelValue.type === 'empirical'">
     <p class="schedule-hint">
-      Time-varying curve, recovery at τ = {{ empiricalRecoveryAt }}.
+      Empirical curve, recovery at τ = {{ empiricalRecoveryAt }}.
       Points define the shape; the model rescales them at runtime so
       Scale is the expected R₀ under random mixing.
     </p>
@@ -438,6 +531,42 @@ function formatRate(v: unknown): string {
       </div>
       <Button variant="secondary" @click="addPoint">Add point</Button>
     </div>
+  </template>
+  <template v-else-if="modelValue.type === 'parametric'">
+    <p class="schedule-hint">
+      Infectiousness shape from a named distribution, recovery at τ =
+      {{ parametricDuration }}. The model samples the density and rescales it
+      at runtime so Scale is the expected R₀ under random mixing.
+    </p>
+    <SelectBox
+      label="Distribution"
+      :options="distTypeOptions"
+      :model-value="parametricDist.dist"
+      @update:model-value="setDistType"
+    />
+    <NumberInput
+      v-for="field in distParamFields"
+      :key="field.key"
+      :model-value="field.value"
+      :label="field.label"
+      :step="field.step"
+      @update:model-value="(v: number) => setDistParam(field.key, v)"
+    />
+    <NumberInput
+      v-model="parametricDuration"
+      label="Recovery at τ"
+      :min="1"
+      :step="0.5"
+    />
+    <NumberInput
+      v-model="rateScale"
+      label="Scale (R₀)"
+      slider
+      :live="live"
+      :min="0"
+      :max="6"
+      :step="0.1"
+    />
   </template>
   <template v-else-if="modelValue.type === 'library'">
     <p class="schedule-hint">

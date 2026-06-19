@@ -20,6 +20,11 @@ use crate::rate::{empirical_cum_rate, empirical_curve_duration, InfectionRate};
 pub fn normalize_to_r0(rate: &mut InfectionRate) {
     match rate {
         InfectionRate::Constant { .. } => {}
+        // `Parametric` is lowered to `Empirical` (`materialize_parametric`)
+        // before this is called in `model::run` / `setup_only`, so it is
+        // already an `Empirical` curve by the time we normalize. Left as a
+        // no-op for the rare standalone call on a still-parametric rate.
+        InfectionRate::Parametric { .. } => {}
         InfectionRate::Empirical { points, .. } => {
             let area = empirical_cum_rate(points, empirical_curve_duration(points));
             if !area.is_finite() || area <= 0.0 {
@@ -289,6 +294,36 @@ mod tests {
             (total - scale).abs() < 1e-12,
             "total = {total}, scale = {scale}"
         );
+    }
+
+    #[test]
+    fn parametric_lowered_then_normalized_has_area_one() {
+        // Lowering a Parametric to its Empirical grid then normalizing must
+        // give a unit-area curve, so `scale` is the expected R₀ — same
+        // contract as a hand-entered Empirical curve.
+        use crate::rate::{materialize_parametric, ParametricDist};
+        let mut r = InfectionRate::Parametric {
+            dist: ParametricDist::Gamma {
+                shape: 3.0,
+                scale: 2.0,
+            },
+            duration: 20.0,
+            scale: 4.0,
+        };
+        materialize_parametric(&mut r);
+        normalize_to_r0(&mut r);
+        let (points, scale) = match &r {
+            InfectionRate::Empirical { points, scale } => (points.clone(), *scale),
+            _ => panic!("should be Empirical after lowering"),
+        };
+        assert!((trapezoid_area(&points) - 1.0).abs() < 1e-12);
+        // And the integrated effective hazard equals `scale` (= R₀).
+        let curve = Curve::new(points);
+        let eff = EffectiveRate::Empirical {
+            curve: &curve,
+            scale,
+        };
+        assert!((eff.cum_rate(curve.duration()) - scale).abs() < 1e-12);
     }
 
     #[test]

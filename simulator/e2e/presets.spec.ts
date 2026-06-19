@@ -51,7 +51,7 @@ test.describe("Parameter presets", () => {
     await expect(preset).toHaveText(/Custom/);
   });
 
-  test("Infectiousness selector switches between Constant and Time-varying", async ({
+  test("Infectiousness selector switches between Constant and Empirical", async ({
     page,
   }) => {
     await page.goto("/");
@@ -61,14 +61,14 @@ test.describe("Parameter presets", () => {
     await expect(page.getByText("Infection rate")).toBeVisible();
     await expect(page.getByText("Infectious period")).toBeVisible();
 
-    // Switch to time-varying: those slider labels are gone, the curve
+    // Switch to empirical: those slider labels are gone, the curve
     // summary appears (default 5-anchor viral-load curve), and the
     // points editor is rendered.
     await rateType.click();
-    await page.getByRole("option", { name: "Time-varying" }).click();
+    await page.getByRole("option", { name: "Empirical", exact: true }).click();
     await expect(page.getByText("Infection rate")).toHaveCount(0);
     await expect(
-      page.getByText(/Time-varying curve, recovery at τ =/i),
+      page.getByText(/Empirical curve, recovery at τ =/i),
     ).toBeVisible();
     await expect(page.getByRole("button", { name: "Add point" })).toBeVisible();
 
@@ -87,9 +87,9 @@ test.describe("Parameter presets", () => {
       .click();
 
     const rateType = page.getByRole("combobox", { name: "Infectiousness" });
-    await expect(rateType).toHaveText(/Time-varying/);
+    await expect(rateType).toHaveText(/Empirical/);
     await expect(
-      page.getByText(/Time-varying curve, recovery at τ =/i),
+      page.getByText(/Empirical curve, recovery at τ =/i),
     ).toBeVisible();
   });
 
@@ -223,7 +223,7 @@ test.describe("Parameter presets", () => {
     await page.goto("/");
     const rateType = page.getByRole("combobox", { name: "Infectiousness" });
     await rateType.click();
-    await page.getByRole("option", { name: "Time-varying" }).click();
+    await page.getByRole("option", { name: "Empirical", exact: true }).click();
 
     // Default seeded curve has 5 anchor rows in the editor.
     await expect(page.getByRole("button", { name: "×" })).toHaveCount(5);
