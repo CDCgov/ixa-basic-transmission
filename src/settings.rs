@@ -153,6 +153,15 @@ pub struct SettingsData {
     /// untouched, so the thinning invariant still holds. Set/cleared at
     /// runtime by `settings_restrict_to` / `settings_clear_restriction`.
     pub restriction: EntityMap<Person, SettingId>,
+    /// Whether any itinerary restriction can occur this run. Armed once at
+    /// setup via `settings_arm_restriction` by an intervention that may call
+    /// `settings_restrict_to` (isolation). When `false`, no person is ever
+    /// restricted, so `current_multiplier` is constant and is an *exact*
+    /// forecast bound — the model forecasts on it directly with no thinning
+    /// waste. When `true`, a restriction can raise a person's rate up to
+    /// `max_multiplier`, so the forecast must use that looser bound. Read via
+    /// `settings_forecast_multiplier`.
+    pub restriction_armed: bool,
 }
 
 impl Default for SettingsData {
@@ -172,6 +181,7 @@ impl SettingsData {
             current_multiplier: EntityMap::new(),
             selection_weights: EntityMap::new(),
             restriction: EntityMap::new(),
+            restriction_armed: false,
         }
     }
 
@@ -197,6 +207,22 @@ pub trait SettingsExt {
     /// `Σ p_s · M_s` for `person`. Returns 1.0 when settings are disabled.
     fn settings_current_multiplier(&self, person: PersonId) -> f64;
 
+    /// Arm the itinerary-restriction mechanism for this run. Call once at
+    /// setup from any intervention that may call `settings_restrict_to`
+    /// (isolation). Tells `settings_forecast_multiplier` it must fall back to
+    /// the loose `max_s M_s` bound, since a restriction can raise a person's
+    /// current multiplier above their weighted mean.
+    fn settings_arm_restriction(&mut self);
+
+    /// Per-person forecast upper bound for the transmission NHPP. When no
+    /// restriction can occur (`restriction_armed == false`), returns the
+    /// *exact* constant total rate `Σ p_s · M_s` — a tight bound that makes
+    /// the thinning step a no-op. When restriction is armed, returns the
+    /// looser `max_s M_s` (a restricted person may transiently transmit at a
+    /// single setting's rate, which we can't predict at forecast time).
+    /// Returns 1.0 when settings are disabled.
+    fn settings_forecast_multiplier(&self, person: PersonId) -> f64;
+
     /// Pick a `Setting` for `person` weighted by `p_s · M_s`. Returns `None`
     /// when settings are disabled or every weight is zero.
     fn settings_sample_current_setting(&self, person: PersonId) -> Option<SettingId>;
@@ -210,9 +236,10 @@ pub trait SettingsExt {
     /// Restrict `person`'s current itinerary to their setting of type
     /// `type_index` (isolation). While restricted,
     /// `settings_current_multiplier` and contact sampling use only that
-    /// setting; `settings_max_multiplier` (the forecast bound) is
-    /// unaffected, so `current ≤ forecasted` still holds. No-op when
-    /// settings are disabled or `person` has no setting of that type.
+    /// setting; the forecast bound (`max_s M_s`, used because restriction is
+    /// armed — see `settings_forecast_multiplier`) is unaffected, so
+    /// `current ≤ forecasted` still holds. No-op when settings are disabled
+    /// or `person` has no setting of that type.
     fn settings_restrict_to(&mut self, person: PersonId, type_index: usize);
 
     /// Remove any itinerary restriction on `person`, restoring the full
@@ -345,6 +372,22 @@ impl SettingsExt for Context {
             return data.setting_multiplier.get(sid).copied().unwrap_or(0.0);
         }
         data.current_multiplier.get(person).copied().unwrap_or(0.0)
+    }
+
+    fn settings_arm_restriction(&mut self) {
+        self.get_data_mut(SettingsPlugin).restriction_armed = true;
+    }
+
+    fn settings_forecast_multiplier(&self, person: PersonId) -> f64 {
+        // No restriction possible → current_mult is the exact, constant total
+        // rate (membership is static), so it's a tight forecast bound and the
+        // thinning step accepts every event. Restriction armed → widen to the
+        // max, since a restricted person's rate can exceed their weighted mean.
+        if self.get_data(SettingsPlugin).restriction_armed {
+            self.settings_max_multiplier(person)
+        } else {
+            self.settings_current_multiplier(person)
+        }
     }
 
     fn settings_sample_current_setting(&self, person: PersonId) -> Option<SettingId> {
@@ -481,6 +524,7 @@ mod tests {
         for p in people {
             assert_eq!(ctx.settings_max_multiplier(p), 1.0);
             assert_eq!(ctx.settings_current_multiplier(p), 1.0);
+            assert_eq!(ctx.settings_forecast_multiplier(p), 1.0);
         }
     }
 
@@ -640,6 +684,35 @@ mod tests {
         ctx.settings_clear_restriction(p);
         assert!(!ctx.settings_is_restricted(p));
         assert_almost_eq!(ctx.settings_current_multiplier(p), 3.0, 1e-9);
+    }
+
+    #[test]
+    fn forecast_multiplier_is_tight_until_restriction_armed() {
+        // Same home/work setup: current = 3, max = 4 (current strictly < max).
+        let home = make_type("home", 1.0, vec![(3, 1.0)], 0.5);
+        let work = make_type("work", 1.0, vec![(5, 1.0)], 0.5);
+        let mut ctx = build_context_with(vec![home, work], 15, 0);
+        let p = ctx.query_result_iterator(Person).next().unwrap();
+
+        // Unarmed: the forecast bound is the *exact* total rate (current_mult),
+        // strictly below max — this is what makes the thinning step a no-op.
+        assert_almost_eq!(ctx.settings_forecast_multiplier(p), 3.0, 1e-9);
+        assert_almost_eq!(
+            ctx.settings_forecast_multiplier(p),
+            ctx.settings_current_multiplier(p),
+            1e-12
+        );
+
+        // Arming (what isolation::register does) widens the bound to max_s M_s,
+        // so a restriction raising a person's rate up to a peak setting stays
+        // ≤ the forecast bound and `current ≤ forecasted` holds.
+        ctx.settings_arm_restriction();
+        assert_almost_eq!(ctx.settings_forecast_multiplier(p), 4.0, 1e-9);
+        assert_almost_eq!(
+            ctx.settings_forecast_multiplier(p),
+            ctx.settings_max_multiplier(p),
+            1e-12
+        );
     }
 
     #[test]

@@ -31,7 +31,7 @@ trait InfectionLoop {
     fn get_stats(&self) -> &ModelStats;
     #[cfg_attr(not(test), allow(dead_code))]
     fn infected_people(&self) -> usize;
-    fn max_total_infectiousness_multiplier(&self, person: PersonId) -> f64;
+    fn forecast_total_infectiousness_multiplier(&self, person: PersonId) -> f64;
     fn current_total_infectiousness_multiplier(&self, person: PersonId) -> f64;
     fn evaluate_forecast(&mut self, infector: PersonId, forecasted: f64) -> bool;
     fn infection_attempt(&mut self, infector: PersonId);
@@ -117,12 +117,14 @@ impl InfectionLoop for Context {
         }
     }
 
-    fn max_total_infectiousness_multiplier(&self, person: PersonId) -> f64 {
-        // Upper bound on per-person scaling of the intrinsic rate. The
-        // forecast samples on this upper-bound process and `evaluate_forecast`
-        // thins down to the true marginal rate. When settings are disabled
-        // this is 1.0 (a no-op).
-        self.settings_max_multiplier(person)
+    fn forecast_total_infectiousness_multiplier(&self, person: PersonId) -> f64 {
+        // Upper bound on per-person scaling of the intrinsic rate. The forecast
+        // samples on this upper-bound process and `evaluate_forecast` thins down
+        // to the true marginal rate. With no itinerary restriction in play this
+        // bound is the *exact* constant total rate `Σ p_s · M_s` (so thinning is
+        // a no-op); isolation widens it to `max_s M_s`. 1.0 when settings are
+        // disabled. See `SettingsExt::settings_forecast_multiplier`.
+        self.settings_forecast_multiplier(person)
     }
 
     fn current_total_infectiousness_multiplier(&self, person: PersonId) -> f64 {
@@ -140,7 +142,7 @@ impl InfectionLoop for Context {
 
     fn evaluate_forecast(&mut self, infector: PersonId, forecasted: f64) -> bool {
         // Thinning step: the forecast was sampled on the upper-bound rate
-        // (intrinsic × max_total_infectiousness_multiplier), so the actual
+        // (intrinsic × forecast_total_infectiousness_multiplier), so the actual
         // current rate is ≤ forecasted. Accept the event with probability
         // current / forecasted; when the two are equal (e.g. settings
         // disabled, where both multipliers are 1.0) the branch short-
@@ -170,28 +172,28 @@ impl InfectionLoop for Context {
 
     fn schedule_next_infection_attempt(&mut self, infector: PersonId) {
         // Inverse-CDF sampling on the upper-bound process
-        // λ_max(τ) = λ(τ) · max_total_infectiousness_multiplier.
-        // Draw e ~ Exp(1) and solve Λ_max(τ_next) − Λ_max(elapsed) = e,
-        // which rearranges to Λ(τ_next) = Λ(elapsed) + e / max_mult.
+        // λ_fc(τ) = λ(τ) · forecast_total_infectiousness_multiplier.
+        // Draw e ~ Exp(1) and solve Λ_fc(τ_next) − Λ_fc(elapsed) = e,
+        // which rearranges to Λ(τ_next) = Λ(elapsed) + e / fc_mult.
         // `None` from `inverse_cum_rate` means the curve is exhausted —
         // no further attempts for this person.
         let t_inf = self.get_property::<_, InfectionTime>(infector).0;
         let elapsed = self.get_current_time() - t_inf;
-        let max_mult = self.max_total_infectiousness_multiplier(infector);
+        let fc_mult = self.forecast_total_infectiousness_multiplier(infector);
 
         // A zero upper bound means there are no contacts this person can
         // reach (e.g. they're in a size-1 household and the model is in
         // settings mode). Skip the inverse-CDF — `e / 0 = inf` would
         // otherwise schedule a plan at t = ∞.
-        if max_mult <= 0.0 {
+        if fc_mult <= 0.0 {
             return;
         }
 
         let e: f64 = self.sample_distr(InfectionRng, Exp::new(1.0).unwrap());
         let forecast = {
             let eff = self.effective_rate(infector);
-            eff.inverse_cum_rate(eff.cum_rate(elapsed) + e / max_mult)
-                .map(|tau| (tau, eff.rate(tau) * max_mult))
+            eff.inverse_cum_rate(eff.cum_rate(elapsed) + e / fc_mult)
+                .map(|tau| (tau, eff.rate(tau) * fc_mult))
         };
         let Some((elapsed_next, forecasted)) = forecast else {
             return;
@@ -1622,6 +1624,51 @@ mod tests {
         assert!(
             both <= iso_only && both <= mask_only,
             "both ({both}) should not exceed either alone (iso {iso_only}, mask {mask_only})"
+        );
+    }
+
+    #[test]
+    fn isolation_to_peak_setting_keeps_forecast_bound_valid() {
+        // Restricting to the *highest*-contact setting (work, M=19) raises an
+        // isolating person's current multiplier above their weighted mean
+        // (current_mult = 0.5·2 + 0.5·19 = 10.5). This is exactly the case the
+        // loose forecast bound exists for: `isolation::register` arms
+        // restriction, so the forecast uses max_s M_s (= 19) and the
+        // `current ≤ forecasted` invariant in `evaluate_forecast` holds. Were
+        // arming dropped (tight bound 10.5), this run would trip that assert —
+        // unlike the household-restriction tests, which only restrict *down*.
+        let base = isolation_base(6);
+        let to_work = run(Parameters {
+            modifiers: Modifiers {
+                isolation: Some(Isolation {
+                    coverage: 1.0,
+                    restrict_to: "work".into(),
+                    delay: 0.0,
+                    duration: None,
+                }),
+                ..Default::default()
+            },
+            ..base.clone()
+        });
+        let to_household = run(Parameters {
+            modifiers: Modifiers {
+                isolation: Some(Isolation {
+                    coverage: 1.0,
+                    restrict_to: "household".into(),
+                    delay: 0.0,
+                    duration: None,
+                }),
+                ..Default::default()
+            },
+            ..base
+        });
+        // The run completed (bound stayed valid), and confining to the large
+        // workplace transmits far more than confining to the tiny household.
+        assert!(
+            to_work.cum_incidence() > to_household.cum_incidence(),
+            "work-confined incidence ({}) should exceed household-confined ({})",
+            to_work.cum_incidence(),
+            to_household.cum_incidence()
         );
     }
 }
