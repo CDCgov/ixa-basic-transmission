@@ -217,11 +217,9 @@ export function rateFunctionDefs(rate: InfectionRate): RateFunctionDefs {
   let rHere: string;
   let cHere: string;
   // The formula for the time t = d(c), given accumulated attempts c. Since
-  // c(t) = R₀·CDF(t), the inverse is t = CDF⁻¹(c / R₀) — the quantile. For the
-  // parametric rates the kernel is truncated at `duration` and renormalized to
-  // area 1, so c is that truncated CDF; the closed-form d(t) below are the
-  // untruncated quantiles (≈ exact when `duration` captures the mass), while
-  // the model inverts the truncated curve numerically.
+  // c(t) = R₀·CDF(t), the inverse is t = CDF⁻¹(c / R₀) — the quantile / inverse
+  // CDF. For the parametric rates we keep the description deliberately vague
+  // (just "the inverse CDF") rather than spelling out the closed-form quantile.
   let dHere: string;
   switch (rate.type) {
     case "constant":
@@ -231,22 +229,15 @@ export function rateFunctionDefs(rate: InfectionRate): RateFunctionDefs {
       break;
     case "parametric": {
       const d = rate.dist;
-      if (d.dist === "weibull") {
-        rHere = "R₀ × the truncated Weibull PDF (renormalized over [0, duration])";
-        cHere = "R₀ × the truncated Weibull CDF (renormalized over [0, duration])";
-        dHere =
-          "t = scale · (−ln(1 − c / R₀))^(1 / shape), the untruncated quantile (the model inverts the truncated curve numerically)";
-      } else if (d.dist === "lognormal") {
-        rHere = "R₀ × the truncated Lognormal PDF (renormalized over [0, duration])";
-        cHere = "R₀ × the truncated Lognormal CDF (renormalized over [0, duration])";
-        dHere =
-          "t = exp(μ + σ · Φ⁻¹(c / R₀)), the untruncated quantile (Φ⁻¹ = standard-normal quantile; the model inverts the truncated curve numerically)";
-      } else {
-        rHere = "R₀ × the truncated Gamma PDF (renormalized over [0, duration])";
-        cHere = "R₀ × the truncated Gamma CDF (renormalized over [0, duration])";
-        dHere =
-          "the Gamma quantile of c / R₀, inverted numerically on the truncated curve";
-      }
+      const name =
+        d.dist === "weibull"
+          ? "Weibull"
+          : d.dist === "lognormal"
+            ? "Lognormal"
+            : "Gamma";
+      rHere = `R₀ × the truncated ${name} PDF (renormalized over [0, duration])`;
+      cHere = `R₀ × the truncated ${name} CDF (renormalized over [0, duration])`;
+      dHere = `the inverse of that truncated, renormalized ${name} CDF (inverted numerically)`;
       break;
     }
     case "empirical":

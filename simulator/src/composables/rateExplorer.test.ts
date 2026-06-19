@@ -143,9 +143,11 @@ describe("rateExplorer", () => {
     expect(gamma.c).toContain("Gamma CDF");
     expect(gamma.r).toContain("truncated");
     expect(gamma.c).toContain("truncated");
-    expect(gamma.d.toLowerCase()).toContain("quantile");
+    expect(gamma.d.toLowerCase()).toContain("inverse");
+    expect(gamma.d).toContain("Gamma");
+    expect(gamma.d).toContain("truncated");
 
-    // Closed-form inverses show the actual formula.
+    // d(t) stays vague — just "the inverse of the truncated CDF", named per dist.
     const weibull = rateFunctionDefs({
       type: "parametric",
       dist: { dist: "weibull", shape: 2, scale: 5 },
@@ -153,8 +155,9 @@ describe("rateExplorer", () => {
       scale: 2,
     });
     expect(weibull.r).toContain("Weibull PDF");
-    expect(weibull.d).toContain("ln(1");
-    expect(weibull.d).toContain("shape");
+    expect(weibull.d.toLowerCase()).toContain("inverse");
+    expect(weibull.d).toContain("Weibull");
+    expect(weibull.d).toContain("truncated");
 
     const lognormal = rateFunctionDefs({
       type: "parametric",
@@ -162,7 +165,9 @@ describe("rateExplorer", () => {
       duration: 15,
       scale: 2,
     });
-    expect(lognormal.d).toContain("exp(");
+    expect(lognormal.d.toLowerCase()).toContain("inverse");
+    expect(lognormal.d).toContain("Lognormal");
+    expect(lognormal.d).toContain("truncated");
 
     const constant = rateFunctionDefs({ type: "constant", value: 0.5, duration: 3 });
     expect(constant.r).toContain("flat");
