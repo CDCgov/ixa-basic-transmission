@@ -18,7 +18,7 @@ test.describe("Rate explorer tab", () => {
     ).toBeVisible();
 
     // Empty until the first draw — no table yet.
-    const draw = page.getByRole("button", { name: "Draw next delta" });
+    const draw = page.getByRole("button", { name: "Draw next" });
     await expect(draw).toBeVisible();
     await expect(page.locator(".explorer-table")).toHaveCount(0);
 
@@ -49,7 +49,7 @@ test.describe("Rate explorer tab", () => {
   }) => {
     await page.goto("/");
     await page.getByRole("tab", { name: "Explore rate" }).click();
-    const draw = page.getByRole("button", { name: "Draw next delta" });
+    const draw = page.getByRole("button", { name: "Draw next" });
     // Default Constant rate has total area 1.5, so a few Exp(1) draws
     // overshoot it; keep drawing until the button disables (recovered).
     for (let i = 0; i < 40 && (await draw.isEnabled()); i++) {
@@ -58,6 +58,43 @@ test.describe("Rate explorer tab", () => {
     await expect(draw).toBeDisabled();
     await expect(page.locator(".timeline-recovery")).toBeVisible();
     await expect(page.locator(".timeline-title-recovered")).toBeVisible();
+  });
+
+  test("constant rate offers a homogeneous-Poisson toggle that swaps the view", async ({
+    page,
+  }) => {
+    await page.goto("/");
+    await page.getByRole("tab", { name: "Explore rate" }).click();
+
+    // Default constant rate → simplified homogeneous view: the toggle is on
+    // and the table uses the Exp(rate) "gap" column.
+    const toggle = page.getByRole("switch", {
+      name: "Homogeneous Poisson view",
+    });
+    await expect(toggle).toBeVisible();
+    await page.getByRole("button", { name: "Draw next" }).click();
+    await expect(
+      page.getByRole("columnheader", { name: /gap/ }),
+    ).toBeVisible();
+
+    // Toggle off → general inverse-CDF view: c(t) chart + the Exp(1) column.
+    await toggle.click();
+    await expect(
+      page.getByRole("heading", { name: "Cumulative rate c(t)" }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("columnheader", { name: /Exp\(1\)/ }),
+    ).toBeVisible();
+  });
+
+  test("a time-varying rate has no homogeneous toggle", async ({ page }) => {
+    await page.goto("/");
+    await page.getByRole("combobox", { name: "Infectiousness" }).click();
+    await page.getByRole("option", { name: "Parametric", exact: true }).click();
+    await page.getByRole("tab", { name: "Explore rate" }).click();
+    await expect(
+      page.getByRole("switch", { name: "Homogeneous Poisson view" }),
+    ).toHaveCount(0);
   });
 
   test("explorer reflects the selected rate type", async ({ page }) => {

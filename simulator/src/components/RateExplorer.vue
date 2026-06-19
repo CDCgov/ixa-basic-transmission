@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch, onMounted, onBeforeUnmount } from "vue";
-import { Button } from "cfasim-ui/components";
+import { Button, Toggle } from "cfasim-ui/components";
 import { LineChart } from "cfasim-ui/charts";
 import type { InfectionRate } from "../composables/infectionRate";
 import {
@@ -17,6 +17,19 @@ const props = defineProps<{ modelValue: InfectionRate }>();
 const curve = computed(() => effectiveRateCurve(props.modelValue));
 const desc = computed(() => describeRate(props.modelValue));
 const defs = computed(() => rateFunctionDefs(props.modelValue));
+
+// A constant rate is a homogeneous Poisson process: the gaps between events
+// are simply Exp(rate). The "homogeneous" view presents it that way (gap ~
+// Exp(rate), τ = running sum); toggling it off shows the general inverse-CDF
+// method — the same path the time-varying rates use. The toggle only applies
+// to a constant rate; everything else has no single rate and always uses the
+// general view.
+const isConstant = computed(() => props.modelValue.type === "constant");
+const constantRate = computed(() =>
+  props.modelValue.type === "constant" ? props.modelValue.value : 0,
+);
+const homogeneous = ref(true);
+const simplifiedView = computed(() => isConstant.value && homogeneous.value);
 
 // Exp(1) increments the user has drawn. Each one advances the cumulative
 // hazard E; the next event time is τ = Λ⁻¹(E) (null once the curve is
@@ -201,8 +214,15 @@ function fmtTau(v: unknown): string {
 <template>
   <section class="explorer">
     <header class="explorer-header">
-      <h2>{{ desc.title }}</h2>
-      <p class="explorer-subtitle">{{ desc.subtitle }}</p>
+      <div class="explorer-header-text">
+        <h2>{{ desc.title }}</h2>
+        <p class="explorer-subtitle">{{ desc.subtitle }}</p>
+      </div>
+      <!-- Constant rate only: switch the right panel between the simple
+           homogeneous-Poisson view and the general inverse-CDF method. -->
+      <Toggle v-if="isConstant" :model-value="homogeneous" label="Homogeneous Poisson view"
+        hint="Constant rate: draw gaps straight from Exp(rate), skipping the cumulative-rate inversion."
+        class="explorer-mode-toggle" @update:model-value="(v: boolean) => (homogeneous = v)" />
     </header>
 
     <div class="explorer-grid">
@@ -225,25 +245,35 @@ function fmtTau(v: unknown): string {
            and invert through Λ(τ) to event times. -->
       <div class="explorer-panel">
         <div class="explorer-controls">
-          <h3>Cumulative rate c(t)</h3>
+          <h3>{{ simplifiedView ? "Event times" : "Cumulative rate c(t)" }}</h3>
           <div class="explorer-buttons">
-            <Button :disabled="exhausted || !hasArea" @click="drawNext">Draw next delta</Button>
+            <Button :disabled="exhausted || !hasArea" @click="drawNext">Draw next</Button>
             <Button variant="secondary" :disabled="!draws.length" @click="reset">Reset</Button>
           </div>
         </div>
-        <p class="explorer-hint">{{ defs.c }}</p>
-        <LineChart :series="cumSeries" :height="200" :y-min="0" :menu="false" x-label="t (days since infected)"
-          y-label="c(t)" tooltip-trigger="hover">
-          <template #tooltip="{ xLabel, values }">
-            <div class="explorer-tooltip">
-              <div v-if="xLabel != null">t = {{ fmtTau(xLabel) }}</div>
-              <div>c = {{ fmtTau(values[0]?.value) }}</div>
-            </div>
-          </template>
-        </LineChart>
+        <!-- Simplified homogeneous view (constant rate). -->
+        <p v-if="simplifiedView" class="explorer-hint">
+          A constant rate is a homogeneous Poisson process: the gap before each event is drawn from
+          <strong>Exp({{ fmt(constantRate) }})</strong> (mean {{ fmt(1 / constantRate) }} days), and τ
+          is the running sum of those gaps.
+        </p>
 
-        <h3>Inverse cumulative rate d(t)</h3>
-        <p class="explorer-hint explorer-def-d">{{ defs.d }}</p>
+        <!-- General inverse-CDF view (used by every time-varying rate). -->
+        <template v-else>
+          <p class="explorer-hint">{{ defs.c }}</p>
+          <LineChart :series="cumSeries" :height="200" :y-min="0" :menu="false" x-label="t (days since infected)"
+            y-label="c(t)" tooltip-trigger="hover">
+            <template #tooltip="{ xLabel, values }">
+              <div class="explorer-tooltip">
+                <div v-if="xLabel != null">t = {{ fmtTau(xLabel) }}</div>
+                <div>c = {{ fmtTau(values[0]?.value) }}</div>
+              </div>
+            </template>
+          </LineChart>
+
+          <h3>Inverse cumulative rate d(t)</h3>
+          <p class="explorer-hint explorer-def-d">{{ defs.d }}</p>
+        </template>
 
         <p v-show="draws.length" class="timeline-title">
           {{ infectionCount }} total infection{{ infectionCount === 1 ? "" : "s" }}
@@ -282,15 +312,19 @@ function fmtTau(v: unknown): string {
 
         <table v-if="events.length" class="explorer-table">
           <thead>
-            <tr>
-              <th>Exp(1) δ</th>
-              <th>time-scaled δ</th>
+            <tr v-if="simplifiedView">
+              <th>gap ~ Exp(rate)</th>
+              <th>τ = Σ</th>
+            </tr>
+            <tr v-else>
+              <th>e ~ Exp(1)</th>
+              <th>gap<br /><span class="th-sub">d(c+e) − d(c)</span></th>
               <th>τ = Σ</th>
             </tr>
           </thead>
           <tbody>
             <tr v-for="(ev, i) in events" :key="i">
-              <td class="num">{{ fmt(ev.delta) }}</td>
+              <td v-if="!simplifiedView" class="num">{{ fmt(ev.delta) }}</td>
               <td class="num">
                 <span v-if="ev.scaledDelta !== null">{{ fmt(ev.scaledDelta) }}</span>
                 <span v-else class="recovered">—</span>
@@ -303,12 +337,15 @@ function fmtTau(v: unknown): string {
           </tbody>
         </table>
         <p v-else class="explorer-hint explorer-empty">
-          No draws yet — press <strong>Draw next delta</strong> to sample the
-          first infection time.
+          No draws yet — press <strong>Draw next</strong> to sample the first
+          infection time.
         </p>
         <p v-if="exhausted" class="explorer-hint">
-          The cumulative draw exceeded the curve's total area — the person
-          recovers before the next attempt.
+          {{
+            simplifiedView
+              ? "The accumulated time passed the infectious period — the person recovers before the next event."
+              : "The cumulative draw exceeded the curve's total area — the person recovers before the next attempt."
+          }}
         </p>
       </div>
     </div>
@@ -322,6 +359,18 @@ function fmtTau(v: unknown): string {
   gap: 1em;
 }
 
+.explorer-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1em;
+}
+.explorer-header-text {
+  min-width: 0;
+}
+.explorer-mode-toggle {
+  flex-shrink: 0;
+}
 .explorer-header h2 {
   margin: 0;
 }
@@ -434,6 +483,12 @@ function fmtTau(v: unknown): string {
 .explorer-table th {
   color: var(--color-text-secondary);
   font-weight: 600;
+}
+.explorer-table .th-sub {
+  font-weight: 400;
+  font-size: 0.85em;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.8;
 }
 
 .explorer-table .num {
