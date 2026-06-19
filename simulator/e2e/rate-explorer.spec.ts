@@ -60,24 +60,23 @@ test.describe("Rate explorer tab", () => {
     await expect(page.locator(".timeline-title-recovered")).toBeVisible();
   });
 
-  test("constant rate offers a homogeneous-Poisson toggle that swaps the view", async ({
+  test("constant rate offers a Generalized toggle that swaps the view", async ({
     page,
   }) => {
     await page.goto("/");
     await page.getByRole("tab", { name: "Explore rate" }).click();
 
-    // Default constant rate → simplified homogeneous view: the toggle is on
-    // and the table uses the Exp(rate) "gap" column.
-    const toggle = page.getByRole("switch", {
-      name: "Homogeneous Poisson view",
-    });
+    // Default constant rate → simplified homogeneous view: the "Generalized"
+    // toggle is off and the table uses the Exp(rate) "gap" column.
+    const toggle = page.getByRole("switch", { name: "Generalized" });
     await expect(toggle).toBeVisible();
+    await expect(toggle).not.toBeChecked();
     await page.getByRole("button", { name: "Draw next" }).click();
     await expect(
       page.getByRole("columnheader", { name: /gap/ }),
     ).toBeVisible();
 
-    // Toggle off → general inverse-CDF view: c(t) chart + the Exp(1) column.
+    // Toggle on → general inverse-CDF view: c(t) chart + the Exp(1) column.
     await toggle.click();
     await expect(
       page.getByRole("heading", { name: "Cumulative rate c(t)" }),
@@ -87,13 +86,38 @@ test.describe("Rate explorer tab", () => {
     ).toBeVisible();
   });
 
-  test("a time-varying rate has no homogeneous toggle", async ({ page }) => {
+  test("the toggle sits inline with the rate description, below the title", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 390, height: 800 });
+    await page.goto("/");
+    await page.getByRole("tab", { name: "Explore rate" }).click();
+
+    const toggle = page.getByRole("switch", { name: "Generalized" });
+    const title = page.getByRole("heading", { name: "Constant rate" });
+    const subtitle = page.locator(".explorer-subtitle");
+    await expect(toggle).toBeVisible();
+
+    const toggleBox = await toggle.boundingBox();
+    const titleBox = await title.boundingBox();
+    const subtitleBox = await subtitle.boundingBox();
+    expect(toggleBox).not.toBeNull();
+    expect(titleBox).not.toBeNull();
+    expect(subtitleBox).not.toBeNull();
+    // The toggle is grouped with the description, below the title.
+    expect(toggleBox!.y).toBeGreaterThanOrEqual(
+      titleBox!.y + titleBox!.height - 2,
+    );
+    expect(toggleBox!.y).toBeGreaterThanOrEqual(subtitleBox!.y - 2);
+  });
+
+  test("a time-varying rate has no Generalized toggle", async ({ page }) => {
     await page.goto("/");
     await page.getByRole("combobox", { name: "Infectiousness" }).click();
     await page.getByRole("option", { name: "Parametric", exact: true }).click();
     await page.getByRole("tab", { name: "Explore rate" }).click();
     await expect(
-      page.getByRole("switch", { name: "Homogeneous Poisson view" }),
+      page.getByRole("switch", { name: "Generalized" }),
     ).toHaveCount(0);
   });
 

@@ -138,8 +138,11 @@ describe("rateExplorer", () => {
       scale: 3,
     });
     // r(t) is the (scaled) PDF; c(t) the (scaled) CDF; d(t) the quantile.
+    // Both r and c note the kernel is truncated to [0, duration].
     expect(gamma.r).toContain("Gamma PDF");
     expect(gamma.c).toContain("Gamma CDF");
+    expect(gamma.r).toContain("truncated");
+    expect(gamma.c).toContain("truncated");
     expect(gamma.d.toLowerCase()).toContain("quantile");
 
     // Closed-form inverses show the actual formula.
@@ -171,13 +174,14 @@ describe("rateExplorer", () => {
       title: "Constant rate",
       subtitle: "1 infection per day for 2 days",
     });
-    expect(
-      describeRate({
-        type: "parametric",
-        dist: { dist: "gamma", shape: 3, scale: 1.5 },
-        duration: 12,
-        scale: 3,
-      }).title,
-    ).toBe("Gamma(shape=3, scale=1.5)");
+    // The distribution name is the (bold) title; params live on the subtitle.
+    const gamma = describeRate({
+      type: "parametric",
+      dist: { dist: "gamma", shape: 3, scale: 1.5 },
+      duration: 12,
+      scale: 3,
+    });
+    expect(gamma.title).toBe("Gamma");
+    expect(gamma.subtitle).toContain("shape=3, scale=1.5");
   });
 });

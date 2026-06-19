@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch, onMounted, onBeforeUnmount } from "vue";
-import { Button, Toggle } from "cfasim-ui/components";
+import { Button, Hint, Toggle } from "cfasim-ui/components";
 import { LineChart } from "cfasim-ui/charts";
 import type { InfectionRate } from "../composables/infectionRate";
 import {
@@ -19,8 +19,8 @@ const desc = computed(() => describeRate(props.modelValue));
 const defs = computed(() => rateFunctionDefs(props.modelValue));
 
 // A constant rate is a homogeneous Poisson process: the gaps between events
-// are simply Exp(rate). The "homogeneous" view presents it that way (gap ~
-// Exp(rate), τ = running sum); toggling it off shows the general inverse-CDF
+// are simply Exp(rate). By default we present it that way (gap ~ Exp(rate),
+// τ = running sum); toggling "Generalized" on shows the general inverse-CDF
 // method — the same path the time-varying rates use. The toggle only applies
 // to a constant rate; everything else has no single rate and always uses the
 // general view.
@@ -28,8 +28,8 @@ const isConstant = computed(() => props.modelValue.type === "constant");
 const constantRate = computed(() =>
   props.modelValue.type === "constant" ? props.modelValue.value : 0,
 );
-const homogeneous = ref(true);
-const simplifiedView = computed(() => isConstant.value && homogeneous.value);
+const generalized = ref(false);
+const simplifiedView = computed(() => isConstant.value && !generalized.value);
 
 // Exp(1) increments the user has drawn. Each one advances the cumulative
 // hazard E; the next event time is τ = Λ⁻¹(E) (null once the curve is
@@ -214,15 +214,15 @@ function fmtTau(v: unknown): string {
 <template>
   <section class="explorer">
     <header class="explorer-header">
-      <div class="explorer-header-text">
-        <h2>{{ desc.title }}</h2>
+      <h2>{{ desc.title }}</h2>
+      <div class="explorer-subline">
         <p class="explorer-subtitle">{{ desc.subtitle }}</p>
+        <!-- Constant rate only: switch the right panel between the simple
+             homogeneous-Poisson view and the general inverse-CDF method. -->
+        <Toggle v-if="isConstant" :model-value="generalized" label="Generalized"
+          hint="Show the general inverse-CDF method (Λ⁻¹) instead of drawing gaps straight from Exp(rate)."
+          class="explorer-mode-toggle" @update:model-value="(v: boolean) => (generalized = v)" />
       </div>
-      <!-- Constant rate only: switch the right panel between the simple
-           homogeneous-Poisson view and the general inverse-CDF method. -->
-      <Toggle v-if="isConstant" :model-value="homogeneous" label="Homogeneous Poisson view"
-        hint="Constant rate: draw gaps straight from Exp(rate), skipping the cumulative-rate inversion."
-        class="explorer-mode-toggle" @update:model-value="(v: boolean) => (homogeneous = v)" />
     </header>
 
     <div class="explorer-grid">
@@ -314,12 +314,24 @@ function fmtTau(v: unknown): string {
           <thead>
             <tr v-if="simplifiedView">
               <th>gap ~ Exp(rate)</th>
-              <th>τ = Σ</th>
+              <th>
+                τ = Σ
+                <Hint
+                  text="Event time since infection: the running sum of the gaps so far (τ = Σ gap)." />
+              </th>
             </tr>
             <tr v-else>
               <th>e ~ Exp(1)</th>
-              <th>gap<br /><span class="th-sub">d(c+e) − d(c)</span></th>
-              <th>τ = Σ</th>
+              <th>
+                gap
+                <Hint
+                  text="Time-scaled inter-event gap: d(c+e) − d(c). Invert the cumulative rate at the new running total c+e, then subtract the previous event time d(c)." />
+              </th>
+              <th>
+                τ = Σ
+                <Hint
+                  text="Event time since infection: the running sum of the gaps so far (τ = Σ gap)." />
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -361,22 +373,26 @@ function fmtTau(v: unknown): string {
 
 .explorer-header {
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 1em;
-}
-.explorer-header-text {
-  min-width: 0;
-}
-.explorer-mode-toggle {
-  flex-shrink: 0;
+  flex-direction: column;
+  gap: 0.2em;
 }
 .explorer-header h2 {
   margin: 0;
 }
-
+/* Subtitle and the (constant-rate) view toggle share a row, wrapping the
+   toggle below the description when there isn't room beside it. */
+.explorer-subline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4em 1em;
+}
+.explorer-mode-toggle {
+  flex-shrink: 0;
+}
 .explorer-subtitle {
-  margin: 0.2em 0 0;
+  margin: 0;
   color: var(--color-text-secondary);
 }
 
@@ -483,12 +499,6 @@ function fmtTau(v: unknown): string {
 .explorer-table th {
   color: var(--color-text-secondary);
   font-weight: 600;
-}
-.explorer-table .th-sub {
-  font-weight: 400;
-  font-size: 0.85em;
-  font-variant-numeric: tabular-nums;
-  opacity: 0.8;
 }
 
 .explorer-table .num {

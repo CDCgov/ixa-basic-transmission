@@ -217,29 +217,35 @@ export function rateFunctionDefs(rate: InfectionRate): RateFunctionDefs {
   let rHere: string;
   let cHere: string;
   // The formula for the time t = d(c), given accumulated attempts c. Since
-  // c(t) = R₀·CDF(t), the inverse is t = CDF⁻¹(c / R₀) — the quantile.
+  // c(t) = R₀·CDF(t), the inverse is t = CDF⁻¹(c / R₀) — the quantile. For the
+  // parametric rates the kernel is truncated at `duration` and renormalized to
+  // area 1, so c is that truncated CDF; the closed-form d(t) below are the
+  // untruncated quantiles (≈ exact when `duration` captures the mass), while
+  // the model inverts the truncated curve numerically.
   let dHere: string;
   switch (rate.type) {
     case "constant":
-      rHere = `a flat ${fmt(rate.value)} per day (a homogeneous Poisson process)`;
+      rHere = `a flat ${fmt(rate.value)} per day`;
       cHere = `${fmt(rate.value)} · t (a straight line)`;
       dHere = `t = c / ${fmt(rate.value)} (Exponential inter-event times)`;
       break;
     case "parametric": {
       const d = rate.dist;
       if (d.dist === "weibull") {
-        rHere = "R₀ × the Weibull PDF (probability density)";
-        cHere = "R₀ × the Weibull CDF (cumulative distribution)";
-        dHere = "t = scale · (−ln(1 − c / R₀))^(1 / shape)";
-      } else if (d.dist === "lognormal") {
-        rHere = "R₀ × the Lognormal PDF (probability density)";
-        cHere = "R₀ × the Lognormal CDF (cumulative distribution)";
-        dHere = "t = exp(μ + σ · Φ⁻¹(c / R₀)), Φ⁻¹ = standard-normal quantile";
-      } else {
-        rHere = "R₀ × the Gamma PDF (probability density)";
-        cHere = "R₀ × the Gamma CDF (cumulative distribution)";
+        rHere = "R₀ × the truncated Weibull PDF (renormalized over [0, duration])";
+        cHere = "R₀ × the truncated Weibull CDF (renormalized over [0, duration])";
         dHere =
-          "t = the Gamma quantile of c / R₀ (inverted numerically)";
+          "t = scale · (−ln(1 − c / R₀))^(1 / shape), the untruncated quantile (the model inverts the truncated curve numerically)";
+      } else if (d.dist === "lognormal") {
+        rHere = "R₀ × the truncated Lognormal PDF (renormalized over [0, duration])";
+        cHere = "R₀ × the truncated Lognormal CDF (renormalized over [0, duration])";
+        dHere =
+          "t = exp(μ + σ · Φ⁻¹(c / R₀)), the untruncated quantile (Φ⁻¹ = standard-normal quantile; the model inverts the truncated curve numerically)";
+      } else {
+        rHere = "R₀ × the truncated Gamma PDF (renormalized over [0, duration])";
+        cHere = "R₀ × the truncated Gamma CDF (renormalized over [0, duration])";
+        dHere =
+          "the Gamma quantile of c / R₀, inverted numerically on the truncated curve";
       }
       break;
     }
@@ -257,9 +263,9 @@ export function rateFunctionDefs(rate: InfectionRate): RateFunctionDefs {
       break;
   }
   return {
-    r: `Expected infection attempts per day at time t since infection; the area under it is R₀. ${rHere}.`,
-    c: `Expected attempts by time t given by ∫₀ᵗ r(s) ds = ${cHere}.`,
-    d: `Given accumulated attempts c, it returns the time t. ${dHere}.`,
+    r: `Expected infection attempts per day at time t since infection; the area under it is R₀. In this case, r(t) = ${rHere}.`,
+    c: `Expected attempts by time t = ∫₀ᵗ r(s) ds, where r(s) is the rate function. In this case, c(t) = ${cHere}`,
+    d: `Given accumulated attempts c, it returns the time t. For this rate function, ${dHere}.`,
   };
 }
 
@@ -289,8 +295,8 @@ export function describeRate(rate: InfectionRate): {
           ? `μ=${fmt(d.mu)}, σ=${fmt(d.sigma)}`
           : `shape=${fmt(d.shape)}, scale=${fmt(d.scale)}`;
       return {
-        title: `${name}(${params})`,
-        subtitle: `R₀ = ${fmt(rate.scale)} over t ∈ [0, ${fmt(rate.duration)}]`,
+        title: name,
+        subtitle: `${params}, R₀ = ${fmt(rate.scale)} over t ∈ [0, ${fmt(rate.duration)}]`,
       };
     }
     case "library":
