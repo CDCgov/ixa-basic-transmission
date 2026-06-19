@@ -9,7 +9,7 @@ edition = "2021"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-ixa = "2.0.0-beta2.4"
+ixa = "2.0.0"
 wasm-bindgen = "0.2"
 cfasim-model = "0.4"
 serde = { version = "1", features = ["derive"] }

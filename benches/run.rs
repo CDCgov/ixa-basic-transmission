@@ -48,6 +48,7 @@ fn base_params(rate: InfectionRate) -> Parameters {
         initial_infections: INITIAL_INFECTIONS,
         seed: SEED,
         max_time: MAX_TIME,
+        settings: Vec::new(),
     }
 }
 
