@@ -1,6 +1,5 @@
 //! Settings-based contact structure: groups of people that share a
-//! density-scaled contact rate. Modeled after ixa-epi-isolation
-//! (`ixa-epi-isolation/src/settings.rs`).
+//! density-scaled contact rate.
 //!
 //! Each `SettingType` declares a name, an `alpha` (density exponent),
 //! a discrete size distribution, and a `proportion` (itinerary weight).
@@ -10,7 +9,7 @@
 //! At setup, every person is placed in exactly one `Setting` of every
 //! configured type (the last setting of a type may be undersized).
 //!
-//! Forecast / evaluation split, matching ixa-epi-isolation:
+//! Forecast / evaluation split:
 //!
 //! * `settings_max_multiplier(person)` = `max_s M_s` — single peak setting.
 //! * `settings_current_multiplier(person)` = `Σ p_s · M_s` — weighted total.
@@ -148,6 +147,12 @@ pub struct SettingsData {
     /// Reused directly by `sample_weighted` to avoid allocating a
     /// fresh `Vec` every transmission attempt.
     pub selection_weights: EntityMap<Person, Vec<f64>>,
+    /// Optional per-person itinerary restriction (isolation): while present,
+    /// the person's *current* multiplier and contact sampling are confined
+    /// to this single setting. The forecast bound (`max_multiplier`) is left
+    /// untouched, so the thinning invariant still holds. Set/cleared at
+    /// runtime by `settings_restrict_to` / `settings_clear_restriction`.
+    pub restriction: EntityMap<Person, SettingId>,
 }
 
 impl Default for SettingsData {
@@ -166,6 +171,7 @@ impl SettingsData {
             max_multiplier: EntityMap::new(),
             current_multiplier: EntityMap::new(),
             selection_weights: EntityMap::new(),
+            restriction: EntityMap::new(),
         }
     }
 
@@ -191,8 +197,7 @@ pub trait SettingsExt {
     /// `Σ p_s · M_s` for `person`. Returns 1.0 when settings are disabled.
     fn settings_current_multiplier(&self, person: PersonId) -> f64;
 
-    /// Pick a `Setting` for `person` weighted by `p_s · M_s` (matches
-    /// ixa-epi-isolation's `sample_current_setting`). Returns `None`
+    /// Pick a `Setting` for `person` weighted by `p_s · M_s`. Returns `None`
     /// when settings are disabled or every weight is zero.
     fn settings_sample_current_setting(&self, person: PersonId) -> Option<SettingId>;
 
@@ -201,6 +206,21 @@ pub trait SettingsExt {
     /// that setting (excluding the infector). When disabled, samples
     /// globally — preserving the old random-mixing behavior.
     fn settings_sample_contact(&self, infector: PersonId) -> Option<PersonId>;
+
+    /// Restrict `person`'s current itinerary to their setting of type
+    /// `type_index` (isolation). While restricted,
+    /// `settings_current_multiplier` and contact sampling use only that
+    /// setting; `settings_max_multiplier` (the forecast bound) is
+    /// unaffected, so `current ≤ forecasted` still holds. No-op when
+    /// settings are disabled or `person` has no setting of that type.
+    fn settings_restrict_to(&mut self, person: PersonId, type_index: usize);
+
+    /// Remove any itinerary restriction on `person`, restoring the full
+    /// itinerary. No-op if `person` wasn't restricted.
+    fn settings_clear_restriction(&mut self, person: PersonId);
+
+    /// Whether `person` currently has an itinerary restriction.
+    fn settings_is_restricted(&self, person: PersonId) -> bool;
 }
 
 impl SettingsExt for Context {
@@ -319,6 +339,11 @@ impl SettingsExt for Context {
         if !data.enabled() {
             return 1.0;
         }
+        // Isolation: confined to one setting → just that setting's M_target
+        // (≤ max_multiplier, so the thinning invariant holds).
+        if let Some(&sid) = data.restriction.get(person) {
+            return data.setting_multiplier.get(sid).copied().unwrap_or(0.0);
+        }
         data.current_multiplier.get(person).copied().unwrap_or(0.0)
     }
 
@@ -326,6 +351,10 @@ impl SettingsExt for Context {
         let data = self.get_data(SettingsPlugin);
         if !data.enabled() {
             return None;
+        }
+        // Isolation: contacts come only from the restricted setting.
+        if let Some(&sid) = data.restriction.get(person) {
+            return Some(sid);
         }
         let settings = data.person_to_settings.get(person)?;
         let weights = data.selection_weights.get(person)?;
@@ -352,6 +381,33 @@ impl SettingsExt for Context {
         self.sample(SettingsContactRng, |rng| {
             sample_single_excluding(rng, members, infector).copied()
         })
+    }
+
+    fn settings_restrict_to(&mut self, person: PersonId, type_index: usize) {
+        let data = self.get_data(SettingsPlugin);
+        if !data.enabled() {
+            return;
+        }
+        let Some(&sid) = data
+            .person_to_settings
+            .get(person)
+            .and_then(|settings| settings.get(type_index))
+        else {
+            return;
+        };
+        self.get_data_mut(SettingsPlugin)
+            .restriction
+            .insert(person, sid);
+    }
+
+    fn settings_clear_restriction(&mut self, person: PersonId) {
+        self.get_data_mut(SettingsPlugin).restriction.remove(person);
+    }
+
+    fn settings_is_restricted(&self, person: PersonId) -> bool {
+        self.get_data(SettingsPlugin)
+            .restriction
+            .contains_key(person)
     }
 }
 
@@ -560,5 +616,67 @@ mod tests {
             (p_a - 0.8).abs() < 0.02,
             "expected P(A) ≈ 0.8, observed {p_a} (counts {counts:?})"
         );
+    }
+
+    #[test]
+    fn restrict_to_uses_target_multiplier_and_leaves_max() {
+        // home: size 3, alpha 1 → M=2; work: size 5, alpha 1 → M=4.
+        // proportions 0.5/0.5 → current = 0.5·2 + 0.5·4 = 3; max = max(2,4) = 4.
+        let home = make_type("home", 1.0, vec![(3, 1.0)], 0.5);
+        let work = make_type("work", 1.0, vec![(5, 1.0)], 0.5);
+        let mut ctx = build_context_with(vec![home, work], 15, 0);
+        let p = ctx.query_result_iterator(Person).next().unwrap();
+
+        assert_almost_eq!(ctx.settings_current_multiplier(p), 3.0, 1e-9);
+        assert_almost_eq!(ctx.settings_max_multiplier(p), 4.0, 1e-9);
+
+        // Restrict to home (type index 0): current → M_home = 2; max unchanged.
+        ctx.settings_restrict_to(p, 0);
+        assert!(ctx.settings_is_restricted(p));
+        assert_almost_eq!(ctx.settings_current_multiplier(p), 2.0, 1e-9);
+        assert_almost_eq!(ctx.settings_max_multiplier(p), 4.0, 1e-9);
+
+        // Clearing restores the full weighted current.
+        ctx.settings_clear_restriction(p);
+        assert!(!ctx.settings_is_restricted(p));
+        assert_almost_eq!(ctx.settings_current_multiplier(p), 3.0, 1e-9);
+    }
+
+    #[test]
+    fn restricted_sampling_only_hits_target_setting() {
+        let home = make_type("home", 1.0, vec![(3, 1.0)], 0.5);
+        let work = make_type("work", 1.0, vec![(5, 1.0)], 0.5);
+        let mut ctx = build_context_with(vec![home, work], 15, 7);
+        let p = ctx.query_result_iterator(Person).next().unwrap();
+        ctx.settings_restrict_to(p, 0); // home
+
+        let data = ctx.get_data(SettingsPlugin);
+        let home_sid = data.person_to_settings.get(p).unwrap()[0];
+        let home_members: std::collections::HashSet<PersonId> = data
+            .members
+            .get(home_sid)
+            .unwrap()
+            .iter()
+            .copied()
+            .collect();
+
+        // Every sampled contact must be a home member other than the infector.
+        for _ in 0..200 {
+            let c = ctx
+                .settings_sample_contact(p)
+                .expect("home setting has other members");
+            assert_ne!(c, p);
+            assert!(home_members.contains(&c), "contact {c:?} not in home");
+        }
+    }
+
+    #[test]
+    fn restrict_is_noop_when_disabled() {
+        let mut ctx = build_context_with(Vec::new(), 5, 0);
+        let p = ctx.query_result_iterator(Person).next().unwrap();
+        ctx.settings_restrict_to(p, 0);
+        assert!(!ctx.settings_is_restricted(p));
+        // Disabled settings still report the neutral 1.0.
+        assert_eq!(ctx.settings_current_multiplier(p), 1.0);
     }
 }

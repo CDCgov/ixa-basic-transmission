@@ -31,6 +31,7 @@ use std::path::PathBuf;
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 
 use ixa_basic_transmission::model;
+use ixa_basic_transmission::modifiers::Modifiers;
 use ixa_basic_transmission::parameters::Parameters;
 use ixa_basic_transmission::rate::{
     empirical_cum_rate, empirical_inverse_cum_rate, Curve, InfectionRate,
@@ -49,8 +50,7 @@ fn base_params(rate: InfectionRate) -> Parameters {
         seed: SEED,
         max_time: MAX_TIME,
         settings: Vec::new(),
-        facemask: None,
-        antiviral: None,
+        modifiers: Modifiers::default(),
     }
 }
 

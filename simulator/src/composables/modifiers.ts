@@ -41,6 +41,48 @@ export const DEFAULT_ANTIVIRAL: Antiviral = {
   delay: 2,
 };
 
+/// Isolation: a fraction of infections confine their contacts to a single
+/// setting (e.g. their household) a fixed `delay` after infection, optionally
+/// resuming normal contact after a `duration`. Unlike facemask/antiviral
+/// (which scale intrinsic shedding), this is a *contact-structure* change —
+/// it requires `settings` to be configured (there's no household to restrict
+/// to under global random mixing).
+export type Isolation = {
+  /** Fraction of infections that isolate, in [0, 1]. */
+  coverage: number;
+  /** Name of the setting type to confine contacts to (must match a configured setting). */
+  restrictTo: string;
+  /** Time from infection to isolation onset, ≥ 0. */
+  delay: number;
+  /** Isolation window: `null` = until recovery; a number = resume contact after it. */
+  duration: number | null;
+};
+
+export const DEFAULT_ISOLATION: Isolation = {
+  coverage: 0.5,
+  restrictTo: "",
+  delay: 2,
+  duration: null,
+};
+
+/// Default isolation window length offered when a user switches from
+/// "until recovery" to a finite window in the editor.
+export const DEFAULT_ISOLATION_DURATION = 5;
+
+/// The transmission-modifier set, grouped as one `Parameters` subsection
+/// (mirrors the Rust `Modifiers`). Each modifier is `null` when disabled.
+export type Modifiers = {
+  facemask: Facemask | null;
+  antiviral: Antiviral | null;
+  isolation: Isolation | null;
+};
+
+export const DEFAULT_MODIFIERS: Modifiers = {
+  facemask: null,
+  antiviral: null,
+  isolation: null,
+};
+
 /// Fraction of intrinsic infectiousness that *remains* once a modifier is
 /// active — the multiplicative factor the model applies (`1 - reduction`),
 /// clamped to [0, 1]. Mirrors the Rust `1 - effectiveness` / `1 - efficacy`.

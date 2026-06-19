@@ -25,6 +25,7 @@ use ixa::prelude::*;
 use ixa::{define_rng, Context};
 use serde::{Deserialize, Serialize};
 
+use super::intrinsic::IntrinsicModifierExt;
 use super::ModifierExt;
 use crate::person::{InfectionStatus, InfectionTime, PersonId};
 

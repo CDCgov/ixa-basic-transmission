@@ -2,6 +2,7 @@ use ixa::prelude::*;
 use ixa::{define_data_plugin, define_global_property, define_rng, Context};
 use rand_distr::Exp;
 
+use crate::modifiers::intrinsic::IntrinsicModifierExt;
 use crate::modifiers::ModifierExt;
 use crate::parameters::Parameters;
 use crate::person::{InfectionStatus, InfectionTime, Person, PersonId};
@@ -125,8 +126,8 @@ impl InfectionLoop for Context {
     }
 
     fn current_total_infectiousness_multiplier(&self, person: PersonId) -> f64 {
-        // True per-person scaling: `Σ p_s · M_s` over the person's settings
-        // (matching ixa-epi-isolation). Equals 1.0 when settings are disabled.
+        // True per-person scaling: `Σ p_s · M_s` over the person's settings.
+        // Equals 1.0 when settings are disabled.
         self.settings_current_multiplier(person)
     }
 
@@ -332,6 +333,9 @@ mod tests {
     use super::*;
     use crate::modifiers::antiviral::{Antiviral, AntiviralExt};
     use crate::modifiers::facemask::{Facemask, FacemaskExt};
+    use crate::modifiers::isolation::Isolation;
+    use crate::modifiers::Modifiers;
+    use crate::settings::SettingType;
     use ixa::assert_almost_eq;
     use std::cell::RefCell;
     use std::rc::Rc;
@@ -407,8 +411,7 @@ mod tests {
                 seed,
                 max_time,
                 settings: vec![],
-                facemask: None,
-                antiviral: None,
+                modifiers: Modifiers::default(),
             };
             let mut ctx = Context::new();
             ctx.set_global_property_value(Params, params).unwrap();
@@ -484,8 +487,7 @@ mod tests {
                 seed,
                 max_time,
                 settings: vec![],
-                facemask: None,
-                antiviral: None,
+                modifiers: Modifiers::default(),
             };
             let mut ctx = Context::new();
             ctx.set_global_property_value(Params, params).unwrap();
@@ -551,8 +553,7 @@ mod tests {
             seed: 0,
             max_time,
             settings: vec![],
-            facemask: None,
-            antiviral: None,
+            modifiers: Modifiers::default(),
         };
         let mut ctx = Context::new();
         ctx.set_global_property_value(Params, params).unwrap();
@@ -605,8 +606,7 @@ mod tests {
             seed: 0,
             max_time: 50.0,
             settings: vec![],
-            facemask: None,
-            antiviral: None,
+            modifiers: Modifiers::default(),
         };
         let stats = run(params);
         assert_eq!(stats.cum_incidence(), 0);
@@ -646,8 +646,7 @@ mod tests {
                 seed,
                 max_time,
                 settings: vec![],
-                facemask: None,
-                antiviral: None,
+                modifiers: Modifiers::default(),
             };
             let mut ctx = Context::new();
             ctx.set_global_property_value(Params, params).unwrap();
@@ -687,8 +686,7 @@ mod tests {
                 seed,
                 max_time: 0.0,
                 settings: vec![],
-                facemask: None,
-                antiviral: None,
+                modifiers: Modifiers::default(),
             };
             let mut ctx = Context::new();
             ctx.set_global_property_value(Params, params).unwrap();
@@ -736,8 +734,7 @@ mod tests {
                 seed,
                 max_time,
                 settings: vec![],
-                facemask: None,
-                antiviral: None,
+                modifiers: Modifiers::default(),
             };
             let mut ctx = Context::new();
             ctx.set_global_property_value(Params, params).unwrap();
@@ -798,8 +795,7 @@ mod tests {
                 seed,
                 max_time,
                 settings: vec![],
-                facemask: None,
-                antiviral: None,
+                modifiers: Modifiers::default(),
             };
             let mut ctx = Context::new();
             ctx.set_global_property_value(Params, params).unwrap();
@@ -840,8 +836,7 @@ mod tests {
             seed: 42,
             max_time: 10.0,
             settings: vec![],
-            facemask: None,
-            antiviral: None,
+            modifiers: Modifiers::default(),
         };
         let mut ctx = Context::new();
         ctx.set_global_property_value(Params, params).unwrap();
@@ -894,8 +889,7 @@ mod tests {
                 seed,
                 max_time: 20.0,
                 settings: vec![],
-                facemask: None,
-                antiviral: None,
+                modifiers: Modifiers::default(),
             };
             let p_emp = Parameters {
                 infection_rate: InfectionRate::Empirical {
@@ -934,8 +928,7 @@ mod tests {
             seed: 7,
             max_time: 0.0,
             settings: vec![],
-            facemask: None,
-            antiviral: None,
+            modifiers: Modifiers::default(),
         };
         let mut ctx = Context::new();
         ctx.set_global_property_value(Params, params).unwrap();
@@ -968,8 +961,7 @@ mod tests {
             seed: 11,
             max_time: 50.0,
             settings: vec![],
-            facemask: None,
-            antiviral: None,
+            modifiers: Modifiers::default(),
         };
 
         let recovery_times: Rc<RefCell<Vec<f64>>> = Rc::new(RefCell::new(Vec::new()));
@@ -1040,8 +1032,7 @@ mod tests {
                 seed,
                 max_time,
                 settings: vec![setting_type.clone()],
-                facemask: None,
-                antiviral: None,
+                modifiers: Modifiers::default(),
             };
             let mut ctx = Context::new();
             ctx.set_global_property_value(Params, params).unwrap();
@@ -1076,15 +1067,17 @@ mod tests {
             seed: 1,
             max_time: 60.0,
             settings: vec![],
-            facemask: None,
-            antiviral: None,
+            modifiers: Modifiers::default(),
         };
         let no_mask = run(base.clone());
         let cov0 = run(Parameters {
-            facemask: Some(Facemask {
-                coverage: 0.0,
-                effectiveness: 1.0,
-            }),
+            modifiers: Modifiers {
+                facemask: Some(Facemask {
+                    coverage: 0.0,
+                    effectiveness: 1.0,
+                }),
+                ..Default::default()
+            },
             ..base
         });
         assert_eq!(no_mask.cum_incidence(), cov0.cum_incidence());
@@ -1104,15 +1097,17 @@ mod tests {
             seed: 2,
             max_time: 60.0,
             settings: vec![],
-            facemask: None,
-            antiviral: None,
+            modifiers: Modifiers::default(),
         };
         let no_mask = run(base.clone());
         let eff0 = run(Parameters {
-            facemask: Some(Facemask {
-                coverage: 1.0,
-                effectiveness: 0.0,
-            }),
+            modifiers: Modifiers {
+                facemask: Some(Facemask {
+                    coverage: 1.0,
+                    effectiveness: 0.0,
+                }),
+                ..Default::default()
+            },
             ..base
         });
         assert_eq!(no_mask.cum_incidence(), eff0.cum_incidence());
@@ -1132,15 +1127,17 @@ mod tests {
             seed: 3,
             max_time: 80.0,
             settings: vec![],
-            facemask: None,
-            antiviral: None,
+            modifiers: Modifiers::default(),
         };
         let no_mask = run(base.clone());
         let masked = run(Parameters {
-            facemask: Some(Facemask {
-                coverage: 1.0,
-                effectiveness: 1.0,
-            }),
+            modifiers: Modifiers {
+                facemask: Some(Facemask {
+                    coverage: 1.0,
+                    effectiveness: 1.0,
+                }),
+                ..Default::default()
+            },
             ..base
         });
         assert!(
@@ -1189,8 +1186,10 @@ mod tests {
                 seed,
                 max_time: d,
                 settings: vec![],
-                facemask: Some(facemask),
-                antiviral: None,
+                modifiers: Modifiers {
+                    facemask: Some(facemask),
+                    ..Default::default()
+                },
             };
             let mut ctx = Context::new();
             ctx.set_global_property_value(Params, params).unwrap();
@@ -1227,16 +1226,18 @@ mod tests {
             seed: 1,
             max_time: 60.0,
             settings: vec![],
-            facemask: None,
-            antiviral: None,
+            modifiers: Modifiers::default(),
         };
         let no_tx = run(base.clone());
         let cov0 = run(Parameters {
-            antiviral: Some(Antiviral {
-                coverage: 0.0,
-                efficacy: 1.0,
-                delay: 1.0,
-            }),
+            modifiers: Modifiers {
+                antiviral: Some(Antiviral {
+                    coverage: 0.0,
+                    efficacy: 1.0,
+                    delay: 1.0,
+                }),
+                ..Default::default()
+            },
             ..base
         });
         assert_eq!(no_tx.cum_incidence(), cov0.cum_incidence());
@@ -1257,16 +1258,18 @@ mod tests {
             seed: 2,
             max_time: 60.0,
             settings: vec![],
-            facemask: None,
-            antiviral: None,
+            modifiers: Modifiers::default(),
         };
         let no_tx = run(base.clone());
         let eff0 = run(Parameters {
-            antiviral: Some(Antiviral {
-                coverage: 1.0,
-                efficacy: 0.0,
-                delay: 1.0,
-            }),
+            modifiers: Modifiers {
+                antiviral: Some(Antiviral {
+                    coverage: 1.0,
+                    efficacy: 0.0,
+                    delay: 1.0,
+                }),
+                ..Default::default()
+            },
             ..base
         });
         assert_eq!(no_tx.cum_incidence(), eff0.cum_incidence());
@@ -1286,16 +1289,18 @@ mod tests {
             seed: 3,
             max_time: 80.0,
             settings: vec![],
-            facemask: None,
-            antiviral: None,
+            modifiers: Modifiers::default(),
         };
         let no_tx = run(base.clone());
         let treated = run(Parameters {
-            antiviral: Some(Antiviral {
-                coverage: 1.0,
-                efficacy: 1.0,
-                delay: 1.0,
-            }),
+            modifiers: Modifiers {
+                antiviral: Some(Antiviral {
+                    coverage: 1.0,
+                    efficacy: 1.0,
+                    delay: 1.0,
+                }),
+                ..Default::default()
+            },
             ..base
         });
         assert!(
@@ -1342,8 +1347,10 @@ mod tests {
                 seed,
                 max_time: d,
                 settings: vec![],
-                facemask: None,
-                antiviral: Some(antiviral),
+                modifiers: Modifiers {
+                    antiviral: Some(antiviral),
+                    ..Default::default()
+                },
             };
             let mut ctx = Context::new();
             ctx.set_global_property_value(Params, params).unwrap();
@@ -1380,8 +1387,7 @@ mod tests {
             seed: 5,
             max_time: 80.0,
             settings: vec![],
-            facemask: None,
-            antiviral: None,
+            modifiers: Modifiers::default(),
         };
         let mask = Some(Facemask {
             coverage: 1.0,
@@ -1395,18 +1401,27 @@ mod tests {
 
         let none = run(base.clone()).cum_incidence();
         let mask_only = run(Parameters {
-            facemask: mask,
+            modifiers: Modifiers {
+                facemask: mask,
+                ..Default::default()
+            },
             ..base.clone()
         })
         .cum_incidence();
         let av_only = run(Parameters {
-            antiviral: av,
+            modifiers: Modifiers {
+                antiviral: av,
+                ..Default::default()
+            },
             ..base.clone()
         })
         .cum_incidence();
         let both = run(Parameters {
-            facemask: mask,
-            antiviral: av,
+            modifiers: Modifiers {
+                facemask: mask,
+                antiviral: av,
+                ..Default::default()
+            },
             ..base
         })
         .cum_incidence();
@@ -1416,6 +1431,197 @@ mod tests {
             both <= mask_only && both <= av_only,
             "both ({both}) should not exceed either single intervention \
              (mask {mask_only}, antiviral {av_only})"
+        );
+    }
+
+    // --- Isolation (itinerary restriction, total/contact channel) ---------
+
+    fn household_and_work() -> Vec<SettingType> {
+        // Small household + large workplace. Isolating to household cuts the
+        // (much larger) workplace contacts.
+        vec![
+            SettingType {
+                name: "household".into(),
+                alpha: 1.0,
+                sizes: vec![(3, 1.0)],
+                proportion: 0.5,
+            },
+            SettingType {
+                name: "work".into(),
+                alpha: 1.0,
+                sizes: vec![(20, 1.0)],
+                proportion: 0.5,
+            },
+        ]
+    }
+
+    fn isolation_base(seed: u64) -> Parameters {
+        Parameters {
+            infection_rate: InfectionRate::Constant {
+                value: 0.5,
+                duration: 3.0,
+            },
+            population: 5000,
+            initial_infections: 10,
+            seed,
+            max_time: 80.0,
+            settings: household_and_work(),
+            modifiers: Modifiers::default(),
+        }
+    }
+
+    #[test]
+    fn isolation_coverage_zero_matches_no_isolation() {
+        // coverage=0 sets no restriction; `IsolationRng` is independent, so the
+        // run is bit-identical to no-isolation.
+        let base = isolation_base(1);
+        let no_iso = run(base.clone());
+        let cov0 = run(Parameters {
+            modifiers: Modifiers {
+                isolation: Some(Isolation {
+                    coverage: 0.0,
+                    restrict_to: "household".into(),
+                    delay: 1.0,
+                    duration: None,
+                }),
+                ..Default::default()
+            },
+            ..base
+        });
+        assert_eq!(no_iso.cum_incidence(), cov0.cum_incidence());
+    }
+
+    #[test]
+    fn isolation_unknown_setting_is_noop() {
+        // A restrictTo that matches no configured setting registers nothing,
+        // so the run matches no-isolation exactly.
+        let base = isolation_base(2);
+        let no_iso = run(base.clone());
+        let bad = run(Parameters {
+            modifiers: Modifiers {
+                isolation: Some(Isolation {
+                    coverage: 1.0,
+                    restrict_to: "spaceship".into(),
+                    delay: 0.0,
+                    duration: None,
+                }),
+                ..Default::default()
+            },
+            ..base
+        });
+        assert_eq!(no_iso.cum_incidence(), bad.cum_incidence());
+    }
+
+    #[test]
+    fn isolation_reduces_epidemic_incidence() {
+        // Full-coverage isolation to the small household (M=2) instead of the
+        // large workplace (M=19) must strictly cut the epidemic.
+        let base = isolation_base(3);
+        let no_iso = run(base.clone());
+        let isolated = run(Parameters {
+            modifiers: Modifiers {
+                isolation: Some(Isolation {
+                    coverage: 1.0,
+                    restrict_to: "household".into(),
+                    delay: 0.0,
+                    duration: None,
+                }),
+                ..Default::default()
+            },
+            ..base
+        });
+        assert!(
+            isolated.cum_incidence() < no_iso.cum_incidence(),
+            "isolated incidence ({}) should be below un-isolated ({})",
+            isolated.cum_incidence(),
+            no_iso.cum_incidence()
+        );
+    }
+
+    #[test]
+    fn finite_duration_isolation_allows_more_transmission_than_persistent() {
+        // A finite isolation window resumes full contact afterward, so it
+        // permits more transmission than isolating until recovery.
+        let base = isolation_base(4);
+        let persistent = run(Parameters {
+            modifiers: Modifiers {
+                isolation: Some(Isolation {
+                    coverage: 1.0,
+                    restrict_to: "household".into(),
+                    delay: 0.0,
+                    duration: None,
+                }),
+                ..Default::default()
+            },
+            ..base.clone()
+        });
+        let finite = run(Parameters {
+            modifiers: Modifiers {
+                isolation: Some(Isolation {
+                    coverage: 1.0,
+                    restrict_to: "household".into(),
+                    delay: 0.0,
+                    duration: Some(2.0),
+                }),
+                ..Default::default()
+            },
+            ..base
+        });
+        assert!(
+            finite.cum_incidence() > persistent.cum_incidence(),
+            "finite-window isolation ({}) should permit more than persistent ({})",
+            finite.cum_incidence(),
+            persistent.cum_incidence()
+        );
+    }
+
+    #[test]
+    fn isolation_and_facemask_compose() {
+        // Total (isolation) and intrinsic (facemask) channels stack: together
+        // at least as low as either alone, and below no intervention.
+        let base = isolation_base(5);
+        let iso = Some(Isolation {
+            coverage: 1.0,
+            restrict_to: "household".into(),
+            delay: 0.0,
+            duration: None,
+        });
+        let mask = Some(Facemask {
+            coverage: 1.0,
+            effectiveness: 0.6,
+        });
+
+        let none = run(base.clone()).cum_incidence();
+        let iso_only = run(Parameters {
+            modifiers: Modifiers {
+                isolation: iso.clone(),
+                ..Default::default()
+            },
+            ..base.clone()
+        })
+        .cum_incidence();
+        let mask_only = run(Parameters {
+            modifiers: Modifiers {
+                facemask: mask,
+                ..Default::default()
+            },
+            ..base.clone()
+        })
+        .cum_incidence();
+        let both = run(Parameters {
+            modifiers: Modifiers {
+                isolation: iso,
+                facemask: mask,
+                ..Default::default()
+            },
+            ..base
+        })
+        .cum_incidence();
+
+        assert!(both < none, "both ({both}) should be below none ({none})");
+        assert!(
+            both <= iso_only && both <= mask_only,
+            "both ({both}) should not exceed either alone (iso {iso_only}, mask {mask_only})"
         );
     }
 }

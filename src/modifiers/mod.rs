@@ -1,46 +1,65 @@
-//! Intrinsic-infectiousness modifier registry.
+//! Intervention registry — activation machinery shared by all transmission
+//! modifiers, plus the single registration point ([`register_all`]).
 //!
-//! Interventions (e.g. [`facemask`]) reduce a person's **intrinsic**
-//! infectiousness λ(τ) — the per-person rate, *not* the settings/contact
-//! (total) multiplier — by a relative factor in `[0, 1]` (the fraction of
-//! infectiousness *remaining*). Multiple modifiers compose
-//! **multiplicatively**.
+//! An intervention schedules its effect when a person becomes infectious via
+//! [`ModifierExt::register_on_infectious`]; the transmission loop runs every
+//! registered hook generically ([`ModifierExt::run_activation_hooks`]), so
+//! the loop never changes when one is added. This module is **channel-
+//! agnostic** — it only knows *when* effects fire, not *what* they do.
 //!
-//! Performance: rather than re-aggregate modifiers on every forecast
-//! evaluation (the hot path — see `model::evaluate_forecast`), each person
-//! caches the running product in a single [`IntrinsicMultiplier`] property.
-//! An intervention multiplies its factor in *once*, when it activates; the
-//! transmission loop then reads one `f64`. No per-evaluation dynamic
-//! dispatch, map lookups, or allocation — and `evaluate_forecast` is
-//! intervention-agnostic, so adding a modifier never touches it.
-//!
-//! Because the cached value only ever stays ≤ 1.0, the forecast upper
-//! bound (built from the un-modified λ) remains valid and the existing
-//! thinning step accepts at the modified rate for free.
-//!
-//! Scope: this models **activate-once** modifiers — a person transmits
-//! once over their SIR lifetime, and the interventions here only switch
-//! *on*. A reversible modifier (mask taken off, isolation ended) would
-//! need its own per-person factor plus a recompute-on-change rather than
-//! this multiply-in accumulator.
+//! Effects land in one of two channels:
+//! * **Intrinsic** ([`intrinsic`]) — scales the per-person shedding rate
+//!   λ(τ) via a cached multiplier. Used by [`facemask`] / [`antiviral`].
+//! * **Total / contact** — restructures contact mixing via the settings-layer
+//!   itinerary restriction (`crate::settings`). Used by [`isolation`].
 //!
 //! Adding a modifier:
 //! 1. Give it a module that owns its per-person state + activation timing.
-//! 2. Have that activation call [`ModifierExt::apply_intrinsic_modifier`].
-//! 3. Register its activation hook in **one place** — [`register_all`] —
-//!    via [`ModifierExt::register_on_infectious`]. The transmission loop
-//!    runs every registered hook generically (see
-//!    [`ModifierExt::run_activation_hooks`]), so the loop itself never
-//!    changes when a modifier is added.
+//! 2. Have its activation apply to a channel — `apply_intrinsic_modifier`
+//!    (intrinsic) or a `settings_*` call (total).
+//! 3. Register its activation hook in **one place** — [`register_all`].
 
 pub mod antiviral;
 pub mod facemask;
+pub mod intrinsic;
+pub mod isolation;
 
-use ixa::prelude::*;
-use ixa::{define_data_plugin, impl_property, Context};
+use ixa::{define_data_plugin, Context};
+use serde::{Deserialize, Serialize};
 
+use crate::modifiers::antiviral::Antiviral;
+use crate::modifiers::facemask::Facemask;
+use crate::modifiers::isolation::Isolation;
 use crate::parameters::Parameters;
-use crate::person::{Person, PersonId};
+use crate::person::PersonId;
+
+/// The transmission-modifier set, grouped as one `Parameters` subsection so
+/// adding a modifier is a single struct edit (not a field on every
+/// `Parameters` literal + arg). Each is `None` (disabled) by default;
+/// `#[serde(default)]` lets an omitted field — or the whole `modifiers` key —
+/// deserialize as disabled.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Modifiers {
+    pub facemask: Option<Facemask>,
+    pub antiviral: Option<Antiviral>,
+    pub isolation: Option<Isolation>,
+}
+
+impl Modifiers {
+    pub fn validate(&self) -> Result<(), String> {
+        if let Some(facemask) = &self.facemask {
+            facemask.validate()?;
+        }
+        if let Some(antiviral) = &self.antiviral {
+            antiviral.validate()?;
+        }
+        if let Some(isolation) = &self.isolation {
+            isolation.validate()?;
+        }
+        Ok(())
+    }
+}
 
 /// A hook run once when a person becomes infectious, with that person's
 /// realized infectious-period duration. Interventions register one via
@@ -59,26 +78,7 @@ define_data_plugin!(ModifierActivationPlugin, ModifierActivation, |_context| {
     ModifierActivation::default()
 });
 
-/// Per-person cached product of every active intrinsic-infectiousness
-/// modifier. `1.0` means unmodified. Read once per forecast evaluation.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct IntrinsicMultiplier(pub f64);
-impl_property!(
-    IntrinsicMultiplier,
-    Person,
-    default_const = IntrinsicMultiplier(1.0)
-);
-
 pub trait ModifierExt {
-    /// Compose `factor` (relative infectiousness *remaining*, in `[0, 1]`)
-    /// into `person`'s cached intrinsic multiplier. Call once per modifier,
-    /// at the moment it activates.
-    fn apply_intrinsic_modifier(&mut self, person: PersonId, factor: f64);
-
-    /// `person`'s cached intrinsic-infectiousness multiplier (`1.0` when no
-    /// modifier is active). Hot-path read in `model::evaluate_forecast`.
-    fn intrinsic_multiplier(&self, person: PersonId) -> f64;
-
     /// Register a hook to run when any person becomes infectious. Called
     /// once per active intervention at setup (see [`register_all`]).
     fn register_on_infectious<F>(&mut self, hook: F)
@@ -92,20 +92,6 @@ pub trait ModifierExt {
 }
 
 impl ModifierExt for Context {
-    fn apply_intrinsic_modifier(&mut self, person: PersonId, factor: f64) {
-        debug_assert!(
-            (0.0..=1.0).contains(&factor),
-            "intrinsic modifier factor must be in [0, 1] — the forecast upper \
-             bound assumes modifiers never raise the rate (got {factor})"
-        );
-        let current = self.get_property::<_, IntrinsicMultiplier>(person).0;
-        self.set_property(person, IntrinsicMultiplier(current * factor));
-    }
-
-    fn intrinsic_multiplier(&self, person: PersonId) -> f64 {
-        self.get_property::<_, IntrinsicMultiplier>(person).0
-    }
-
     fn register_on_infectious<F>(&mut self, hook: F)
     where
         F: Fn(&mut Context, PersonId, f64) + 'static,
@@ -135,38 +121,28 @@ impl ModifierExt for Context {
 /// that lists the interventions — adding one is a new submodule plus a line
 /// here; the transmission loop stays generic.
 pub fn register_all(ctx: &mut Context, params: &Parameters) {
-    facemask::register(ctx, params.facemask);
-    antiviral::register(ctx, params.antiviral);
+    let m = &params.modifiers;
+    // Intrinsic-channel modifiers (scale λ(τ) via the intrinsic cache).
+    facemask::register(ctx, m.facemask);
+    antiviral::register(ctx, m.antiviral);
+    // Total/contact-channel modifier (settings-layer itinerary restriction).
+    // Needs the settings list to resolve `restrictTo` to a type index.
+    isolation::register(ctx, m.isolation.clone(), &params.settings);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn default_multiplier_is_one() {
-        let mut ctx = Context::new();
-        ctx.init_random(0);
-        let p = ctx.add_entity(Person).unwrap();
-        assert_eq!(ctx.intrinsic_multiplier(p), 1.0);
-    }
-
-    #[test]
-    fn modifiers_compose_multiplicatively() {
-        let mut ctx = Context::new();
-        ctx.init_random(0);
-        let p = ctx.add_entity(Person).unwrap();
-        ctx.apply_intrinsic_modifier(p, 0.5);
-        assert!((ctx.intrinsic_multiplier(p) - 0.5).abs() < 1e-12);
-        ctx.apply_intrinsic_modifier(p, 0.2);
-        // 0.5 × 0.2 = 0.1
-        assert!((ctx.intrinsic_multiplier(p) - 0.1).abs() < 1e-12);
-    }
+    use crate::modifiers::intrinsic::IntrinsicModifierExt;
+    use crate::person::Person;
+    use ixa::prelude::*;
 
     #[test]
     fn activation_hooks_run_in_order_and_persist() {
         // Hooks registered once are run (in registration order) on every
-        // `run_activation_hooks` call and restored afterward.
+        // `run_activation_hooks` call and restored afterward. We observe via
+        // the intrinsic cache for convenience — the registry itself is
+        // channel-agnostic.
         let mut ctx = Context::new();
         ctx.init_random(0);
         let p = ctx.add_entity(Person).unwrap();
@@ -177,16 +153,5 @@ mod tests {
         // Hooks restored: a second activation applies them again.
         ctx.run_activation_hooks(p, 1.0);
         assert!((ctx.intrinsic_multiplier(p) - 0.01).abs() < 1e-12);
-    }
-
-    #[test]
-    fn modifier_is_per_person() {
-        let mut ctx = Context::new();
-        ctx.init_random(0);
-        let a = ctx.add_entity(Person).unwrap();
-        let b = ctx.add_entity(Person).unwrap();
-        ctx.apply_intrinsic_modifier(a, 0.3);
-        assert!((ctx.intrinsic_multiplier(a) - 0.3).abs() < 1e-12);
-        assert_eq!(ctx.intrinsic_multiplier(b), 1.0);
     }
 }

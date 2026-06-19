@@ -23,7 +23,7 @@ import {
   normalizeInfectionRate,
 } from "./composables/infectionRate";
 import type { SettingType } from "./composables/settings";
-import type { Facemask, Antiviral } from "./composables/modifiers";
+import { type Modifiers, DEFAULT_MODIFIERS } from "./composables/modifiers";
 import { useSimulationRunner } from "./composables/useSimulationRunner";
 import { useChartData } from "./composables/useChartData";
 
@@ -36,8 +36,7 @@ const defaults = {
   nSimulations: 20,
   settings: [] as SettingType[],
   // Optional transmission modifiers; `null` = disabled (Rust reads `None`).
-  facemask: null as Facemask | null,
-  antiviral: null as Antiviral | null,
+  modifiers: { ...DEFAULT_MODIFIERS } as Modifiers,
 };
 type Params = typeof defaults;
 
@@ -149,8 +148,7 @@ const { reset } = useUrlParams(params, defaults, {
     // Object-or-null params: JSON-encode the whole subtree. Default `null`
     // serializes to "null" and matches, so it's omitted from the URL until
     // the modifier is enabled.
-    facemask: jsonCodec,
-    antiviral: jsonCodec,
+    modifiers: jsonCodec,
   },
 });
 
@@ -331,11 +329,10 @@ const { charts, summary, fmtCount } = useChartData(
       />
       <SettingsEditor v-model="params.settings" :live="live" />
       <ModifiersEditor
-        :facemask="params.facemask"
-        :antiviral="params.antiviral"
+        :modifiers="params.modifiers"
+        :setting-names="params.settings.map((s) => s.name)"
         :live="live"
-        @update:facemask="(v: Facemask | null) => setParam('facemask', v)"
-        @update:antiviral="(v: Antiviral | null) => setParam('antiviral', v)"
+        @update:modifiers="(v: Modifiers) => setParam('modifiers', v)"
       />
     </template>
   </Teleport>

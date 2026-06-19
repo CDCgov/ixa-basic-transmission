@@ -1,7 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::modifiers::antiviral::Antiviral;
-use crate::modifiers::facemask::Facemask;
+use crate::modifiers::Modifiers;
 use crate::rate::InfectionRate;
 use crate::settings::SettingType;
 
@@ -20,15 +19,11 @@ pub struct Parameters {
     /// feature was added. See `crate::settings`.
     #[serde(default)]
     pub settings: Vec<SettingType>,
-    /// Optional facemask intervention. `None` (the default) disables it
-    /// entirely — no RNG is drawn and infectiousness is unmodified. See
-    /// `crate::modifiers::facemask`.
+    /// Transmission-modifier interventions (facemask, antiviral, isolation),
+    /// grouped as one subsection. Each is disabled by default. See
+    /// `crate::modifiers`.
     #[serde(default)]
-    pub facemask: Option<Facemask>,
-    /// Optional antiviral-treatment intervention. `None` (the default)
-    /// disables it entirely. See `crate::modifiers::antiviral`.
-    #[serde(default)]
-    pub antiviral: Option<Antiviral>,
+    pub modifiers: Modifiers,
 }
 
 impl Default for Parameters {
@@ -43,8 +38,7 @@ impl Default for Parameters {
             seed: 0,
             max_time: 100.0,
             settings: Vec::new(),
-            facemask: None,
-            antiviral: None,
+            modifiers: Modifiers::default(),
         }
     }
 }
@@ -75,12 +69,7 @@ impl Parameters {
                 ));
             }
         }
-        if let Some(facemask) = &self.facemask {
-            facemask.validate()?;
-        }
-        if let Some(antiviral) = &self.antiviral {
-            antiviral.validate()?;
-        }
+        self.modifiers.validate()?;
         Ok(())
     }
 }

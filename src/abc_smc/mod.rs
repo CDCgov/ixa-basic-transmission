@@ -19,6 +19,7 @@ pub use step::{
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::modifiers::Modifiers;
     use crate::parameters::Parameters;
     use crate::rate::InfectionRate;
     use rand::{rngs::StdRng, SeedableRng};
@@ -34,8 +35,7 @@ mod tests {
             seed: 42,
             max_time: 60.0,
             settings: Vec::new(),
-            facemask: None,
-            antiviral: None,
+            modifiers: Modifiers::default(),
         }
     }
 

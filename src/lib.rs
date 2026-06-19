@@ -18,8 +18,7 @@ use cfasim_model::{model_outputs, ModelOutput};
 use serde::Deserialize;
 use wasm_bindgen::prelude::*;
 
-use crate::modifiers::antiviral::Antiviral;
-use crate::modifiers::facemask::Facemask;
+use crate::modifiers::Modifiers;
 use crate::parameters::Parameters;
 use crate::rate::InfectionRate;
 use crate::settings::SettingType;
@@ -39,9 +38,7 @@ struct SimulateArgs {
     #[serde(default)]
     settings: Vec<SettingType>,
     #[serde(default)]
-    facemask: Option<Facemask>,
-    #[serde(default)]
-    antiviral: Option<Antiviral>,
+    modifiers: Modifiers,
 }
 
 /// Arguments accepted by `simulate_batch`. Same as `SimulateArgs` but
@@ -61,9 +58,7 @@ struct SimulateBatchArgs {
     #[serde(default)]
     settings: Vec<SettingType>,
     #[serde(default)]
-    facemask: Option<Facemask>,
-    #[serde(default)]
-    antiviral: Option<Antiviral>,
+    modifiers: Modifiers,
 }
 
 struct BatchData {
@@ -111,8 +106,7 @@ pub fn simulate(args: &str) -> JsValue {
         seed: args.seed as u64,
         max_time: args.max_time,
         settings: args.settings,
-        facemask: args.facemask,
-        antiviral: args.antiviral,
+        modifiers: args.modifiers,
     };
 
     let BatchData {
@@ -151,8 +145,7 @@ pub fn simulate_batch(args: &str) -> JsValue {
         seed: args.seed as u64,
         max_time: args.max_time,
         settings: args.settings,
-        facemask: args.facemask,
-        antiviral: args.antiviral,
+        modifiers: args.modifiers,
     };
 
     let BatchData {
@@ -204,9 +197,7 @@ struct CalibrateBatchArgs {
     #[serde(default)]
     settings: Vec<SettingType>,
     #[serde(default)]
-    facemask: Option<Facemask>,
-    #[serde(default)]
-    antiviral: Option<Antiviral>,
+    modifiers: Modifiers,
 
     // Target data: per-integer-day observed series (dense, length
     // floor(max_time); value at day `d` is index `d - 1`). Expressed on
@@ -283,8 +274,7 @@ pub fn calibrate_batch(args: &str) -> JsValue {
         seed: 0,               // overwritten per particle by `apply`
         max_time: args.max_time,
         settings: args.settings,
-        facemask: args.facemask,
-        antiviral: args.antiviral,
+        modifiers: args.modifiers,
     };
 
     // Validate at the wasm boundary so panics from `model::run` (which

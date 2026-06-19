@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 /// - `Empirical { points, scale }`: piecewise-linear infectiousness curve
 ///   in τ-space. Rate is 0 outside the anchor range; recovery is
 ///   deterministic at τ = `points.last().0`. **The point values are
-///   relative hazards** (in the ixa-epi-isolation sense) — `scale`
+///   relative hazards** — `scale`
 ///   converts them to absolute rates by multiplication. Defaults to 1.0
 ///   so simple curves act as absolute rates if the modeler hasn't
 ///   calibrated.
@@ -642,9 +642,8 @@ mod tests {
 
     #[test]
     fn cum_rate_peak_shape_evaluates_partial_segments() {
-        // Mirrors ixa-epi-isolation's `test_cum_rate_eval`: a tent-shaped
-        // schedule that exercises partial-segment integration on both the
-        // ramp-up and ramp-down sides.
+        // A tent-shaped schedule that exercises partial-segment integration
+        // on both the ramp-up and ramp-down sides.
         let r = InfectionRate::Empirical {
             points: vec![[0.0, 0.0], [1.0, 1.0], [2.0, 2.0], [3.0, 1.0], [4.0, 0.0]],
             scale: 1.0,
@@ -786,7 +785,7 @@ mod tests {
     // The model's hot path runs cum_rate / inverse_cum_rate through
     // `Curve` rather than the slice-based helpers, so these lock in
     // bit-equivalence with the reference path plus the plateau/zero-
-    // rate edge cases ixa-epi-isolation's EmpiricalRate covers.
+    // rate edge cases.
 
     #[test]
     fn curve_new_builds_cumulative_trapezoid() {
@@ -832,8 +831,7 @@ mod tests {
 
     #[test]
     fn curve_inverse_cum_rate_walks_through_plateau() {
-        // Mirrors ixa-epi-isolation's `test_inverse_cum_rate_plateaus`:
-        // a zero-rate stretch in the middle keeps `cum` constant; an
+        // A zero-rate stretch in the middle keeps `cum` constant; an
         // inverse query exactly at the plateau value must return the
         // *earliest* time it's reached, and just above it must land
         // past the plateau on the next ramp.
@@ -868,8 +866,7 @@ mod tests {
     #[test]
     fn curve_cum_rate_zero_below_first_anchor() {
         // Anchor times need not start at 0; rate is 0 outside the
-        // anchor range. (Same contract as ixa-epi-isolation's
-        // `test_cum_rate_below_zero_rate`.)
+        // anchor range.
         let curve = Curve::new(vec![[1.0, 1.0], [2.0, 3.0], [3.0, 5.0]]);
         assert_eq!(curve.cum_rate(0.0), 0.0);
         assert_eq!(curve.cum_rate(0.5), 0.0);
