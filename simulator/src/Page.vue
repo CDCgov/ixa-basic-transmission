@@ -10,10 +10,16 @@ import {
 } from "cfasim-ui/components";
 import type { ParamEditorValue, SelectOption } from "cfasim-ui/components";
 import { LineChart, DataTable } from "cfasim-ui/charts";
-import { useUrlParams, jsonCodec, type ParamCodec } from "cfasim-ui/shared";
+import {
+  useUrlParams,
+  paramsToQuery,
+  jsonCodec,
+  type ParamCodec,
+} from "cfasim-ui/shared";
 import presets from "virtual:presets";
 import defaultLibrary from "virtual:rateLibrary";
 import RateEditor from "./components/RateEditor.vue";
+import RateExplorer from "./components/RateExplorer.vue";
 import SettingsEditor from "./components/SettingsEditor.vue";
 import ModifiersEditor from "./components/ModifiersEditor.vue";
 import settingsLibrary from "virtual:settingsLibrary";
@@ -39,6 +45,32 @@ const defaults = {
   modifiers: { ...DEFAULT_MODIFIERS } as Modifiers,
 };
 type Params = typeof defaults;
+
+const router = useRouter();
+const route = useRoute();
+
+// Main-area tab is reflected in the URL path: "/" (or "/simulate") = the run
+// charts, "/explore" = the rate-function explainer. The sidebar (incl. the
+// rate editor) stays mounted across both, so the explorer reacts live to rate
+// edits; switching carries the query string (the model params) along.
+const mainTab = computed<"simulate" | "explore">(() =>
+  route.params.view === "explore" ? "explore" : "simulate",
+);
+function setMainTab(tab: "simulate" | "explore") {
+  if (tab === mainTab.value) return;
+  // `useUrlParams` debounces its URL write (~300ms), so `route.query` can lag
+  // the live params. Serialize the current params ourselves and carry them
+  // across the path change — otherwise the route watcher would re-hydrate
+  // params from a stale query and reset them to defaults.
+  router.push({
+    path: tab === "explore" ? "/explore" : "/",
+    query: paramsToQuery(params, defaults, urlCodecs),
+  });
+}
+const mainTabs: SelectOption[] = [
+  { value: "simulate", label: "Simulate" },
+  { value: "explore", label: "Explore rate" },
+];
 
 // `shallowReactive` (not `reactive`) so nested values like
 // `params.infectionRate.rates` stay as plain arrays. Otherwise Vue
@@ -139,17 +171,19 @@ const settingsCodec: ParamCodec = {
     }));
   },
 };
+// Shared with `setMainTab`, which serializes params to carry them across a
+// tab path change (see there). `modifiers` uses `jsonCodec`: the default
+// `null` serializes to "null" and matches, so it's omitted from the URL until
+// a modifier is enabled.
+const urlCodecs = {
+  infectionRate: infectionRateCodec,
+  settings: settingsCodec,
+  modifiers: jsonCodec,
+};
 const { reset } = useUrlParams(params, defaults, {
-  router: useRouter(),
-  route: useRoute(),
-  codecs: {
-    infectionRate: infectionRateCodec,
-    settings: settingsCodec,
-    // Object-or-null params: JSON-encode the whole subtree. Default `null`
-    // serializes to "null" and matches, so it's omitted from the URL until
-    // the modifier is enabled.
-    modifiers: jsonCodec,
-  },
+  router,
+  route,
+  codecs: urlCodecs,
 });
 
 // When `useEditor` is on, the sidebar shows a JSON/TOML/YAML editor
@@ -348,42 +382,84 @@ const { charts, summary, fmtCount } = useChartData(
     next transmission attempt; contacts are picked from a setting in their
     itinerary, or uniformly from the population when no settings are configured.
   </p>
-  <p v-if="error" class="error">{{ error }}</p>
-  <p v-if="statusMessage" class="status">{{ statusMessage }}</p>
-  <template v-for="chart in charts" :key="chart.yLabel">
-    <LineChart
-      v-if="chart.series.length"
-      :series="chart.series"
-      :annotations="chart.annotations"
-      :chart-padding="chart.padding"
-      :height="chart.height"
-      x-label="Time"
-      :y-label="chart.yLabel"
-      tooltip-trigger="hover"
+  <div class="main-tabs" role="tablist">
+    <button
+      v-for="tab in mainTabs"
+      :key="tab.value"
+      type="button"
+      role="tab"
+      class="main-tab"
+      :class="{ 'main-tab-active': mainTab === tab.value }"
+      :aria-selected="mainTab === tab.value"
+      @click="setMainTab(tab.value as 'simulate' | 'explore')"
     >
-      <template #tooltip="{ xLabel, values }">
-        <div class="chart-tooltip">
-          <div v-if="xLabel" class="chart-tooltip-label">{{ xLabel }}</div>
-          <div class="chart-tooltip-row">
-            <span class="chart-tooltip-median">Median</span>
-            <span>{{ fmtCount(values[values.length - 1]?.value) }}</span>
+      {{ tab.label }}
+    </button>
+  </div>
+  <template v-if="mainTab === 'simulate'">
+    <p v-if="error" class="error">{{ error }}</p>
+    <p v-if="statusMessage" class="status">{{ statusMessage }}</p>
+    <template v-for="chart in charts" :key="chart.yLabel">
+      <LineChart
+        v-if="chart.series.length"
+        :series="chart.series"
+        :annotations="chart.annotations"
+        :chart-padding="chart.padding"
+        :height="chart.height"
+        x-label="Time"
+        :y-label="chart.yLabel"
+        tooltip-trigger="hover"
+      >
+        <template #tooltip="{ xLabel, values }">
+          <div class="chart-tooltip">
+            <div v-if="xLabel" class="chart-tooltip-label">{{ xLabel }}</div>
+            <div class="chart-tooltip-row">
+              <span class="chart-tooltip-median">Median</span>
+              <span>{{ fmtCount(values[values.length - 1]?.value) }}</span>
+            </div>
           </div>
-        </div>
-      </template>
-    </LineChart>
+        </template>
+      </LineChart>
+    </template>
+    <DataTable
+      v-if="summary"
+      :data="summary"
+      :column-config="{
+        metric: { label: 'Metric' },
+        value: { label: 'Value', align: 'right' },
+      }"
+      :menu="false"
+    />
   </template>
-  <DataTable
-    v-if="summary"
-    :data="summary"
-    :column-config="{
-      metric: { label: 'Metric' },
-      value: { label: 'Value', align: 'right' },
-    }"
-    :menu="false"
-  />
+  <RateExplorer v-else :model-value="params.infectionRate" />
 </template>
 
 <style scoped>
+.main-tabs {
+  display: flex;
+  gap: 0.25rem;
+  border-bottom: 1px solid var(--color-border);
+  margin: 0.5em 0 1em;
+}
+.main-tab {
+  appearance: none;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  padding: 0.5em 0.75em;
+  font-size: var(--font-size-sm, 0.875rem);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+.main-tab:hover {
+  color: var(--color-text);
+}
+.main-tab-active {
+  color: var(--color-text);
+  border-bottom-color: var(--color-accent, #2563eb);
+  font-weight: 600;
+}
 .sidebar-header {
   display: flex;
   flex-direction: column;

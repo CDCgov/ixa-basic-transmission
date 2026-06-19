@@ -11,8 +11,12 @@ import CalibratePage from "./CalibratePage.vue";
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   routes: [
-    { path: "/", component: Page },
     { path: "/calibrate", component: CalibratePage },
+    // The simulate route carries the main-area tab in its path: "/" (or
+    // "/simulate") = run charts, "/explore" = the rate-function explainer.
+    // One route record + optional param → switching tabs reuses `Page.vue`
+    // (no remount), so the model params and in-flight simulation persist.
+    { path: "/:view(simulate|explore)?", component: Page },
   ],
 });
 
