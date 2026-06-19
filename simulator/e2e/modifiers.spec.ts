@@ -11,7 +11,7 @@ test.describe("Transmission modifiers", () => {
     await page.goto("/");
 
     await expect(
-      page.getByRole("heading", { name: "Transmission modifiers" }),
+      page.getByRole("heading", { name: "Modifiers", exact: true }),
     ).toBeVisible();
 
     const facemask = page.getByRole("switch", { name: "Facemask" });

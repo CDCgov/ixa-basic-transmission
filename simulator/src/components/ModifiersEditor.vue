@@ -76,11 +76,10 @@ function pct(fraction: number): string {
 <template>
   <div class="modifiers-editor">
     <div class="modifiers-header">
-      <h3>Transmission modifiers</h3>
+      <h3>Modifiers</h3>
       <p class="muted">
-        Interventions that reduce transmission from infectious people — by
-        cutting their shedding (facemask, antiviral) or their contacts
-        (isolation). Active modifiers compose.
+        Interventions that modify infectiousness: by impacting transmission (facemask, antiviral)
+        or their contacts (isolation). Active modifiers compose.
       </p>
     </div>
 
@@ -129,11 +128,10 @@ function pct(fraction: number): string {
     <!-- Isolation (restricts contacts to one setting) -->
     <div class="modifier-card">
       <Toggle :model-value="!!modifiers.isolation" label="Isolation"
-        hint="Confine contacts to one setting (e.g. household) after infection."
-        :disabled="settingNames.length === 0" @update:model-value="toggleIsolation" />
+        hint="Confine contacts to one setting (e.g. household) after infection." :disabled="settingNames.length === 0"
+        @update:model-value="toggleIsolation" />
       <p v-if="settingNames.length === 0" class="muted">
-        Add a setting above to enable isolation — there's no group to restrict
-        to under global random mixing.
+        Add a setting above to enable isolation
       </p>
       <template v-if="modifiers.isolation">
         <div class="modifier-row">
