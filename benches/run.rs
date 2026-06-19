@@ -1,17 +1,28 @@
-//! Attributes the per-variant cost difference across three axes:
+//! Attributes the per-variant cost difference across five axes:
 //!
 //!   1. **end_to_end** — full `model::run`. Wall-clock for an identical
 //!      workload across Constant / Empirical-5pt / Empirical-Npt / Library.
 //!
 //!   2. **setup_only** — `model::setup_only`: build Context, register
 //!      Rate entities (Library only), create Person entities, assign
-//!      AssignedRate (Library only). Does NOT execute. Isolates the
-//!      per-person assignment + entity-creation overhead from the
-//!      transmission loop.
+//!      AssignedRate (Library only), and place every person in a Setting
+//!      of each configured type. Does NOT execute. Isolates the per-person
+//!      assignment + entity-creation overhead from the transmission loop.
 //!
 //!   3. **curve_eval** — pure hot-path math: a tight loop calling
 //!      `empirical_cum_rate` + `empirical_inverse_cum_rate` on a curve
 //!      of a given length. Isolates curve-walk cost per event.
+//!
+//!   4. **settings** — full `model::run` with a fixed Constant rate and
+//!      modifiers off, varying the contact structure: global random mixing
+//!      (no settings) vs. one setting type vs. multiple. Isolates the
+//!      settings-layer cost (per-contact setting sampling + multiplier
+//!      computation) from the rate-variant cost in (1).
+//!
+//!   5. **modifiers** — full `model::run` with a fixed Constant rate and a
+//!      fixed household+work contact structure, varying which interventions
+//!      are active: none / facemask / antiviral / isolation / all. Isolates
+//!      each modifier's overhead (activation hook + per-channel effect).
 //!
 //! How to read the output:
 //!
@@ -21,9 +32,14 @@
 //!   - end_to_end(empirical_long) − end_to_end(empirical_short) ≈ cost
 //!     of walking long curves on every event.
 //!   - setup_only(library) − setup_only(constant) ≈ per-person
-//!     assignment cost.
+//!     assignment cost; setup_only(household_work) − setup_only(constant)
+//!     ≈ per-person Setting placement cost.
 //!   - curve_eval(N=80) − curve_eval(N=5) ≈ per-event walk cost in
 //!     isolation (no model overhead).
+//!   - settings(household_work) − settings(global_mixing) ≈ settings-layer
+//!     hot-path cost.
+//!   - modifiers(<name>) − modifiers(none) ≈ that intervention's overhead
+//!     (all share the same household+work base).
 
 use std::fs;
 use std::path::PathBuf;
@@ -31,11 +47,15 @@ use std::path::PathBuf;
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 
 use ixa_basic_transmission::model;
+use ixa_basic_transmission::modifiers::antiviral::Antiviral;
+use ixa_basic_transmission::modifiers::facemask::Facemask;
+use ixa_basic_transmission::modifiers::isolation::Isolation;
 use ixa_basic_transmission::modifiers::Modifiers;
 use ixa_basic_transmission::parameters::Parameters;
 use ixa_basic_transmission::rate::{
     empirical_cum_rate, empirical_inverse_cum_rate, Curve, InfectionRate,
 };
+use ixa_basic_transmission::settings::SettingType;
 
 const POPULATION: usize = 2_000;
 const INITIAL_INFECTIONS: usize = 5;
@@ -52,6 +72,36 @@ fn base_params(rate: InfectionRate) -> Parameters {
         settings: Vec::new(),
         modifiers: Modifiers::default(),
     }
+}
+
+/// The fixed Constant rate used by the settings/modifiers groups so the
+/// only thing varying is the contact structure / interventions.
+fn constant_rate() -> InfectionRate {
+    InfectionRate::Constant {
+        value: 0.5,
+        duration: 3.0,
+    }
+}
+
+/// Household + work contact structure: a small household and a larger
+/// workplace, split evenly by itinerary weight. Isolating to the household
+/// cuts the (larger) workplace contacts — so it's the base for the
+/// modifiers group (isolation needs a setting named here to restrict to).
+fn household_work() -> Vec<SettingType> {
+    vec![
+        SettingType {
+            name: "household".into(),
+            alpha: 1.0,
+            sizes: vec![(3, 1.0)],
+            proportion: 0.5,
+        },
+        SettingType {
+            name: "work".into(),
+            alpha: 1.0,
+            sizes: vec![(20, 1.0)],
+            proportion: 0.5,
+        },
+    ]
 }
 
 /// Loads `config/rates/library_empirical_rate_fns.csv` (relative to the
@@ -181,6 +231,14 @@ fn bench_setup_only(c: &mut Criterion) {
         b.iter(|| model::setup_only(p.clone()));
     });
 
+    // Constant rate + household+work settings: isolates the per-person
+    // Setting placement / entity-creation cost from the rate assignment.
+    g.bench_function(BenchmarkId::from_parameter("household_work"), |b| {
+        let mut p = base_params(constant_rate());
+        p.settings = household_work();
+        b.iter(|| model::setup_only(p.clone()));
+    });
+
     g.finish();
 }
 
@@ -255,10 +313,114 @@ fn bench_curve_eval(c: &mut Criterion) {
     g.finish();
 }
 
+// -------------------- settings (contact-structure cost) --------------------
+
+fn bench_settings(c: &mut Criterion) {
+    let mut g = c.benchmark_group("settings");
+    g.sample_size(20);
+    g.throughput(Throughput::Elements(POPULATION as u64));
+
+    // Baseline: global random mixing (no settings). Same workload as the
+    // others, so the delta is purely the settings layer.
+    g.bench_function(BenchmarkId::from_parameter("global_mixing"), |b| {
+        let p = base_params(constant_rate());
+        b.iter(|| model::run(p.clone()));
+    });
+
+    // One setting type: every person sampled from a single household.
+    g.bench_function(BenchmarkId::from_parameter("single_household"), |b| {
+        let mut p = base_params(constant_rate());
+        p.settings = vec![SettingType {
+            name: "household".into(),
+            alpha: 1.0,
+            sizes: vec![(3, 1.0)],
+            proportion: 1.0,
+        }];
+        b.iter(|| model::run(p.clone()));
+    });
+
+    // Two setting types: per-contact the model picks a setting (weighted by
+    // p_s · M_s) then a contact within it.
+    g.bench_function(BenchmarkId::from_parameter("household_work"), |b| {
+        let mut p = base_params(constant_rate());
+        p.settings = household_work();
+        b.iter(|| model::run(p.clone()));
+    });
+
+    g.finish();
+}
+
+// -------------------- modifiers (per-intervention overhead) --------------------
+
+fn bench_modifiers(c: &mut Criterion) {
+    let mut g = c.benchmark_group("modifiers");
+    g.sample_size(20);
+    g.throughput(Throughput::Elements(POPULATION as u64));
+
+    // Shared base: Constant rate + household+work settings, modifiers off.
+    // Every case below differs from this only in which interventions fire.
+    let base = || {
+        let mut p = base_params(constant_rate());
+        p.settings = household_work();
+        p
+    };
+
+    let facemask = Facemask {
+        coverage: 0.6,
+        effectiveness: 0.5,
+    };
+    let antiviral = Antiviral {
+        coverage: 0.6,
+        efficacy: 0.5,
+        delay: 1.0,
+    };
+    let isolation = Isolation {
+        coverage: 0.6,
+        restrict_to: "household".into(),
+        delay: 1.0,
+        duration: None,
+    };
+
+    g.bench_function(BenchmarkId::from_parameter("none"), |b| {
+        let p = base();
+        b.iter(|| model::run(p.clone()));
+    });
+
+    g.bench_function(BenchmarkId::from_parameter("facemask"), |b| {
+        let mut p = base();
+        p.modifiers.facemask = Some(facemask);
+        b.iter(|| model::run(p.clone()));
+    });
+
+    g.bench_function(BenchmarkId::from_parameter("antiviral"), |b| {
+        let mut p = base();
+        p.modifiers.antiviral = Some(antiviral);
+        b.iter(|| model::run(p.clone()));
+    });
+
+    g.bench_function(BenchmarkId::from_parameter("isolation"), |b| {
+        let mut p = base();
+        p.modifiers.isolation = Some(isolation.clone());
+        b.iter(|| model::run(p.clone()));
+    });
+
+    g.bench_function(BenchmarkId::from_parameter("all"), |b| {
+        let mut p = base();
+        p.modifiers.facemask = Some(facemask);
+        p.modifiers.antiviral = Some(antiviral);
+        p.modifiers.isolation = Some(isolation.clone());
+        b.iter(|| model::run(p.clone()));
+    });
+
+    g.finish();
+}
+
 criterion_group!(
     benches,
     bench_end_to_end,
     bench_setup_only,
-    bench_curve_eval
+    bench_curve_eval,
+    bench_settings,
+    bench_modifiers
 );
 criterion_main!(benches);
