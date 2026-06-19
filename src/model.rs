@@ -2,6 +2,7 @@ use ixa::prelude::*;
 use ixa::{define_data_plugin, define_global_property, define_rng, Context};
 use rand_distr::Exp;
 
+use crate::modifiers::ModifierExt;
 use crate::parameters::Parameters;
 use crate::person::{InfectionStatus, InfectionTime, Person, PersonId};
 use crate::rate::{empirical_curve_duration, Curve, EffectiveRate, InfectionRate};
@@ -35,7 +36,10 @@ trait InfectionLoop {
     fn infection_attempt(&mut self, infector: PersonId);
     fn infect_person(&mut self, p: PersonId, t: Option<f64>);
     fn recover_person(&mut self, p: PersonId);
-    fn schedule_recovery(&mut self, p: PersonId);
+    /// Schedule `p`'s recovery and return the realized infectious-period
+    /// duration (`Exp` sample for `Constant`, curve support otherwise) so
+    /// the caller can place a facemask within that same window.
+    fn schedule_recovery(&mut self, p: PersonId) -> f64;
     fn effective_rate(&self, person: PersonId) -> EffectiveRate<'_>;
     fn schedule_next_infection_attempt(&mut self, infector: PersonId);
     fn setup(&mut self);
@@ -69,7 +73,7 @@ impl InfectionLoop for Context {
         self.set_property(p, InfectionStatus::Recovered);
         self.get_data_mut(ModelStatsPlugin).record_recovery();
     }
-    fn schedule_recovery(&mut self, p: PersonId) {
+    fn schedule_recovery(&mut self, p: PersonId) -> f64 {
         // For empirical infectiousness curves, recovery is deterministic at the
         // end of the assigned curve. For `Constant`, recovery follows
         // `Exp(1/duration)` (the `duration` field is the mean).
@@ -90,6 +94,7 @@ impl InfectionLoop for Context {
                 context.recover_person(p);
             }
         });
+        recovery_dt
     }
     fn effective_rate(&self, person: PersonId) -> EffectiveRate<'_> {
         // Resolve `InfectionRate` + per-person state into the primitive
@@ -141,7 +146,13 @@ impl InfectionLoop for Context {
         // circuits and consumes no randomness.
         let t_inf = self.get_property::<_, InfectionTime>(infector).0;
         let elapsed = self.get_current_time() - t_inf;
-        let intrinsic = self.effective_rate(infector).rate(elapsed);
+        // Intervention modifiers scale *intrinsic* infectiousness λ(τ) — the
+        // per-person rate, not the settings/contact multiplier. Their cached
+        // product (`intrinsic_multiplier`, see `crate::modifiers`) is ≤ 1, so
+        // the forecast upper bound (built from the un-modified λ) stays valid
+        // and this thinning step brings the realized rate down correctly.
+        let intrinsic =
+            self.effective_rate(infector).rate(elapsed) * self.intrinsic_multiplier(infector);
         let current = intrinsic * self.current_total_infectiousness_multiplier(infector);
 
         assert!(
@@ -214,10 +225,22 @@ impl InfectionLoop for Context {
                 if event.current != InfectionStatus::Infectious {
                     return;
                 }
-                context.schedule_recovery(event.entity_id);
-                context.schedule_next_infection_attempt(event.entity_id);
+                let p = event.entity_id;
+                let infectious_duration = context.schedule_recovery(p);
+                // Run every registered intervention hook generically. Which
+                // interventions exist is decided once in
+                // `modifiers::register_all`; this loop never changes when
+                // one is added (see `crate::modifiers`).
+                context.run_activation_hooks(p, infectious_duration);
+                context.schedule_next_infection_attempt(p);
             },
         );
+
+        // Register every enabled intervention's activation hook in one place,
+        // before anyone is seeded infectious. Clone params once (cheap at
+        // setup) to avoid borrowing `self` across the `&mut` registration.
+        let params = self.get_params().clone();
+        crate::modifiers::register_all(self, &params);
 
         // For `Library` mode, instantiate one `Rate` entity per curve
         // and populate the EntityMap with precomputed-cum `Curve`s.
@@ -307,6 +330,8 @@ pub fn setup_only(params: Parameters) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::modifiers::antiviral::{Antiviral, AntiviralExt};
+    use crate::modifiers::facemask::{Facemask, FacemaskExt};
     use ixa::assert_almost_eq;
     use std::cell::RefCell;
     use std::rc::Rc;
@@ -382,6 +407,8 @@ mod tests {
                 seed,
                 max_time,
                 settings: vec![],
+                facemask: None,
+                antiviral: None,
             };
             let mut ctx = Context::new();
             ctx.set_global_property_value(Params, params).unwrap();
@@ -457,6 +484,8 @@ mod tests {
                 seed,
                 max_time,
                 settings: vec![],
+                facemask: None,
+                antiviral: None,
             };
             let mut ctx = Context::new();
             ctx.set_global_property_value(Params, params).unwrap();
@@ -522,6 +551,8 @@ mod tests {
             seed: 0,
             max_time,
             settings: vec![],
+            facemask: None,
+            antiviral: None,
         };
         let mut ctx = Context::new();
         ctx.set_global_property_value(Params, params).unwrap();
@@ -574,6 +605,8 @@ mod tests {
             seed: 0,
             max_time: 50.0,
             settings: vec![],
+            facemask: None,
+            antiviral: None,
         };
         let stats = run(params);
         assert_eq!(stats.cum_incidence(), 0);
@@ -613,6 +646,8 @@ mod tests {
                 seed,
                 max_time,
                 settings: vec![],
+                facemask: None,
+                antiviral: None,
             };
             let mut ctx = Context::new();
             ctx.set_global_property_value(Params, params).unwrap();
@@ -652,6 +687,8 @@ mod tests {
                 seed,
                 max_time: 0.0,
                 settings: vec![],
+                facemask: None,
+                antiviral: None,
             };
             let mut ctx = Context::new();
             ctx.set_global_property_value(Params, params).unwrap();
@@ -699,6 +736,8 @@ mod tests {
                 seed,
                 max_time,
                 settings: vec![],
+                facemask: None,
+                antiviral: None,
             };
             let mut ctx = Context::new();
             ctx.set_global_property_value(Params, params).unwrap();
@@ -759,6 +798,8 @@ mod tests {
                 seed,
                 max_time,
                 settings: vec![],
+                facemask: None,
+                antiviral: None,
             };
             let mut ctx = Context::new();
             ctx.set_global_property_value(Params, params).unwrap();
@@ -799,6 +840,8 @@ mod tests {
             seed: 42,
             max_time: 10.0,
             settings: vec![],
+            facemask: None,
+            antiviral: None,
         };
         let mut ctx = Context::new();
         ctx.set_global_property_value(Params, params).unwrap();
@@ -851,6 +894,8 @@ mod tests {
                 seed,
                 max_time: 20.0,
                 settings: vec![],
+                facemask: None,
+                antiviral: None,
             };
             let p_emp = Parameters {
                 infection_rate: InfectionRate::Empirical {
@@ -889,6 +934,8 @@ mod tests {
             seed: 7,
             max_time: 0.0,
             settings: vec![],
+            facemask: None,
+            antiviral: None,
         };
         let mut ctx = Context::new();
         ctx.set_global_property_value(Params, params).unwrap();
@@ -921,6 +968,8 @@ mod tests {
             seed: 11,
             max_time: 50.0,
             settings: vec![],
+            facemask: None,
+            antiviral: None,
         };
 
         let recovery_times: Rc<RefCell<Vec<f64>>> = Rc::new(RefCell::new(Vec::new()));
@@ -991,6 +1040,8 @@ mod tests {
                 seed,
                 max_time,
                 settings: vec![setting_type.clone()],
+                facemask: None,
+                antiviral: None,
             };
             let mut ctx = Context::new();
             ctx.set_global_property_value(Params, params).unwrap();
@@ -1008,5 +1059,363 @@ mod tests {
         }
         let observed = total / num_sims as f64;
         assert_almost_eq!(observed, expected_cases, 0.03);
+    }
+
+    #[test]
+    fn facemask_coverage_zero_matches_no_facemask() {
+        // coverage=0 schedules no masks. The facemask RNG stream is
+        // independent of the transmission streams, so a coverage-0 run must
+        // be bit-identical to the no-facemask run.
+        let base = Parameters {
+            infection_rate: InfectionRate::Constant {
+                value: 0.5,
+                duration: 3.0,
+            },
+            population: 2000,
+            initial_infections: 5,
+            seed: 1,
+            max_time: 60.0,
+            settings: vec![],
+            facemask: None,
+            antiviral: None,
+        };
+        let no_mask = run(base.clone());
+        let cov0 = run(Parameters {
+            facemask: Some(Facemask {
+                coverage: 0.0,
+                effectiveness: 1.0,
+            }),
+            ..base
+        });
+        assert_eq!(no_mask.cum_incidence(), cov0.cum_incidence());
+    }
+
+    #[test]
+    fn facemask_zero_effectiveness_is_noop() {
+        // Masks are donned (coverage=1) but a zero-effectiveness mask leaves
+        // intrinsic infectiousness unchanged, so dynamics match no-facemask.
+        let base = Parameters {
+            infection_rate: InfectionRate::Constant {
+                value: 0.5,
+                duration: 3.0,
+            },
+            population: 2000,
+            initial_infections: 5,
+            seed: 2,
+            max_time: 60.0,
+            settings: vec![],
+            facemask: None,
+            antiviral: None,
+        };
+        let no_mask = run(base.clone());
+        let eff0 = run(Parameters {
+            facemask: Some(Facemask {
+                coverage: 1.0,
+                effectiveness: 0.0,
+            }),
+            ..base
+        });
+        assert_eq!(no_mask.cum_incidence(), eff0.cum_incidence());
+    }
+
+    #[test]
+    fn facemask_full_coverage_reduces_epidemic_incidence() {
+        // A fully-blocking mask worn by everyone must strictly cut the
+        // realized epidemic size relative to no intervention.
+        let base = Parameters {
+            infection_rate: InfectionRate::Constant {
+                value: 0.5,
+                duration: 3.0,
+            },
+            population: 5000,
+            initial_infections: 10,
+            seed: 3,
+            max_time: 80.0,
+            settings: vec![],
+            facemask: None,
+            antiviral: None,
+        };
+        let no_mask = run(base.clone());
+        let masked = run(Parameters {
+            facemask: Some(Facemask {
+                coverage: 1.0,
+                effectiveness: 1.0,
+            }),
+            ..base
+        });
+        assert!(
+            masked.cum_incidence() < no_mask.cum_incidence(),
+            "masked incidence ({}) should be below unmasked ({})",
+            masked.cum_incidence(),
+            no_mask.cum_incidence()
+        );
+    }
+
+    #[test]
+    #[allow(clippy::cast_precision_loss)]
+    fn facemask_full_block_open_pool_matches_masked_cdf() {
+        // One infector + N contacts, no cascade (same open-pool harness as
+        // `open_pool_cumulative_incidence_matches_cdf`). The infector dons a
+        // fully-blocking mask (effectiveness=1) at a uniform time m ~ U(0, D)
+        // in its deterministic infectious window [0, D]; after masking it
+        // transmits at 0, so a contact accumulates hazard (λ/n)·m. Over the
+        // open pool (infector excluded, per-contact hazard λ/n), with m
+        // marginalized out:
+        //   E[P(infected)] = 1 − (n / (λD)) · (1 − e^{−λD/n})
+        //   E[cases]       = n · E[P]
+        let num_sims: u64 = 10_000;
+        let population: usize = 6;
+        let n_contacts = population - 1;
+        let lambda = 3.6_f64;
+        let d = 5.0_f64; // empirical curve support == infectious duration
+        let facemask = Facemask {
+            coverage: 1.0,
+            effectiveness: 1.0,
+        };
+
+        let r = lambda * d / n_contacts as f64;
+        let expected_p = 1.0 - (n_contacts as f64 / (lambda * d)) * (1.0 - (-r).exp());
+        let expected_cases = n_contacts as f64 * expected_p;
+
+        let mut total = 0.0_f64;
+        for seed in 0..num_sims {
+            let params = Parameters {
+                infection_rate: InfectionRate::Empirical {
+                    points: vec![[0.0, lambda], [d, lambda]],
+                    scale: 1.0,
+                },
+                population,
+                initial_infections: 1,
+                seed,
+                max_time: d,
+                settings: vec![],
+                facemask: Some(facemask),
+                antiviral: None,
+            };
+            let mut ctx = Context::new();
+            ctx.set_global_property_value(Params, params).unwrap();
+            ctx.init_random(seed);
+            let infector = ctx.add_entity(Person).unwrap();
+            for _ in 0..n_contacts {
+                ctx.add_entity(Person).unwrap();
+            }
+            ctx.infect_person(infector, None);
+            // Mirror the setup() subscriber for the index case only.
+            let dt = ctx.schedule_recovery(infector);
+            ctx.facemask_schedule(infector, facemask, dt);
+            ctx.schedule_next_infection_attempt(infector);
+            ctx.add_plan(d, |c| c.shutdown());
+            ctx.execute();
+            total += ctx.get_stats().cum_incidence() as f64;
+        }
+        let observed = total / num_sims as f64;
+        assert_almost_eq!(observed, expected_cases, 0.05);
+    }
+
+    #[test]
+    fn antiviral_coverage_zero_matches_no_antiviral() {
+        // coverage=0 schedules no treatment; the antiviral RNG stream is
+        // independent of the transmission streams, so results are identical
+        // to the no-antiviral run.
+        let base = Parameters {
+            infection_rate: InfectionRate::Constant {
+                value: 0.5,
+                duration: 3.0,
+            },
+            population: 2000,
+            initial_infections: 5,
+            seed: 1,
+            max_time: 60.0,
+            settings: vec![],
+            facemask: None,
+            antiviral: None,
+        };
+        let no_tx = run(base.clone());
+        let cov0 = run(Parameters {
+            antiviral: Some(Antiviral {
+                coverage: 0.0,
+                efficacy: 1.0,
+                delay: 1.0,
+            }),
+            ..base
+        });
+        assert_eq!(no_tx.cum_incidence(), cov0.cum_incidence());
+    }
+
+    #[test]
+    fn antiviral_zero_efficacy_is_noop() {
+        // Treatment is scheduled (coverage=1) but a zero-efficacy antiviral
+        // leaves intrinsic infectiousness unchanged, so dynamics match
+        // no-antiviral.
+        let base = Parameters {
+            infection_rate: InfectionRate::Constant {
+                value: 0.5,
+                duration: 3.0,
+            },
+            population: 2000,
+            initial_infections: 5,
+            seed: 2,
+            max_time: 60.0,
+            settings: vec![],
+            facemask: None,
+            antiviral: None,
+        };
+        let no_tx = run(base.clone());
+        let eff0 = run(Parameters {
+            antiviral: Some(Antiviral {
+                coverage: 1.0,
+                efficacy: 0.0,
+                delay: 1.0,
+            }),
+            ..base
+        });
+        assert_eq!(no_tx.cum_incidence(), eff0.cum_incidence());
+    }
+
+    #[test]
+    fn antiviral_reduces_epidemic_incidence() {
+        // Full-coverage, fully-blocking treatment with a short delay must
+        // strictly cut the realized epidemic size.
+        let base = Parameters {
+            infection_rate: InfectionRate::Constant {
+                value: 0.5,
+                duration: 3.0,
+            },
+            population: 5000,
+            initial_infections: 10,
+            seed: 3,
+            max_time: 80.0,
+            settings: vec![],
+            facemask: None,
+            antiviral: None,
+        };
+        let no_tx = run(base.clone());
+        let treated = run(Parameters {
+            antiviral: Some(Antiviral {
+                coverage: 1.0,
+                efficacy: 1.0,
+                delay: 1.0,
+            }),
+            ..base
+        });
+        assert!(
+            treated.cum_incidence() < no_tx.cum_incidence(),
+            "treated incidence ({}) should be below untreated ({})",
+            treated.cum_incidence(),
+            no_tx.cum_incidence()
+        );
+    }
+
+    #[test]
+    #[allow(clippy::cast_precision_loss)]
+    fn antiviral_full_block_open_pool_matches_treated_cdf() {
+        // Open-pool harness (cf. the facemask analytical test). A treated
+        // infector (efficacy=1) transmits at full λ until treatment starts at
+        // the fixed `delay`, then 0. The mask time is random; the treatment
+        // time is *deterministic*, so a contact accumulates exactly hazard
+        // (λ/n)·delay (for delay < D), with no marginalization:
+        //   E[cases] = n · (1 − e^{−(λ/n)·delay})
+        let num_sims: u64 = 5000;
+        let population: usize = 6;
+        let n_contacts = population - 1;
+        let lambda = 3.6_f64;
+        let d = 5.0_f64; // infectious window
+        let delay = 2.0_f64; // treatment start (< D)
+        let antiviral = Antiviral {
+            coverage: 1.0,
+            efficacy: 1.0,
+            delay,
+        };
+
+        let integrated = lambda / n_contacts as f64 * delay;
+        let expected_cases = n_contacts as f64 * (1.0 - (-integrated).exp());
+
+        let mut total = 0.0_f64;
+        for seed in 0..num_sims {
+            let params = Parameters {
+                infection_rate: InfectionRate::Empirical {
+                    points: vec![[0.0, lambda], [d, lambda]],
+                    scale: 1.0,
+                },
+                population,
+                initial_infections: 1,
+                seed,
+                max_time: d,
+                settings: vec![],
+                facemask: None,
+                antiviral: Some(antiviral),
+            };
+            let mut ctx = Context::new();
+            ctx.set_global_property_value(Params, params).unwrap();
+            ctx.init_random(seed);
+            let infector = ctx.add_entity(Person).unwrap();
+            for _ in 0..n_contacts {
+                ctx.add_entity(Person).unwrap();
+            }
+            ctx.infect_person(infector, None);
+            // Mirror the setup() subscriber for the index case only.
+            ctx.schedule_recovery(infector);
+            ctx.antiviral_schedule(infector, antiviral);
+            ctx.schedule_next_infection_attempt(infector);
+            ctx.add_plan(d, |c| c.shutdown());
+            ctx.execute();
+            total += ctx.get_stats().cum_incidence() as f64;
+        }
+        let observed = total / num_sims as f64;
+        assert_almost_eq!(observed, expected_cases, 0.05);
+    }
+
+    #[test]
+    fn facemask_and_antiviral_compose() {
+        // Two intrinsic modifiers stack: combining a mask and an antiviral
+        // cuts incidence at least as much as either alone, and strictly
+        // below no intervention.
+        let base = Parameters {
+            infection_rate: InfectionRate::Constant {
+                value: 0.5,
+                duration: 3.0,
+            },
+            population: 5000,
+            initial_infections: 10,
+            seed: 5,
+            max_time: 80.0,
+            settings: vec![],
+            facemask: None,
+            antiviral: None,
+        };
+        let mask = Some(Facemask {
+            coverage: 1.0,
+            effectiveness: 0.6,
+        });
+        let av = Some(Antiviral {
+            coverage: 1.0,
+            efficacy: 0.6,
+            delay: 1.0,
+        });
+
+        let none = run(base.clone()).cum_incidence();
+        let mask_only = run(Parameters {
+            facemask: mask,
+            ..base.clone()
+        })
+        .cum_incidence();
+        let av_only = run(Parameters {
+            antiviral: av,
+            ..base.clone()
+        })
+        .cum_incidence();
+        let both = run(Parameters {
+            facemask: mask,
+            antiviral: av,
+            ..base
+        })
+        .cum_incidence();
+
+        assert!(both < none, "both ({both}) should be below none ({none})");
+        assert!(
+            both <= mask_only && both <= av_only,
+            "both ({both}) should not exceed either single intervention \
+             (mask {mask_only}, antiviral {av_only})"
+        );
     }
 }

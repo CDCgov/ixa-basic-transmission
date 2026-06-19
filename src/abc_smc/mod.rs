@@ -34,6 +34,8 @@ mod tests {
             seed: 42,
             max_time: 60.0,
             settings: Vec::new(),
+            facemask: None,
+            antiviral: None,
         }
     }
 

@@ -49,6 +49,8 @@ fn base_params(rate: InfectionRate) -> Parameters {
         seed: SEED,
         max_time: MAX_TIME,
         settings: Vec::new(),
+        facemask: None,
+        antiviral: None,
     }
 }
 

@@ -10,11 +10,12 @@ import {
 } from "cfasim-ui/components";
 import type { ParamEditorValue, SelectOption } from "cfasim-ui/components";
 import { LineChart, DataTable } from "cfasim-ui/charts";
-import { useUrlParams, type ParamCodec } from "cfasim-ui/shared";
+import { useUrlParams, jsonCodec, type ParamCodec } from "cfasim-ui/shared";
 import presets from "virtual:presets";
 import defaultLibrary from "virtual:rateLibrary";
 import RateEditor from "./components/RateEditor.vue";
 import SettingsEditor from "./components/SettingsEditor.vue";
+import ModifiersEditor from "./components/ModifiersEditor.vue";
 import settingsLibrary from "virtual:settingsLibrary";
 import {
   type InfectionRate,
@@ -22,6 +23,7 @@ import {
   normalizeInfectionRate,
 } from "./composables/infectionRate";
 import type { SettingType } from "./composables/settings";
+import type { Facemask, Antiviral } from "./composables/modifiers";
 import { useSimulationRunner } from "./composables/useSimulationRunner";
 import { useChartData } from "./composables/useChartData";
 
@@ -33,6 +35,9 @@ const defaults = {
   maxTime: 100,
   nSimulations: 20,
   settings: [] as SettingType[],
+  // Optional transmission modifiers; `null` = disabled (Rust reads `None`).
+  facemask: null as Facemask | null,
+  antiviral: null as Antiviral | null,
 };
 type Params = typeof defaults;
 
@@ -141,6 +146,11 @@ const { reset } = useUrlParams(params, defaults, {
   codecs: {
     infectionRate: infectionRateCodec,
     settings: settingsCodec,
+    // Object-or-null params: JSON-encode the whole subtree. Default `null`
+    // serializes to "null" and matches, so it's omitted from the URL until
+    // the modifier is enabled.
+    facemask: jsonCodec,
+    antiviral: jsonCodec,
   },
 });
 
@@ -205,9 +215,14 @@ function applyPreset(id: string) {
     // it's applied (otherwise stale values from the previous preset
     // could leak in and the picker would jump to "Custom").
     const v = preset.parameters[key] ?? defaults[key];
-    if (typeof v === "number") {
+    if (v === null) {
+      // Nullable params (facemask/antiviral): a preset omitting them, or
+      // setting them null, disables the modifier — set explicitly so a
+      // stale value from the previous preset can't leak through.
+      setParam(key, null as Params[typeof key]);
+    } else if (typeof v === "number") {
       if (Number.isFinite(v)) setParam(key, v as Params[typeof key]);
-    } else if (typeof v === "object" && v !== null) {
+    } else if (typeof v === "object") {
       // Clone so subsequent edits don't mutate the preset / defaults.
       // Normalize infectionRate so older presets without `scale` get
       // scale=1.0.
@@ -229,10 +244,14 @@ function applyParamUpdate(next: ParamEditorValue) {
   for (const key of Object.keys(defaults) as (keyof Params)[]) {
     if (!(key in next)) continue;
     const raw = next[key];
-    if (typeof defaults[key] === "number") {
+    if (raw === null) {
+      // Only nullable params (default `null`) accept null = disabled;
+      // ignore a stray null on a non-nullable field.
+      if (defaults[key] === null) setParam(key, null as Params[typeof key]);
+    } else if (typeof defaults[key] === "number") {
       const n = Number(raw);
       if (Number.isFinite(n)) setParam(key, n as Params[typeof key]);
-    } else if (typeof raw === "object" && raw !== null) {
+    } else if (typeof raw === "object") {
       const cloned = structuredClone(raw);
       const nextVal =
         key === "infectionRate"
@@ -311,6 +330,13 @@ const { charts, summary, fmtCount } = useChartData(
         :max="100"
       />
       <SettingsEditor v-model="params.settings" :live="live" />
+      <ModifiersEditor
+        :facemask="params.facemask"
+        :antiviral="params.antiviral"
+        :live="live"
+        @update:facemask="(v: Facemask | null) => setParam('facemask', v)"
+        @update:antiviral="(v: Antiviral | null) => setParam('antiviral', v)"
+      />
     </template>
   </Teleport>
   <h1>Ixa Basic Transmission</h1>
