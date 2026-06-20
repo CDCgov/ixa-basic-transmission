@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch, onMounted, onBeforeUnmount } from "vue";
 import { Button, Hint, Toggle } from "cfasim-ui/components";
-import { LineChart } from "cfasim-ui/charts";
+import { LineChart, BarChart } from "cfasim-ui/charts";
 import type { InfectionRate } from "../composables/infectionRate";
 import {
   effectiveRateCurve,
@@ -9,6 +9,8 @@ import {
   inverseCumulativeRate,
   sampledCumulative,
   expFromUniform,
+  simulateInfectionRuns,
+  eventTimeHistogram,
   describeRate,
   rateFunctionDefs,
 } from "../composables/rateExplorer";
@@ -41,7 +43,12 @@ function randomLibraryIndex(): number {
 
 function assignRandomCurve() {
   libraryIndex.value = randomLibraryIndex();
-  draws.value = []; // the assigned curve changed → drawn τ's no longer apply
+  // The assigned curve changed → the drawn τ's and the pooled samples (tied to
+  // this individual's curve) no longer apply.
+  clearDraws();
+  clearSim();
+  pooledTimes.value = [];
+  mode.value = "draw";
 }
 
 // A constant rate is a homogeneous Poisson process: the inter-event times Δτ
@@ -94,25 +101,104 @@ const exhausted = computed(() => {
 });
 const hasArea = computed(() => curve.value.total > 0);
 
-// Number of infections so far, and the process's "current time": the latest
-// event time, or — once a draw overshoots the curve — the deterministic
-// recovery time (the end of the infectious period).
+// Two separate things:
+//   • The TIMELINE shows only the CURRENT round — either the manual
+//     individual's draws (draw mode) or the latest Simulate 100× round (sim
+//     mode). Starting a new round replaces it.
+//   • The DISTRIBUTION histogram below pools EVERY event time across all rounds
+//     (`pooledTimes`); it keeps growing until Reset.
+const mode = ref<"draw" | "sim">("draw");
+const pooledTimes = ref<number[]>([]); // all rounds → the histogram
+const simRound = ref<number[]>([]); // current sim round's revealed times → timeline
+
+// Draw-mode timeline reads the current individual (the `draws` walk).
 const infectionCount = computed(() => validEvents.value.length);
-const lastTau = computed(() => {
+const currentTime = computed(() => {
+  if (exhausted.value) return curve.value.duration;
   const v = validEvents.value;
   return v.length ? (v[v.length - 1].tau as number) : 0;
 });
-const currentTime = computed(() =>
-  exhausted.value ? curve.value.duration : lastTau.value,
-);
 
+// Draw next samples one increment for the current individual and adds its
+// event time to the running distribution. Once that individual recovers, the
+// next click starts a fresh one — so Draw next always adds to the total. It
+// also switches the timeline back to draw mode (off the last sim round).
 function drawNext() {
-  if (exhausted.value || !hasArea.value) return;
-  draws.value = [...draws.value, expFromUniform(Math.random())];
+  if (!hasArea.value || simAnimating.value) return;
+  if (mode.value === "sim") {
+    simRound.value = [];
+    mode.value = "draw";
+  }
+  let base = exhausted.value ? [] : draws.value; // recovered → start a new individual
+  const next = [...base, expFromUniform(Math.random())];
+  const cumulative = next.reduce((a, b) => a + b, 0);
+  const tau = inverseCumulativeRate(curve.value, cumulative);
+  draws.value = next;
+  if (tau !== null) pooledTimes.value = [...pooledTimes.value, tau];
 }
+
 function reset() {
+  clearDraws();
+  clearSim();
+  pooledTimes.value = [];
+  mode.value = "draw";
+}
+
+// "Simulate 100×": one round of many full simulations. Its event times animate
+// onto the timeline (replacing the previous round) and accumulate into the
+// distribution alongside every earlier round/draw.
+const SIM_RUNS = 100;
+const SIM_ANIM_MS = 1600;
+const simAnimating = ref(false);
+let simRaf: number | null = null;
+
+function clearDraws() {
   draws.value = [];
 }
+function clearSim() {
+  if (simRaf !== null) {
+    cancelAnimationFrame(simRaf);
+    simRaf = null;
+  }
+  simAnimating.value = false;
+  simRound.value = [];
+}
+
+function simulateMany() {
+  if (!hasArea.value || simAnimating.value) return;
+  clearSim();
+  clearDraws(); // the manual individual is no longer the current round
+  mode.value = "sim";
+  const roundTimes = simulateInfectionRuns(curve.value, SIM_RUNS, Math.random).flat();
+  if (!roundTimes.length) return;
+  const poolBase = pooledTimes.value; // earlier rounds keep accumulating
+  simAnimating.value = true;
+  const start = performance.now();
+  const step = () => {
+    const frac = Math.min(1, (performance.now() - start) / SIM_ANIM_MS);
+    const target = Math.max(1, Math.round(frac * roundTimes.length));
+    const shown = roundTimes.slice(0, target);
+    simRound.value = shown; // current round → timeline
+    pooledTimes.value = [...poolBase, ...shown]; // all rounds → histogram
+    if (frac < 1) {
+      simRaf = requestAnimationFrame(step);
+    } else {
+      simRaf = null;
+      simAnimating.value = false;
+    }
+  };
+  simRaf = requestAnimationFrame(step);
+}
+
+const hasSamples = computed(() => pooledTimes.value.length > 0);
+// The timeline shows only the current round; sim mode spans the full infectious
+// period, draw mode fills in up to the current event.
+const timelineVisible = computed(() =>
+  mode.value === "sim" ? simRound.value.length > 0 : draws.value.length > 0,
+);
+const axisEnd = computed(() =>
+  mode.value === "sim" ? curve.value.duration : currentTime.value,
+);
 
 // A new rate invalidates the drawn τ's (different Λ), so start fresh. When the
 // library's curve set changes (or we switch into a library rate) assign a fresh
@@ -121,7 +207,10 @@ let prevLibrarySig: string | null = null;
 watch(
   () => props.modelValue,
   (rate) => {
-    draws.value = [];
+    clearDraws();
+    clearSim();
+    pooledTimes.value = []; // a different Λ invalidates the sampled times
+    mode.value = "draw";
     const sig = rate.type === "library" ? `library:${rate.rates.length}` : null;
     if (sig && sig !== prevLibrarySig) libraryIndex.value = randomLibraryIndex();
     prevLibrarySig = sig;
@@ -245,9 +334,54 @@ const cumSeries = computed(() => {
   return series;
 });
 
+// Distribution of all sampled event times, binned over [0, duration]. The
+// histogram approaches the rate curve r(t) as samples accumulate.
+const DIST_BINS = 20;
+const timeHistogram = computed(() =>
+  eventTimeHistogram(pooledTimes.value, curve.value.duration, DIST_BINS),
+);
+// Plot the percentage per bin (not raw counts) so the y-axis stays bounded as
+// samples accumulate.
+const distSeries = computed(() => [
+  { data: timeHistogram.value.percentages, color: PURPLE },
+]);
+/** Linear interpolation of the effective λ(τ) at a single time. */
+function lambdaAt(t: number): number {
+  const { x, lambda } = curve.value;
+  if (!x.length) return 0;
+  if (t <= x[0]) return lambda[0];
+  for (let i = 1; i < x.length; i++) {
+    if (t <= x[i]) {
+      const span = x[i] - x[i - 1];
+      if (span === 0) return lambda[i];
+      return lambda[i - 1] + ((t - x[i - 1]) / span) * (lambda[i] - lambda[i - 1]);
+    }
+  }
+  return lambda[lambda.length - 1];
+}
+// The expected shape r(t), sampled at the bin centers and overlaid on the bars
+// (a BarChart summary line auto-scales to its own extent) so you can watch the
+// sampled distribution converge to the rate curve.
+const distOverlay = computed(() => {
+  const h = timeHistogram.value;
+  return [
+    {
+      x: h.centers.map((_, i) => i),
+      data: h.centers.map((c) => lambdaAt(c)),
+      color: BLUE,
+      strokeWidth: 2,
+      dots: false,
+    },
+  ];
+});
+// Thin the bin labels (20 bins would crowd the τ axis) — show every 5th.
+function distLabel(label: string, index: number): string {
+  return index % 5 === 0 ? label : "";
+}
+
 // --- Hand-drawn SVG timeline -------------------------------------------
-// Fixed [0, duration] scale, but the axis is only drawn up to the current
-// time — it fills in as events elapse, ending at the recovery marker.
+// Fixed [0, duration] scale; every pooled event time is a dot, accumulating
+// across draws and simulations.
 const TIMELINE_H = 50;
 // No left pad so t=0 lines up flush with the title / panel left edge; a right
 // pad keeps the end labels from clipping.
@@ -265,7 +399,10 @@ onMounted(() => {
   });
   if (timelineEl.value) resizeObserver.observe(timelineEl.value);
 });
-onBeforeUnmount(() => resizeObserver?.disconnect());
+onBeforeUnmount(() => {
+  resizeObserver?.disconnect();
+  if (simRaf !== null) cancelAnimationFrame(simRaf);
+});
 
 /** Map a time t to an x pixel position on the timeline. */
 function tx(t: number): number {
@@ -274,8 +411,19 @@ function tx(t: number): number {
   const frac = d > 0 ? Math.min(1, Math.max(0, t / d)) : 0;
   return PAD_L + frac * inner;
 }
+// Draw-mode timeline: one solid dot per infection time of the current
+// individual.
 const dotPositions = computed(() =>
   validEvents.value.map((ev) => ({ x: tx(ev.tau as number), tau: ev.tau as number })),
+);
+// Sim-mode timeline: a dot per event time in the current round, with a
+// deterministic vertical jitter so overlapping times spread into a band — the
+// translucent overlap reads as the density of when infections happen (∝ r(t)).
+const simDotPositions = computed(() =>
+  simRound.value.map((t, i) => ({
+    x: tx(t),
+    y: AXIS_Y + (((i * 2654435761) >>> 8) % 17) - 8,
+  })),
 );
 
 function fmtTau(v: unknown): string {
@@ -354,8 +502,9 @@ function fmtTau(v: unknown): string {
         <div class="explorer-controls">
           <h3>{{ simplifiedView ? "Event times" : "Cumulative rate c(t)" }}</h3>
           <div class="explorer-buttons">
-            <Button :disabled="exhausted || !hasArea" @click="drawNext">Draw next</Button>
-            <Button variant="secondary" :disabled="!draws.length" @click="reset">Reset</Button>
+            <Button :disabled="!hasArea || simAnimating" @click="drawNext">Draw next</Button>
+            <Button variant="secondary" :disabled="!hasArea || simAnimating" @click="simulateMany">Simulate 100×</Button>
+            <Button variant="secondary" :disabled="!draws.length && !hasSamples" @click="reset">Reset</Button>
           </div>
         </div>
         <!-- Simplified homogeneous view (constant rate). -->
@@ -382,41 +531,64 @@ function fmtTau(v: unknown): string {
           <p class="explorer-hint explorer-def-d">{{ defs.d }}</p>
         </template>
 
-        <p v-show="draws.length" class="timeline-title">
-          {{ infectionCount }} total infection{{ infectionCount === 1 ? "" : "s" }}
-          over {{ fmt(currentTime) }} days<span v-if="exhausted" class="timeline-title-recovered">
-            · recovered</span>
+        <!-- Timeline: only the CURRENT round — the manual individual (draw mode)
+             or the latest Simulate round (sim mode). The distribution below
+             keeps every round. -->
+        <p v-show="timelineVisible" class="timeline-title">
+          <template v-if="mode === 'sim'">
+            This round: {{ SIM_RUNS }} individuals · {{ simRound.length }}
+            infection{{ simRound.length === 1 ? "" : "s" }}<span v-if="simAnimating"
+              class="timeline-title-sim"> · simulating…</span>
+          </template>
+          <template v-else>
+            {{ infectionCount }} infection{{ infectionCount === 1 ? "" : "s" }}
+            over {{ fmt(currentTime) }} days<span v-if="exhausted" class="timeline-title-recovered">
+              · recovered</span>
+          </template>
         </p>
-        <div v-show="draws.length" ref="timelineEl" class="timeline-wrap">
+        <div v-show="timelineVisible" ref="timelineEl" class="timeline-wrap">
           <svg :width="timelineWidth" :height="TIMELINE_H" class="timeline-svg" role="img"
             aria-label="Infection event timeline">
-            <!-- Elapsed axis only — the future isn't drawn until it elapses. -->
-            <line :x1="tx(0)" :y1="AXIS_Y" :x2="tx(currentTime)" :y2="AXIS_Y" stroke="var(--color-border)"
+            <line :x1="tx(0)" :y1="AXIS_Y" :x2="tx(axisEnd)" :y2="AXIS_Y" stroke="var(--color-border)"
               stroke-width="2" />
             <text :x="tx(0)" :y="AXIS_Y + 22" text-anchor="start" class="timeline-label">
               0
             </text>
-            <!-- Current-time tick (suppressed once recovered — the recovery
-                 label takes that spot). -->
-            <text v-if="currentTime > 0 && !exhausted" :x="tx(currentTime)" :y="AXIS_Y + 22" text-anchor="middle"
-              class="timeline-label">
-              {{ fmt(currentTime) }}
-            </text>
-            <!-- One solid dot per infection. -->
-            <circle v-for="(dot, i) in dotPositions" :key="i" :cx="dot.x" :cy="AXIS_Y" r="5" fill="#7c3aed">
-              <title>infection at t = {{ fmt(dot.tau) }}</title>
-            </circle>
-            <!-- Recovery marker at the deterministic end of infectiousness. -->
-            <template v-if="exhausted">
-              <line :x1="tx(curve.duration)" :y1="AXIS_Y - 9" :x2="tx(curve.duration)" :y2="AXIS_Y + 9" stroke="#dc2626"
-                stroke-width="2" />
-              <text :x="tx(curve.duration)" :y="AXIS_Y + 22" text-anchor="end" class="timeline-label timeline-recovery">
-                recovered · {{ fmt(curve.duration) }}
+
+            <!-- Sim round: jittered translucent dots over the full period. -->
+            <template v-if="mode === 'sim'">
+              <circle v-for="(dot, i) in simDotPositions" :key="i" :cx="dot.x" :cy="dot.y" r="3.5"
+                class="sim-dot" />
+              <text v-if="curve.duration > 0" :x="tx(curve.duration)" :y="AXIS_Y + 22" text-anchor="end"
+                class="timeline-label">
+                {{ fmt(curve.duration) }}
               </text>
+            </template>
+
+            <!-- Draw round: the current individual's solid dots + recovery. -->
+            <template v-else>
+              <text v-if="currentTime > 0 && !exhausted" :x="tx(currentTime)" :y="AXIS_Y + 22"
+                text-anchor="middle" class="timeline-label">
+                {{ fmt(currentTime) }}
+              </text>
+              <circle v-for="(dot, i) in dotPositions" :key="i" :cx="dot.x" :cy="AXIS_Y" r="5" fill="#7c3aed">
+                <title>infection at t = {{ fmt(dot.tau) }}</title>
+              </circle>
+              <template v-if="exhausted">
+                <line :x1="tx(curve.duration)" :y1="AXIS_Y - 9" :x2="tx(curve.duration)" :y2="AXIS_Y + 9"
+                  stroke="#dc2626" stroke-width="2" />
+                <text :x="tx(curve.duration)" :y="AXIS_Y + 22" text-anchor="end"
+                  class="timeline-label timeline-recovery">
+                  recovered · {{ fmt(curve.duration) }}
+                </text>
+              </template>
             </template>
           </svg>
         </div>
 
+        <!-- The current individual's inverse-CDF walk (e ~ Exp(1), Δτ, τ). Each
+             Draw next extends it; once recovered, the next Draw next starts a
+             fresh individual. -->
         <table v-if="events.length" class="explorer-table">
           <thead>
             <tr v-if="simplifiedView">
@@ -453,17 +625,40 @@ function fmtTau(v: unknown): string {
             </tr>
           </tbody>
         </table>
-        <p v-else class="explorer-hint explorer-empty">
-          No draws yet — press <strong>Draw next</strong> to sample the first
-          infection time.
-        </p>
         <p v-if="exhausted" class="explorer-hint">
           {{
             simplifiedView
-              ? "The accumulated time passed the infectious period — the person recovers before the next event."
-              : "The cumulative draw exceeded the curve's total area — the person recovers before the next attempt."
+              ? "The accumulated time passed the infectious period — this individual recovers."
+              : "The cumulative draw exceeded the curve's total area — this individual recovers."
           }}
+          Press <strong>Draw next</strong> to start a new individual.
         </p>
+        <p v-if="!hasSamples && !events.length" class="explorer-hint explorer-empty">
+          No samples yet — press <strong>Draw next</strong> to sample one time, or
+          <strong>Simulate 100×</strong> to build the distribution quickly.
+        </p>
+
+        <!-- Distribution of event times: pooled across all draws + simulations,
+             binned over [0, duration]. The bars approach r(t) as samples grow. -->
+        <div v-if="hasSamples" class="explorer-sim">
+          <h3>Distribution of event times</h3>
+          <p class="explorer-hint">
+            {{ timeHistogram.total }} event time{{ timeHistogram.total === 1 ? "" : "s" }}
+            sampled across all rounds, binned over the infectious period. The bars
+            approach the rate curve <span class="explorer-rate-line">r(t)</span> as
+            more are sampled.
+          </p>
+          <BarChart :categories="timeHistogram.categories" :series="distSeries" :summary-lines="distOverlay"
+            :height="200" :menu="false" x-label="t (days since infected)" y-label="% of samples"
+            value-tick-format="%.0f%%" :category-format="distLabel">
+            <template #tooltip="{ category, values }">
+              <div class="explorer-tooltip">
+                <div>t ≈ {{ category }}</div>
+                <div>{{ fmtTau(values[0]?.value) }}% of samples</div>
+              </div>
+            </template>
+          </BarChart>
+        </div>
       </div>
     </div>
   </section>
@@ -552,13 +747,19 @@ function fmtTau(v: unknown): string {
   font-size: var(--font-size-md, 1rem);
 }
 
-.explorer-overlay {
+.explorer-overlay,
+.explorer-sim {
   display: flex;
   flex-direction: column;
   gap: 0.4em;
   margin-top: 0.8em;
   padding-top: 0.8em;
   border-top: 1px solid var(--color-border);
+}
+
+.explorer-sim h3 {
+  margin: 0;
+  font-size: var(--font-size-md, 1rem);
 }
 
 .explorer-overlay h4 {
@@ -600,9 +801,18 @@ function fmtTau(v: unknown): string {
   color: var(--color-text);
 }
 
+.timeline-title-sim {
+  color: #7c3aed;
+  font-weight: 600;
+}
+
 .timeline-title-recovered {
   color: #dc2626;
   font-weight: 600;
+}
+
+.timeline-recovery {
+  fill: #dc2626;
 }
 
 .timeline-wrap {
@@ -619,8 +829,15 @@ function fmtTau(v: unknown): string {
   fill: var(--color-text-secondary);
 }
 
-.timeline-recovery {
-  fill: #dc2626;
+/* Pooled event-time dots: translucent so overlapping times read as density. */
+.sim-dot {
+  fill: #7c3aed;
+  opacity: 0.35;
+}
+
+.explorer-rate-line {
+  color: #2563eb;
+  font-weight: 600;
 }
 
 .explorer-table {

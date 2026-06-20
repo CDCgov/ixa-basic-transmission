@@ -34,33 +34,94 @@ test.describe("Rate explorer tab", () => {
     // title + SVG timeline appear.
     await draw.click();
     await expect(page.locator(".explorer-table tbody tr")).not.toHaveCount(0);
-    await expect(page.locator(".timeline-title")).toContainText("total infection");
+    await expect(page.locator(".timeline-title")).toContainText("infection");
     await expect(page.locator(".timeline-svg")).toBeVisible();
 
     // Reset (scoped to the explorer — the sidebar also has a Reset) clears the
-    // table and hides the timeline again.
+    // table, timeline, and distribution.
     await page
       .locator(".explorer")
       .getByRole("button", { name: "Reset" })
       .click();
     await expect(page.locator(".explorer-table")).toHaveCount(0);
     await expect(page.locator(".timeline-title")).toBeHidden();
+    await expect(page.locator(".explorer-sim")).toHaveCount(0);
   });
 
-  test("recovery marker appears once the draws exhaust the curve", async ({
+  test("Draw next keeps adding; an individual eventually recovers", async ({
     page,
   }) => {
     await page.goto("/");
     await page.getByRole("tab", { name: "Explore rate" }).click();
     const draw = page.getByRole("button", { name: "Draw next" });
-    // Default Constant rate has total area 1.5, so a few Exp(1) draws
-    // overshoot it; keep drawing until the button disables (recovered).
-    for (let i = 0; i < 40 && (await draw.isEnabled()); i++) {
+    // Default Constant rate has total area 1.5, so individuals overshoot within
+    // a couple of Exp(1) draws. Draw next never disables now — it rolls over to
+    // a new individual — so keep drawing until a recovered round is showing.
+    let recovered = false;
+    for (let i = 0; i < 40 && !recovered; i++) {
       await draw.click();
+      recovered = await page.locator(".timeline-recovery").isVisible();
     }
-    await expect(draw).toBeDisabled();
-    await expect(page.locator(".timeline-recovery")).toBeVisible();
+    expect(recovered).toBe(true);
     await expect(page.locator(".timeline-title-recovered")).toBeVisible();
+    await expect(draw).toBeEnabled(); // never gets stuck
+  });
+
+  test("Simulate 100× animates a round and builds the event-time distribution", async ({
+    page,
+  }) => {
+    await page.goto("/");
+    await page.getByRole("tab", { name: "Explore rate" }).click();
+
+    // No samples yet → the distribution section is absent.
+    await expect(page.locator(".explorer-sim")).toHaveCount(0);
+
+    // Run a round → the distribution-of-event-times histogram appears and the
+    // timeline shows that round's event-time dots.
+    const draw = page.getByRole("button", { name: "Draw next" });
+    await page.getByRole("button", { name: "Simulate 100×" }).click();
+    const sim = page.locator(".explorer-sim");
+    await expect(
+      sim.getByRole("heading", { name: "Distribution of event times" }),
+    ).toBeVisible();
+    await expect(sim).toContainText("event time");
+    await expect(sim.locator("svg")).toBeVisible();
+    await expect(page.locator(".timeline-title")).toContainText("This round");
+    await expect(page.locator(".timeline-svg .sim-dot").first()).toBeVisible();
+
+    // Draw next disables during the animation; once it re-enables the round
+    // has finished.
+    await expect(draw).toBeEnabled();
+
+    // Reset clears the distribution and timeline.
+    await page
+      .locator(".explorer")
+      .getByRole("button", { name: "Reset" })
+      .click();
+    await expect(page.locator(".explorer-sim")).toHaveCount(0);
+    await expect(page.locator(".timeline-title")).toBeHidden();
+  });
+
+  test("the distribution accumulates across rounds; the timeline shows only the current one", async ({
+    page,
+  }) => {
+    await page.goto("/");
+    await page.getByRole("tab", { name: "Explore rate" }).click();
+    const draw = page.getByRole("button", { name: "Draw next" });
+
+    // A simulate round fills the timeline with jittered sim dots + a distribution.
+    await page.getByRole("button", { name: "Simulate 100×" }).click();
+    await expect(page.locator(".timeline-svg .sim-dot").first()).toBeVisible();
+    await expect(draw).toBeEnabled(); // wait out the animation
+    const simDots = await page.locator(".timeline-svg .sim-dot").count();
+    expect(simDots).toBeGreaterThan(0);
+
+    // Draw next → the timeline switches to the current (draw) round, so the sim
+    // round's dots are gone, but the distribution persists (accumulated).
+    await draw.click();
+    await expect(page.locator(".timeline-svg .sim-dot")).toHaveCount(0);
+    await expect(page.locator(".explorer-sim")).toBeVisible();
+    await expect(page.locator(".timeline-title")).not.toContainText("This round");
   });
 
   test("constant rate offers a Generalized toggle that swaps the view", async ({

@@ -7,9 +7,25 @@ import {
   inverseCumulativeRate,
   sampledCumulative,
   expFromUniform,
+  simulateInfectionCount,
+  simulateInfectionCounts,
+  simulateInfectionTimes,
+  simulateInfectionRuns,
+  eventTimeHistogram,
   describeRate,
   rateFunctionDefs,
 } from "./rateExplorer";
+
+// Deterministic uniform PRNG (mulberry32) so simulation tests are reproducible.
+function mulberry32(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
 
 // Trapezoidal area under a polyline (x, y).
 function trapz(x: number[], y: number[]): number {
@@ -237,5 +253,129 @@ describe("rateExplorer", () => {
     });
     expect(gamma.title).toContain("Gamma");
     expect(gamma.title).toContain("shape=3, scale=1.5");
+  });
+});
+
+describe("rateExplorer offspring simulation", () => {
+  it("zero-area curve generates no infections", () => {
+    const c = effectiveRateCurve({
+      type: "empirical",
+      points: [
+        [0, 0],
+        [1, 0],
+      ],
+      scale: 0,
+    });
+    expect(simulateInfectionCount(c, mulberry32(1))).toBe(0);
+  });
+
+  it("is deterministic for a fixed rng", () => {
+    const c = effectiveRateCurve({ type: "constant", value: 1, duration: 4 });
+    expect(simulateInfectionCounts(c, 50, mulberry32(7))).toEqual(
+      simulateInfectionCounts(c, 50, mulberry32(7)),
+    );
+  });
+
+  it("mean infection count ≈ R₀ (curve total)", () => {
+    // Constant value 0.6 over 5 days → R₀ = 3 (a homogeneous Poisson process).
+    const c = effectiveRateCurve({ type: "constant", value: 0.6, duration: 5 });
+    const counts = simulateInfectionCounts(c, 5000, mulberry32(42));
+    const mean = counts.reduce((a, b) => a + b, 0) / counts.length;
+    expect(mean).toBeGreaterThan(2.8);
+    expect(mean).toBeLessThan(3.2);
+  });
+
+  it("the empirical curve's mean count tracks its R₀ too", () => {
+    const c = effectiveRateCurve({
+      type: "empirical",
+      points: [
+        [0, 0],
+        [2, 1],
+        [4, 1.2],
+        [6, 0.4],
+        [8, 0],
+      ],
+      scale: 2.5,
+    });
+    const counts = simulateInfectionCounts(c, 5000, mulberry32(99));
+    const mean = counts.reduce((a, b) => a + b, 0) / counts.length;
+    expect(mean).toBeGreaterThan(2.3);
+    expect(mean).toBeLessThan(2.7);
+  });
+
+  it("simulateInfectionTimes returns ascending in-range times; length = count", () => {
+    const c = effectiveRateCurve({
+      type: "empirical",
+      points: [
+        [0, 0],
+        [2, 1],
+        [4, 1.2],
+        [6, 0.4],
+        [8, 0],
+      ],
+      scale: 3,
+    });
+    // Same seed → the count equals the number of times (count delegates to it).
+    const times = simulateInfectionTimes(c, mulberry32(5));
+    expect(times.length).toBe(simulateInfectionCount(c, mulberry32(5)));
+    for (let i = 1; i < times.length; i++) {
+      expect(times[i]).toBeGreaterThanOrEqual(times[i - 1]);
+    }
+    for (const t of times) {
+      expect(t).toBeGreaterThanOrEqual(0);
+      expect(t).toBeLessThanOrEqual(c.duration);
+    }
+  });
+
+  it("simulateInfectionRuns: per-run lengths match simulateInfectionCounts", () => {
+    const c = effectiveRateCurve({ type: "constant", value: 0.6, duration: 5 });
+    const runs = simulateInfectionRuns(c, 40, mulberry32(11));
+    expect(runs).toHaveLength(40);
+    expect(runs.map((r) => r.length)).toEqual(
+      simulateInfectionCounts(c, 40, mulberry32(11)),
+    );
+  });
+});
+
+describe("rateExplorer event-time histogram", () => {
+  it("bins times over [0, duration]; right edge lands in the last bin", () => {
+    // duration 10, 5 bins → width 2. floor(t/2): 0.5,1.5→bin0; 2.5→bin1; 9.9→bin4.
+    // The right edge t=10 clamps into the last bin; out-of-range is dropped.
+    const h = eventTimeHistogram([0.5, 1.5, 2.5, 9.9, 10, -1, 11], 10, 5);
+    expect(h.counts).toEqual([2, 1, 0, 0, 2]);
+    expect(h.total).toBe(5);
+    expect(h.centers).toEqual([1, 3, 5, 7, 9]);
+    expect(h.categories).toEqual(["1", "3", "5", "7", "9"]);
+    expect(h.binWidth).toBe(2);
+    // Percentages are counts / total · 100 and sum to 100.
+    expect(h.percentages).toEqual([40, 20, 0, 0, 40]);
+    expect(h.percentages.reduce((a, b) => a + b, 0)).toBeCloseTo(100, 12);
+  });
+
+  it("empty sample → all-zero bins (no divide-by-zero)", () => {
+    const h = eventTimeHistogram([], 8, 4);
+    expect(h.counts).toEqual([0, 0, 0, 0]);
+    expect(h.percentages).toEqual([0, 0, 0, 0]);
+    expect(h.total).toBe(0);
+  });
+
+  it("the histogram's shape tracks the rate curve (more mass where r is higher)", () => {
+    // A rising-then-falling empirical curve: the middle bins should collect
+    // more sampled times than the tails.
+    const rate: InfectionRate = {
+      type: "empirical",
+      points: [
+        [0, 0],
+        [4, 2],
+        [8, 0],
+      ],
+      scale: 4,
+    };
+    const c = effectiveRateCurve(rate);
+    const times = simulateInfectionRuns(c, 400, mulberry32(7)).flat();
+    const h = eventTimeHistogram(times, c.duration, 4); // bins over [0,8], width 2
+    // The peak is at τ=4 (boundary of bins 1 and 2); both interior bins should
+    // hold more than the first bin (which starts at λ=0).
+    expect(h.counts[1] + h.counts[2]).toBeGreaterThan(h.counts[0] + h.counts[3]);
   });
 });

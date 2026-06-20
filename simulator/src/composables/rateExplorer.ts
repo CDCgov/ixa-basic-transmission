@@ -254,6 +254,117 @@ export function expFromUniform(u: number): number {
   return -Math.log(1 - u);
 }
 
+/**
+ * One full inverse-CDF simulation of a single individual: draw Exp(1)
+ * increments, accumulate them into the cumulative hazard, and invert through
+ * Λ⁻¹ until a draw overshoots the curve's total area (the person recovers).
+ * Returns the ascending list of infection event times τ — one realization of
+ * the process (its length is the offspring count, mean ≈ R₀ = `curve.total`).
+ * Same per-event accumulation as the interactive "Draw next" demo, run to
+ * completion.
+ *
+ * `rng` returns a uniform in [0, 1) — pass `Math.random` in the app, a stub in
+ * tests. The `MAX_EVENTS` ceiling only guards a degenerate rng; with real
+ * draws the expected count is `curve.total`, far below it.
+ */
+export function simulateInfectionTimes(
+  curve: RateCurve,
+  rng: () => number,
+): number[] {
+  const taus: number[] = [];
+  if (curve.total <= 0) return taus;
+  const MAX_EVENTS = 100000;
+  let cumulative = 0;
+  while (taus.length < MAX_EVENTS) {
+    cumulative += expFromUniform(rng());
+    const tau = inverseCumulativeRate(curve, cumulative);
+    if (tau === null) break;
+    taus.push(tau);
+  }
+  return taus;
+}
+
+/** Offspring count from one run = number of event times before recovery. */
+export function simulateInfectionCount(
+  curve: RateCurve,
+  rng: () => number,
+): number {
+  return simulateInfectionTimes(curve, rng).length;
+}
+
+/** `runs` independent runs, each returning that individual's event times. */
+export function simulateInfectionRuns(
+  curve: RateCurve,
+  runs: number,
+  rng: () => number = Math.random,
+): number[][] {
+  const out: number[][] = [];
+  for (let i = 0; i < runs; i++) out.push(simulateInfectionTimes(curve, rng));
+  return out;
+}
+
+/** Run `runs` independent `simulateInfectionCount`s, returning each count. */
+export function simulateInfectionCounts(
+  curve: RateCurve,
+  runs: number,
+  rng: () => number = Math.random,
+): number[] {
+  const out: number[] = [];
+  for (let i = 0; i < runs; i++) out.push(simulateInfectionCount(curve, rng));
+  return out;
+}
+
+export interface TimeHistogram {
+  /** Bin labels (each bin's center τ, formatted) — parallel to `counts`. */
+  categories: string[];
+  /** Number of event times falling in each bin. */
+  counts: number[];
+  /** Per-bin share as a percentage of `total` (counts / total · 100). */
+  percentages: number[];
+  /** Center τ of each bin. */
+  centers: number[];
+  /** Bin width (= duration / bins). */
+  binWidth: number;
+  /** Total event times binned (those within [0, duration]). */
+  total: number;
+}
+
+/**
+ * Histogram of event times over `[0, duration]` in `bins` equal bins. Bars are
+ * reported both as raw `counts` and as `percentages` of the total (the % view
+ * stays bounded as samples accumulate). The shape approximates the (area = R₀)
+ * rate curve r(t): the expected share in a bin is `∫bin r / R₀`, so pooling
+ * many sampled times reconstructs r(t). Times outside `[0, duration]` are
+ * dropped; the right edge falls in the last bin.
+ */
+export function eventTimeHistogram(
+  times: number[],
+  duration: number,
+  bins = 20,
+): TimeHistogram {
+  const d = duration > 0 ? duration : 1;
+  const n = Math.max(1, Math.floor(bins));
+  const binWidth = d / n;
+  const counts = new Array(n).fill(0);
+  for (const t of times) {
+    if (!Number.isFinite(t) || t < 0 || t > d) continue;
+    let idx = Math.floor(t / binWidth);
+    if (idx >= n) idx = n - 1;
+    counts[idx]++;
+  }
+  const total = counts.reduce((a, b) => a + b, 0);
+  const centers = counts.map((_, i) => (i + 0.5) * binWidth);
+  const round1 = (v: number) => (Math.round(v * 10) / 10).toString();
+  return {
+    categories: centers.map(round1),
+    counts,
+    percentages: counts.map((c) => (total ? (c / total) * 100 : 0)),
+    centers,
+    binWidth,
+    total,
+  };
+}
+
 function fmt(v: number): string {
   if (!Number.isFinite(v)) return "—";
   return (Math.round(v * 100) / 100).toString();
