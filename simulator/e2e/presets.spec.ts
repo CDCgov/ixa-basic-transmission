@@ -129,7 +129,7 @@ test.describe("Parameter presets", () => {
     });
     await expect(page.getByText("Cumulative infections")).toBeVisible();
     await expect(
-      page.getByText("Incidence (new infections per time unit)"),
+      page.getByText("Incidence", { exact: true }),
     ).toBeVisible();
     // Summary table still shows the two standard metrics — R₀ is the
     // mean curve area across the bundled library.

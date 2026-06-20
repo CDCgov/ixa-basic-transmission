@@ -30,6 +30,24 @@ import { SidebarLayout } from "cfasim-ui/components";
   </SidebarLayout>
 </template>
 
+<style>
+/* Override the cfasim-ui theme default body font (loaded in index.html). */
+:root {
+  --font-family:
+    "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    Helvetica, Arial, sans-serif;
+}
+
+/* Chart axis text (tick numbers + axis labels) uses the condensed cut — the
+   cfasim-ui charts render bare <svg><text> that inherits font-family. Size is
+   bumped per-chart via the `tickLabelStyle`/`axisLabelStyle` props (not here),
+   so the charts reserve the right gutter for the larger text. */
+.line-chart-wrapper svg text,
+.bar-chart-wrapper svg text {
+  font-family: "IBM Plex Sans Condensed", var(--font-family);
+}
+</style>
+
 <style scoped>
 .model-sidebar {
   display: flex;

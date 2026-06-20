@@ -110,7 +110,7 @@ export function useChartData(
       // Top padding gives the 2-line "Peak" label room between the
       // inline legend (now pinned to the top) and the curve.
       padding: { top: 40 },
-      yLabel: "Incidence (new infections per time unit)",
+      yLabel: "Incidence",
       height: 300,
     },
   ]);

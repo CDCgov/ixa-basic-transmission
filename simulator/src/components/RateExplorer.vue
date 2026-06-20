@@ -227,6 +227,9 @@ const PURPLE = "#7c3aed";
 const GUIDE = "#9ca3af";
 const RED = "#dc2626";
 
+// Bigger axis text, passed as props so each chart reserves the right gutter.
+const axisTextStyle = { fontSize: 13 };
+
 // Left: λ(τ) with the area underneath shaded (∫λ = R₀).
 const rateSeries = computed(() => [
   { x: curve.value.x, data: curve.value.lambda, color: BLUE, strokeWidth: 2 },
@@ -466,6 +469,7 @@ function fmtTau(v: unknown): string {
         <h3>Rate function r(t)</h3>
         <p class="explorer-hint">{{ defs.r }}</p>
         <LineChart :series="rateSeries" :areas="rateAreas" :height="240" :y-min="0" :menu="false"
+          :tick-label-style="axisTextStyle" :axis-label-style="axisTextStyle"
           x-label="t (days since infected)" y-label="r(t)" tooltip-trigger="hover">
           <template #tooltip="{ xLabel, values }">
             <div class="explorer-tooltip">
@@ -485,6 +489,7 @@ function fmtTau(v: unknown): string {
             is the one assigned above.
           </p>
           <LineChart :series="overlaySeries" :height="180" :y-min="0" :menu="false"
+            :tick-label-style="axisTextStyle" :axis-label-style="axisTextStyle"
             x-label="t (days since infected)" y-label="r(t)" tooltip-trigger="hover">
             <template #tooltip="{ xLabel, values }">
               <div class="explorer-tooltip">
@@ -518,6 +523,7 @@ function fmtTau(v: unknown): string {
         <template v-else>
           <p class="explorer-hint">{{ defs.c }}</p>
           <LineChart :series="cumSeries" :height="200" :y-min="0" :menu="false" x-label="t (days since infected)"
+            :tick-label-style="axisTextStyle" :axis-label-style="axisTextStyle"
             y-label="c(t)" tooltip-trigger="hover">
             <template #tooltip="{ xLabel, values }">
               <div class="explorer-tooltip">
@@ -650,6 +656,7 @@ function fmtTau(v: unknown): string {
           </p>
           <BarChart :categories="timeHistogram.categories" :series="distSeries" :summary-lines="distOverlay"
             :height="200" :menu="false" x-label="t (days since infected)" y-label="% of samples"
+            :tick-label-style="axisTextStyle" :axis-label-style="axisTextStyle"
             value-tick-format="%.0f%%" :category-format="distLabel">
             <template #tooltip="{ category, values }">
               <div class="explorer-tooltip">

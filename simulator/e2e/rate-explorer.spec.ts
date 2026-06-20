@@ -1,7 +1,7 @@
 import { test, expect } from "@playwright/test";
 
 // The main area splits into two tabs: "Simulate" (run charts) and
-// "Explore rate" (an interactive explainer of the currently-selected rate
+// "Explore" (an interactive explainer of the currently-selected rate
 // function — λ(τ) area + inverse-CDF sampling of event times). The sidebar
 // stays mounted across both, so the explorer reflects live rate edits.
 
@@ -10,7 +10,7 @@ test.describe("Rate explorer tab", () => {
     page,
   }) => {
     await page.goto("/");
-    await page.getByRole("tab", { name: "Explore rate" }).click();
+    await page.getByRole("tab", { name: "Explore", exact: true }).click();
 
     // Header titles the explorer; the subtitle reflects the default Constant rate.
     await expect(
@@ -52,7 +52,7 @@ test.describe("Rate explorer tab", () => {
     page,
   }) => {
     await page.goto("/");
-    await page.getByRole("tab", { name: "Explore rate" }).click();
+    await page.getByRole("tab", { name: "Explore", exact: true }).click();
     const draw = page.getByRole("button", { name: "Draw next" });
     // Default Constant rate has total area 1.5, so individuals overshoot within
     // a couple of Exp(1) draws. Draw next never disables now — it rolls over to
@@ -71,7 +71,7 @@ test.describe("Rate explorer tab", () => {
     page,
   }) => {
     await page.goto("/");
-    await page.getByRole("tab", { name: "Explore rate" }).click();
+    await page.getByRole("tab", { name: "Explore", exact: true }).click();
 
     // No samples yet → the distribution section is absent.
     await expect(page.locator(".explorer-sim")).toHaveCount(0);
@@ -106,7 +106,7 @@ test.describe("Rate explorer tab", () => {
     page,
   }) => {
     await page.goto("/");
-    await page.getByRole("tab", { name: "Explore rate" }).click();
+    await page.getByRole("tab", { name: "Explore", exact: true }).click();
     const draw = page.getByRole("button", { name: "Draw next" });
 
     // A simulate round fills the timeline with jittered sim dots + a distribution.
@@ -128,7 +128,7 @@ test.describe("Rate explorer tab", () => {
     page,
   }) => {
     await page.goto("/");
-    await page.getByRole("tab", { name: "Explore rate" }).click();
+    await page.getByRole("tab", { name: "Explore", exact: true }).click();
 
     // Default constant rate → simplified homogeneous view: the "Generalized"
     // toggle is off and the table uses the Exp(rate) "Δτ" column.
@@ -155,7 +155,7 @@ test.describe("Rate explorer tab", () => {
   }) => {
     await page.setViewportSize({ width: 390, height: 800 });
     await page.goto("/");
-    await page.getByRole("tab", { name: "Explore rate" }).click();
+    await page.getByRole("tab", { name: "Explore", exact: true }).click();
 
     const toggle = page.getByRole("switch", { name: "Generalized" });
     const title = page.getByRole("heading", { name: "Intrinsic Infectiousness" });
@@ -179,7 +179,7 @@ test.describe("Rate explorer tab", () => {
     await page.goto("/");
     await page.getByRole("combobox", { name: "Infectiousness" }).click();
     await page.getByRole("option", { name: "Parametric", exact: true }).click();
-    await page.getByRole("tab", { name: "Explore rate" }).click();
+    await page.getByRole("tab", { name: "Explore", exact: true }).click();
     await expect(
       page.getByRole("switch", { name: "Generalized" }),
     ).toHaveCount(0);
@@ -191,7 +191,7 @@ test.describe("Rate explorer tab", () => {
     await page.getByRole("combobox", { name: "Infectiousness" }).click();
     await page.getByRole("option", { name: "Parametric", exact: true }).click();
 
-    await page.getByRole("tab", { name: "Explore rate" }).click();
+    await page.getByRole("tab", { name: "Explore", exact: true }).click();
     await expect(page.locator(".explorer-subtitle")).toContainText("Gamma");
   });
 
@@ -199,7 +199,7 @@ test.describe("Rate explorer tab", () => {
     page,
   }) => {
     await page.goto("/");
-    await page.getByRole("tab", { name: "Explore rate" }).click();
+    await page.getByRole("tab", { name: "Explore", exact: true }).click();
     await expect(page.locator(".explorer-note-text")).toHaveText(
       "Every individual gets the same rate function.",
     );
@@ -213,7 +213,7 @@ test.describe("Rate explorer tab", () => {
     await page.getByRole("combobox", { name: "Infectiousness" }).click();
     await page.getByRole("option", { name: "Library" }).click();
 
-    await page.getByRole("tab", { name: "Explore rate" }).click();
+    await page.getByRole("tab", { name: "Explore", exact: true }).click();
 
     // The note explains each individual gets a random assigned curve.
     const note = page.locator(".explorer-note-text");
@@ -234,7 +234,7 @@ test.describe("Rate explorer tab", () => {
 
   test("switching back to Simulate shows the charts", async ({ page }) => {
     await page.goto("/");
-    await page.getByRole("tab", { name: "Explore rate" }).click();
+    await page.getByRole("tab", { name: "Explore", exact: true }).click();
     await page.getByRole("tab", { name: "Simulate" }).click();
     await expect(page.getByText("Cumulative infections")).toBeVisible();
   });
@@ -243,7 +243,7 @@ test.describe("Rate explorer tab", () => {
     page,
   }) => {
     await page.goto("/");
-    await page.getByRole("tab", { name: "Explore rate" }).click();
+    await page.getByRole("tab", { name: "Explore", exact: true }).click();
     await expect(page).toHaveURL(/\/explore/);
 
     // Reloading the /explore URL lands directly on the explorer.
@@ -264,7 +264,7 @@ test.describe("Rate explorer tab", () => {
     // A non-default param lives in the query string; switching to the
     // explorer path must carry it along.
     await page.goto("/?seed=42");
-    await page.getByRole("tab", { name: "Explore rate" }).click();
+    await page.getByRole("tab", { name: "Explore", exact: true }).click();
     await expect(page).toHaveURL(/\/explore/);
     await expect(page).toHaveURL(/seed=42/);
   });

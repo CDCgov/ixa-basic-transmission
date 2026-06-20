@@ -69,7 +69,7 @@ function setMainTab(tab: "simulate" | "explore") {
 }
 const mainTabs: SelectOption[] = [
   { value: "simulate", label: "Simulate" },
-  { value: "explore", label: "Explore rate" },
+  { value: "explore", label: "Explore" },
 ];
 
 // `shallowReactive` (not `reactive`) so nested values like
@@ -309,6 +309,10 @@ const { charts, summary, fmtCount } = useChartData(
   toRef(params, "infectionRate"),
   toRef(params, "settings"),
 );
+
+// Bigger axis text for the main result charts. Passed as props (not CSS) so the
+// chart reserves the correct gutter for the larger tick/axis labels.
+const axisTextStyle = { fontSize: 13 };
 </script>
 
 <template>
@@ -408,6 +412,9 @@ const { charts, summary, fmtCount } = useChartData(
         :height="chart.height"
         x-label="Time"
         :y-label="chart.yLabel"
+        :tick-label-style="axisTextStyle"
+        :axis-label-style="axisTextStyle"
+        :legend-style="axisTextStyle"
         tooltip-trigger="hover"
       >
         <template #tooltip="{ xLabel, values }">
