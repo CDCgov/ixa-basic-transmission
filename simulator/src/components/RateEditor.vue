@@ -471,7 +471,7 @@ function formatRate(v: unknown): string {
       slider
       :live="live"
       :min="0.05"
-      :max="2"
+      :max="4"
       :step="0.05"
     />
     <NumberInput
