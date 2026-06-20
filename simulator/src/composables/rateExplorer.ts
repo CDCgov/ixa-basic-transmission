@@ -301,7 +301,7 @@ export function rateFunctionDefs(rate: InfectionRate): RateFunctionDefs {
       break;
     case "library":
       rHere =
-        "the curve assigned to this individual from the library (the library is scaled so its mean area = R₀, so each person keeps their relative size)";
+        "the curve assigned to this individual from the library";
       cHere = "the area under the assigned curve up to t, computed by trapezoidal integration";
       dHere = "t solves c(t) = c on the assigned curve (inverted numerically)";
       break;
