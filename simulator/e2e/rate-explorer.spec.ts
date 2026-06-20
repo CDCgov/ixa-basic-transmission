@@ -82,7 +82,7 @@ test.describe("Rate explorer tab", () => {
     await page.getByRole("button", { name: "Simulate 100×" }).click();
     const sim = page.locator(".explorer-sim");
     await expect(
-      sim.getByRole("heading", { name: "Distribution of event times" }),
+      sim.getByRole("heading", { name: "Distribution of simulated event times" }),
     ).toBeVisible();
     await expect(sim).toContainText("event time");
     await expect(sim.locator("svg")).toBeVisible();

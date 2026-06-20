@@ -499,6 +499,30 @@ function fmtTau(v: unknown): string {
             </template>
           </LineChart>
         </div>
+
+        <!-- Distribution of simulated event times: pooled across all draws +
+             simulations, binned over [0, duration]. The bars approach r(t) as
+             samples grow. -->
+        <div v-if="hasSamples" class="explorer-sim">
+          <h3>Distribution of simulated event times</h3>
+          <p class="explorer-hint">
+            {{ timeHistogram.total }} event time{{ timeHistogram.total === 1 ? "" : "s" }}
+            sampled across all rounds, binned over the infectious period. The bars
+            approach the rate curve <span class="explorer-rate-line">r(t)</span> as
+            more are sampled.
+          </p>
+          <BarChart :categories="timeHistogram.categories" :series="distSeries" :summary-lines="distOverlay"
+            :height="200" :menu="false" x-label="t (days since infected)" y-label="% of samples"
+            :tick-label-style="axisTextStyle" :axis-label-style="axisTextStyle"
+            value-tick-format="%.0f%%" :category-format="distLabel">
+            <template #tooltip="{ category, values }">
+              <div class="explorer-tooltip">
+                <div>t ≈ {{ category }}</div>
+                <div>{{ fmtTau(values[0]?.value) }}% of samples</div>
+              </div>
+            </template>
+          </BarChart>
+        </div>
       </div>
 
       <!-- Right: inverse-CDF sampling. Draw Exp(1) deltas, accumulate them,
@@ -643,29 +667,6 @@ function fmtTau(v: unknown): string {
           No samples yet — press <strong>Draw next</strong> to sample one time, or
           <strong>Simulate 100×</strong> to build the distribution quickly.
         </p>
-
-        <!-- Distribution of event times: pooled across all draws + simulations,
-             binned over [0, duration]. The bars approach r(t) as samples grow. -->
-        <div v-if="hasSamples" class="explorer-sim">
-          <h3>Distribution of event times</h3>
-          <p class="explorer-hint">
-            {{ timeHistogram.total }} event time{{ timeHistogram.total === 1 ? "" : "s" }}
-            sampled across all rounds, binned over the infectious period. The bars
-            approach the rate curve <span class="explorer-rate-line">r(t)</span> as
-            more are sampled.
-          </p>
-          <BarChart :categories="timeHistogram.categories" :series="distSeries" :summary-lines="distOverlay"
-            :height="200" :menu="false" x-label="t (days since infected)" y-label="% of samples"
-            :tick-label-style="axisTextStyle" :axis-label-style="axisTextStyle"
-            value-tick-format="%.0f%%" :category-format="distLabel">
-            <template #tooltip="{ category, values }">
-              <div class="explorer-tooltip">
-                <div>t ≈ {{ category }}</div>
-                <div>{{ fmtTau(values[0]?.value) }}% of samples</div>
-              </div>
-            </template>
-          </BarChart>
-        </div>
       </div>
     </div>
   </section>
