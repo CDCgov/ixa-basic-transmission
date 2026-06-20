@@ -339,9 +339,20 @@ const cumSeries = computed(() => {
 
 // Distribution of all sampled event times, binned over [0, duration]. The
 // histogram approaches the rate curve r(t) as samples accumulate.
-const DIST_BINS = 20;
+//
+// Bin width adapts to the sample count: coarse while samples are few (a handful
+// of wide bars), refining toward the curve as more accumulate (more data
+// supports finer resolution before the bars get noisy). Stays coarse at/below
+// ~10 samples, then grows ~√n bins, clamped to [MIN_BINS, MAX_BINS].
+const MIN_BINS = 8;
+const MAX_BINS = 60;
+const distBins = computed(() => {
+  const n = pooledTimes.value.length;
+  if (n <= 10) return MIN_BINS;
+  return Math.min(MAX_BINS, Math.max(MIN_BINS, Math.round(2 * Math.sqrt(n))));
+});
 const timeHistogram = computed(() =>
-  eventTimeHistogram(pooledTimes.value, curve.value.duration, DIST_BINS),
+  eventTimeHistogram(pooledTimes.value, curve.value.duration, distBins.value),
 );
 // Plot the percentage per bin (not raw counts) so the y-axis stays bounded as
 // samples accumulate.
@@ -377,9 +388,11 @@ const distOverlay = computed(() => {
     },
   ];
 });
-// Thin the bin labels (20 bins would crowd the τ axis) — show every 5th.
+// Thin the bin labels so the τ axis keeps ~5 ticks regardless of bin count
+// (every 5th at 20 bins, but sparser as the bins multiply).
 function distLabel(label: string, index: number): string {
-  return index % 5 === 0 ? label : "";
+  const step = Math.max(1, Math.ceil(distBins.value / 5));
+  return index % step === 0 ? label : "";
 }
 
 // --- Hand-drawn SVG timeline -------------------------------------------
