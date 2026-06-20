@@ -48,6 +48,24 @@ test.describe("Rate explorer tab", () => {
     await expect(page.locator(".explorer-sim")).toHaveCount(0);
   });
 
+  test("the rate-function chart is annotated with R₀ (the shaded area)", async ({
+    page,
+  }) => {
+    await page.goto("/");
+    await page.getByRole("tab", { name: "Explore", exact: true }).click();
+
+    // The default Constant rate has area 0.5 × 3 = 1.5 = R₀.
+    const badge = page.locator(".rate-r0-badge");
+    await expect(badge).toBeVisible();
+    await expect(badge).toContainText("R₀ ≈ 1.5");
+
+    // The annotation tracks the selected rate: switching to Parametric uses the
+    // default R₀ scale of 3, distinct from the constant's 1.5.
+    await page.getByRole("combobox", { name: "Infectiousness" }).click();
+    await page.getByRole("option", { name: "Parametric", exact: true }).click();
+    await expect(badge).toContainText("R₀ ≈ 3");
+  });
+
   test("Draw next keeps adding; an individual eventually recovers", async ({
     page,
   }) => {

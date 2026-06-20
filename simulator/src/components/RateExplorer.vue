@@ -481,16 +481,24 @@ function fmtTau(v: unknown): string {
       <div class="explorer-panel">
         <h3>Rate function r(t)</h3>
         <p class="explorer-hint">{{ defs.r }}</p>
-        <LineChart :series="rateSeries" :areas="rateAreas" :height="240" :y-min="0" :menu="false"
-          :tick-label-style="axisTextStyle" :axis-label-style="axisTextStyle"
-          x-label="t (days since infected)" y-label="r(t)" tooltip-trigger="hover">
-          <template #tooltip="{ xLabel, values }">
-            <div class="explorer-tooltip">
-              <div v-if="xLabel != null">t = {{ fmtTau(xLabel) }}</div>
-              <div>r = {{ fmtTau(values[0]?.value) }}</div>
-            </div>
-          </template>
-        </LineChart>
+        <!-- The shaded area under r(t) equals R₀; annotate it with the value so
+             the chart is self-explanatory. -->
+        <div class="rate-chart-wrap">
+          <LineChart :series="rateSeries" :areas="rateAreas" :height="240" :y-min="0" :menu="false"
+            :tick-label-style="axisTextStyle" :axis-label-style="axisTextStyle"
+            x-label="t (days since infected)" y-label="r(t)" tooltip-trigger="hover">
+            <template #tooltip="{ xLabel, values }">
+              <div class="explorer-tooltip">
+                <div v-if="xLabel != null">Day {{ fmtTau(xLabel) }}</div>
+                <div>{{ fmtTau(values[0]?.value) }} infections/day</div>
+              </div>
+            </template>
+          </LineChart>
+          <div class="rate-r0-badge" aria-label="Expected R-naught (area under the rate function)">
+            <span class="rate-r0-swatch" :style="{ background: BLUE }" aria-hidden="true" />
+            Area = R₀ ≈ <strong>{{ fmt(curve.total) }}</strong>
+          </div>
+        </div>
 
         <!-- Library only: the whole population of curves with the mean in red,
              so the assigned curve above can be read in context. -->
@@ -564,8 +572,8 @@ function fmtTau(v: unknown): string {
             y-label="c(t)" tooltip-trigger="hover">
             <template #tooltip="{ xLabel, values }">
               <div class="explorer-tooltip">
-                <div v-if="xLabel != null">t = {{ fmtTau(xLabel) }}</div>
-                <div>c = {{ fmtTau(values[0]?.value) }}</div>
+                <div v-if="xLabel != null">Day {{ fmtTau(xLabel) }}</div>
+                <div>{{ fmtTau(values[0]?.value) }} total infections</div>
               </div>
             </template>
           </LineChart>
@@ -861,6 +869,39 @@ function fmtTau(v: unknown): string {
   font-weight: 600;
 }
 
+/* R₀ annotation overlaid on the rate-function chart (the shaded area = R₀). */
+.rate-chart-wrap {
+  position: relative;
+}
+
+.rate-r0-badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  align-items: center;
+  gap: 0.4em;
+  padding: 0.2em 0.5em;
+  font-size: var(--font-size-sm, 0.875rem);
+  color: var(--color-text-secondary);
+  background: color-mix(in srgb, var(--color-surface, #fff) 88%, transparent);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  pointer-events: none;
+}
+
+.rate-r0-badge strong {
+  color: var(--color-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.rate-r0-swatch {
+  width: 0.7em;
+  height: 0.7em;
+  border-radius: 2px;
+  opacity: 0.4;
+}
+
 .explorer-table {
   width: 100%;
   border-collapse: collapse;
@@ -893,7 +934,7 @@ function fmtTau(v: unknown): string {
   display: flex;
   flex-direction: column;
   gap: 1px;
-  font-size: 0.6875rem;
+  font-size: 0.8125rem;
   white-space: nowrap;
 }
 </style>
