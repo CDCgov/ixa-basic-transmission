@@ -66,6 +66,34 @@ test.describe("Rate explorer tab", () => {
     await expect(badge).toContainText("R₀ ≈ 3");
   });
 
+  test("the c(t) chart annotates the latest step with e and Δτ labels", async ({
+    page,
+  }) => {
+    await page.goto("/");
+    // Parametric is time-varying → the inverse-CDF c(t) chart (with its e/Δτ
+    // step annotation) shows, unlike the constant rate's simplified view.
+    await page.getByRole("combobox", { name: "Infectiousness" }).click();
+    await page.getByRole("option", { name: "Parametric", exact: true }).click();
+    await page.getByRole("tab", { name: "Explore", exact: true }).click();
+
+    // The annotation labels render as chart-native SVG text in the right
+    // (c(t)) panel. "Δτ" appears only on that label, not in the chart axes.
+    const cPanel = page.locator(".explorer-panel").nth(1);
+    const dtau = cPanel.locator("svg text").filter({ hasText: "Δτ" });
+    await expect(dtau).toHaveCount(0); // nothing drawn yet
+
+    // Draw until a valid event lands (a fresh individual can overshoot on its
+    // first draw); the step then annotates the latest inversion.
+    const draw = page.getByRole("button", { name: "Draw next" });
+    for (let i = 0; i < 20 && (await dtau.count()) === 0; i++) {
+      await draw.click();
+    }
+    await expect(dtau.first()).toBeVisible();
+    await expect(
+      cPanel.locator("svg text").filter({ hasText: "e =" }).first(),
+    ).toBeVisible();
+  });
+
   test("Draw next keeps adding; an individual eventually recovers", async ({
     page,
   }) => {

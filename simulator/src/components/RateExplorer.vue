@@ -285,8 +285,27 @@ const overlaySeries = computed(() => {
   return series;
 });
 
-// Right: Λ(τ) plus event markers and guide lines for the latest draw,
-// showing how an Exp(1) increment on the y-axis inverts to a τ on the x.
+// The latest completed time-scaled event: how the most recent Exp(1) draw `e`
+// becomes an inter-event time Δτ = d(c+e) − d(c). `c` is the cumulative before
+// the draw, `c+e` after; inverting both through Λ⁻¹ gives the previous and new
+// event times, and their difference is Δτ. `null` until an event is drawn.
+const latestScaled = computed(() => {
+  const v = validEvents.value;
+  const last = v[v.length - 1];
+  if (!last || last.tau === null || last.scaledDelta === null) return null;
+  return {
+    cPrev: last.cumulative - last.delta, // c
+    cNew: last.cumulative, // c + e
+    e: last.delta,
+    tauPrev: last.tau - last.scaledDelta, // d(c)
+    tauNew: last.tau, // d(c+e)
+    deltaTau: last.scaledDelta, // Δτ = d(c+e) − d(c)
+  };
+});
+
+// Right: Λ(τ) plus event markers and a right-angle "step" for the latest draw,
+// showing how the last Exp(1) increment `e` on the y-axis (c → c+e) maps across
+// to the next event time — the horizontal run of that step is Δτ = d(c+e)−d(c).
 const cumSeries = computed(() => {
   // Dense resampling so the rendered (straight-chord) polyline tracks the true
   // piecewise-quadratic c(t) — otherwise event markers at (τ, E) sit off the
@@ -300,25 +319,29 @@ const cumSeries = computed(() => {
     dashed?: boolean;
     dots?: boolean;
     line?: boolean;
+    lineOpacity?: number;
     showInTooltip?: boolean;
   }> = [{ x: display.x, data: display.data, color: BLUE, strokeWidth: 2 }];
-  const last = validEvents.value[validEvents.value.length - 1];
-  if (last && last.tau !== null) {
-    // Horizontal: E events, from τ=0 to the inverted τ.
+  const ls = latestScaled.value;
+  if (ls) {
+    // Vertical leg: the Exp(1) increment e, rising from the previous event
+    // (d(c), c) to the new cumulative level (d(c), c+e).
     series.push({
-      x: [0, last.tau],
-      data: [last.cumulative, last.cumulative],
+      x: [ls.tauPrev, ls.tauPrev],
+      data: [ls.cPrev, ls.cNew],
       color: GUIDE,
       strokeWidth: 1,
       dashed: true,
       showInTooltip: false,
     });
-    // Vertical: drop from the curve down to the τ axis.
+    // Horizontal leg: Δτ, running at the new level from (d(c), c+e) across to
+    // the new event on the curve (d(c+e), c+e).
     series.push({
-      x: [last.tau, last.tau],
-      data: [last.cumulative, 0],
-      color: GUIDE,
-      strokeWidth: 1,
+      x: [ls.tauPrev, ls.tauNew],
+      data: [ls.cNew, ls.cNew],
+      color: PURPLE,
+      strokeWidth: 1.5,
+      lineOpacity: 0.5,
       dashed: true,
       showInTooltip: false,
     });
@@ -335,6 +358,38 @@ const cumSeries = computed(() => {
     });
   }
   return series;
+});
+
+// Chart-native text labels for the step: `e` beside the vertical leg, `Δτ`
+// above the horizontal leg. The LineChart projects these data-space anchors to
+// pixels itself (no manual transform). `e`'s side flips to avoid the y-axis
+// when the previous event sits near t=0.
+const cumAnnotations = computed(() => {
+  const ls = latestScaled.value;
+  if (!ls) return [];
+  const eLeft = ls.tauPrev > (curve.value.duration || 1) * 0.12;
+  return [
+    {
+      x: ls.tauPrev,
+      y: (ls.cPrev + ls.cNew) / 2,
+      text: `e = ${fmt(ls.e)}`,
+      offset: { x: eLeft ? -10 : 10, y: 0 },
+      align: (eLeft ? "right" : "left") as "right" | "left",
+      color: "#6b7280",
+      pointer: "none" as const,
+      fontSize: 13,
+    },
+    {
+      x: (ls.tauPrev + ls.tauNew) / 2,
+      y: ls.cNew,
+      text: `**Δτ** = ${fmt(ls.deltaTau)}`,
+      offset: { x: 0, y: -12 },
+      align: "center" as const,
+      color: PURPLE,
+      pointer: "none" as const,
+      fontSize: 13,
+    },
+  ];
 });
 
 // Distribution of all sampled event times, binned over [0, duration]. The
@@ -567,7 +622,12 @@ function fmtTau(v: unknown): string {
         <!-- General inverse-CDF view (used by every time-varying rate). -->
         <template v-else>
           <p class="explorer-hint">{{ defs.c }}</p>
-          <LineChart :series="cumSeries" :height="200" :y-min="0" :menu="false" x-label="t (days since infected)"
+          <!-- The step annotates the latest inversion: the Exp(1) increment e
+               (vertical leg) maps across to the next event, the run being the
+               time-scaled gap Δτ = d(c+e) − d(c). `chart-padding` reserves room
+               so the e/Δτ labels aren't clipped at the plot edges. -->
+          <LineChart :series="cumSeries" :annotations="cumAnnotations" :chart-padding="{ top: 18 }" :height="200"
+            :y-min="0" :menu="false" x-label="t (days since infected)"
             :tick-label-style="axisTextStyle" :axis-label-style="axisTextStyle"
             y-label="c(t)" tooltip-trigger="hover">
             <template #tooltip="{ xLabel, values }">
