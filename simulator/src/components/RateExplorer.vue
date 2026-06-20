@@ -876,8 +876,8 @@ function fmtTau(v: unknown): string {
 
 .rate-r0-badge {
   position: absolute;
-  top: 8px;
-  right: 8px;
+  top: 12px;
+  right: 12px;
   display: flex;
   align-items: center;
   gap: 0.4em;
