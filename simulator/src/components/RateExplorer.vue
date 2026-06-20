@@ -44,8 +44,8 @@ function assignRandomCurve() {
   draws.value = []; // the assigned curve changed → drawn τ's no longer apply
 }
 
-// A constant rate is a homogeneous Poisson process: the gaps between events
-// are simply Exp(rate). By default we present it that way (gap ~ Exp(rate),
+// A constant rate is a homogeneous Poisson process: the inter-event times Δτ
+// are simply Exp(rate). By default we present it that way (Δτ ~ Exp(rate),
 // τ = running sum); toggling "Generalized" on shows the general inverse-CDF
 // method — the same path the time-varying rates use. The toggle only applies
 // to a constant rate; everything else has no single rate and always uses the
@@ -67,7 +67,7 @@ interface DemoEvent {
   delta: number;
   /** Running Σδ in event space — drives the c(t) chart's y-position. */
   cumulative: number;
-  /** Time-scaled δ: the time increment τ_k − τ_{k−1} this draw buys. */
+  /** Inter-event time Δτ = τ_k − τ_{k−1} this draw buys (the Δτ column). */
   scaledDelta: number | null;
   /** Event time τ = Σ of the time-scaled δ's. `null` once recovered. */
   tau: number | null;
@@ -295,7 +295,7 @@ function fmtTau(v: unknown): string {
         <!-- Constant rate only: switch the right panel between the simple
              homogeneous-Poisson view and the general inverse-CDF method. -->
         <Toggle v-if="isConstant" :model-value="generalized" label="Generalized"
-          hint="Show the general inverse-CDF method (Λ⁻¹) instead of drawing gaps straight from Exp(rate)."
+          hint="Show the general inverse-CDF method (Λ⁻¹) instead of drawing each Δτ straight from Exp(rate)."
           class="explorer-mode-toggle" @update:model-value="(v: boolean) => (generalized = v)" />
       </div>
       <!-- Library rates assign each person a random curve; everything else is
@@ -360,9 +360,9 @@ function fmtTau(v: unknown): string {
         </div>
         <!-- Simplified homogeneous view (constant rate). -->
         <p v-if="simplifiedView" class="explorer-hint">
-          A constant rate is a homogeneous Poisson process: the gap before each event is drawn from
+          A constant rate is a homogeneous Poisson process: the time Δτ before each event is drawn from
           <strong>Exp({{ fmt(constantRate) }})</strong> (mean {{ fmt(1 / constantRate) }} days), and τ
-          is the running sum of those gaps.
+          is the elapsed time since the person was infected.
         </p>
 
         <!-- General inverse-CDF view (used by every time-varying rate). -->
@@ -420,22 +420,22 @@ function fmtTau(v: unknown): string {
         <table v-if="events.length" class="explorer-table">
           <thead>
             <tr v-if="simplifiedView">
-              <th>gap ~ Exp(rate)</th>
+              <th>Δτ ~ Exp(rate)</th>
               <th>
                 τ = Σ
-                <Hint text="Event time since infection: the running sum of the gaps so far (τ = Σ gap)." />
+                <Hint text="Event time since infection: the running sum of the Δτ's so far (τ = Σ Δτ)." />
               </th>
             </tr>
             <tr v-else>
               <th>e ~ Exp(1)</th>
               <th>
-                gap
+                Δτ
                 <Hint
-                  text="Time-scaled inter-event gap: d(c+e) − d(c). Invert the cumulative rate at the new running total c+e, then subtract the previous event time d(c)." />
+                  text="Time-scaled inter-event time Δτ = d(c+e) − d(c). Invert the cumulative rate at the new running total c+e, then subtract the previous event time d(c)." />
               </th>
               <th>
                 τ = Σ
-                <Hint text="Event time since infection: the running sum of the gaps so far (τ = Σ gap)." />
+                <Hint text="Event time since infection: the running sum of the Δτ's so far (τ = Σ Δτ)." />
               </th>
             </tr>
           </thead>

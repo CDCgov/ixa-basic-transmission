@@ -70,13 +70,13 @@ test.describe("Rate explorer tab", () => {
     await page.getByRole("tab", { name: "Explore rate" }).click();
 
     // Default constant rate → simplified homogeneous view: the "Generalized"
-    // toggle is off and the table uses the Exp(rate) "gap" column.
+    // toggle is off and the table uses the Exp(rate) "Δτ" column.
     const toggle = page.getByRole("switch", { name: "Generalized" });
     await expect(toggle).toBeVisible();
     await expect(toggle).not.toBeChecked();
     await page.getByRole("button", { name: "Draw next" }).click();
     await expect(
-      page.getByRole("columnheader", { name: /gap/ }),
+      page.getByRole("columnheader", { name: /Δτ/ }),
     ).toBeVisible();
 
     // Toggle on → general inverse-CDF view: c(t) chart + the Exp(1) column.
