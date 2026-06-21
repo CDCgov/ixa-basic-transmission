@@ -44,6 +44,41 @@ test.describe("Transmission modifiers", () => {
     await expect(page).not.toHaveURL(/modifiers=/);
   });
 
+  test("toggling a modifier off then on restores its prior parameters", async ({
+    page,
+  }) => {
+    // The restored config must stay a plain object — a Proxy leaking back into
+    // the shallowReactive params breaks structuredClone(toRaw(params)) in the
+    // URL/worker sync, which surfaces as an uncaught DataCloneError.
+    const pageErrors: string[] = [];
+    page.on("pageerror", (e) => pageErrors.push(String(e)));
+
+    await page.goto("/");
+
+    const facemask = page.getByRole("switch", { name: "Facemask" });
+    await facemask.click();
+    await expect(facemask).toBeChecked();
+
+    // Edit a parameter away from its default (default coverage is 50%).
+    const coverage = page.getByRole("textbox", { name: "Coverage" });
+    await coverage.fill("80");
+    await coverage.blur();
+
+    // Toggle off then back on — the prior value should return, not the default.
+    await facemask.click();
+    await expect(facemask).not.toBeChecked();
+    await facemask.click();
+    await expect(facemask).toBeChecked();
+    await expect(
+      page.getByRole("textbox", { name: "Coverage" }),
+    ).toHaveValue("80");
+
+    // The restored config round-trips through the debounced URL sync (would
+    // throw DataCloneError if the cache re-introduced a reactive Proxy).
+    await expect(page).toHaveURL(/modifiers=.*facemask/);
+    expect(pageErrors).toEqual([]);
+  });
+
   test("facemask and antiviral compose, both encoded in the URL", async ({
     page,
   }) => {

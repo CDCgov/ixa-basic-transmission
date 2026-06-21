@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, shallowRef } from "vue";
 import { NumberInput, Toggle, SelectBox } from "cfasim-ui/components";
 import type { SelectOption } from "cfasim-ui/components";
 import {
@@ -30,10 +30,28 @@ function setModifiers(patch: Partial<Modifiers>) {
   emit("update:modifiers", { ...props.modifiers, ...patch });
 }
 
-// Toggling on seeds a fresh default config; toggling off disables the
-// modifier (null → the Rust side reads `None`).
+// When a modifier is toggled off its config is cached here, so toggling it
+// back on restores the previous parameters instead of resetting to defaults.
+// Component-local (in-memory) — not persisted to the URL/IDB. `shallowRef` +
+// spread copies keep the cache a plain (non-reactive) object: a deeply
+// reactive `ref` would re-proxy the config, and a Proxy leaking back into the
+// `shallowReactive` `params.modifiers` breaks `structuredClone(toRaw(params))`.
+const cachedFacemask = shallowRef<Facemask | null>(null);
+const cachedAntiviral = shallowRef<Antiviral | null>(null);
+const cachedIsolation = shallowRef<Isolation | null>(null);
+
+// Toggling on restores the cached config (or seeds a fresh default the first
+// time); toggling off caches the current config then disables the modifier
+// (null → the Rust side reads `None`).
 function toggleFacemask(on: boolean) {
-  setModifiers({ facemask: on ? { ...DEFAULT_FACEMASK } : null });
+  if (!on) {
+    cachedFacemask.value = props.modifiers.facemask
+      ? { ...props.modifiers.facemask }
+      : null;
+    setModifiers({ facemask: null });
+    return;
+  }
+  setModifiers({ facemask: { ...(cachedFacemask.value ?? DEFAULT_FACEMASK) } });
 }
 function setFacemask(key: keyof Facemask, value: number) {
   if (!props.modifiers.facemask) return;
@@ -41,20 +59,37 @@ function setFacemask(key: keyof Facemask, value: number) {
 }
 
 function toggleAntiviral(on: boolean) {
-  setModifiers({ antiviral: on ? { ...DEFAULT_ANTIVIRAL } : null });
+  if (!on) {
+    cachedAntiviral.value = props.modifiers.antiviral
+      ? { ...props.modifiers.antiviral }
+      : null;
+    setModifiers({ antiviral: null });
+    return;
+  }
+  setModifiers({
+    antiviral: { ...(cachedAntiviral.value ?? DEFAULT_ANTIVIRAL) },
+  });
 }
 function setAntiviral(key: keyof Antiviral, value: number) {
   if (!props.modifiers.antiviral) return;
   setModifiers({ antiviral: { ...props.modifiers.antiviral, [key]: value } });
 }
 
-// Enabling seeds the first configured setting as the restrict target.
+// Enabling restores the cached config (or seeds defaults), falling back to the
+// first configured setting if the cached restrictTo no longer exists.
 function toggleIsolation(on: boolean) {
-  setModifiers({
-    isolation: on
-      ? { ...DEFAULT_ISOLATION, restrictTo: props.settingNames[0] ?? "" }
-      : null,
-  });
+  if (!on) {
+    cachedIsolation.value = props.modifiers.isolation
+      ? { ...props.modifiers.isolation }
+      : null;
+    setModifiers({ isolation: null });
+    return;
+  }
+  const base = cachedIsolation.value ?? DEFAULT_ISOLATION;
+  const restrictTo = props.settingNames.includes(base.restrictTo)
+    ? base.restrictTo
+    : (props.settingNames[0] ?? "");
+  setModifiers({ isolation: { ...base, restrictTo } });
 }
 function setIsolation(patch: Partial<Isolation>) {
   if (!props.modifiers.isolation) return;
