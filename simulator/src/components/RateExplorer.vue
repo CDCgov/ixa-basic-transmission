@@ -48,6 +48,7 @@ function assignRandomCurve() {
   clearDraws();
   clearSim();
   pooledTimes.value = [];
+  pooledCounts.value = [];
   mode.value = "draw";
 }
 
@@ -111,6 +112,12 @@ const mode = ref<"draw" | "sim">("draw");
 const pooledTimes = ref<number[]>([]); // all rounds → the histogram
 const simRound = ref<number[]>([]); // current sim round's revealed times → timeline
 
+// Offspring count (number of infection events) of every COMPLETED individual,
+// across all rounds — its mean is the observed R₀. Distinct from `pooledTimes`,
+// which counts events and includes the in-progress draw individual. Cleared
+// alongside the draws on Reset / rate change / library re-roll.
+const pooledCounts = ref<number[]>([]);
+
 // Draw-mode timeline reads the current individual (the `draws` walk).
 const infectionCount = computed(() => validEvents.value.length);
 const currentTime = computed(() => {
@@ -134,13 +141,21 @@ function drawNext() {
   const cumulative = next.reduce((a, b) => a + b, 0);
   const tau = inverseCumulativeRate(curve.value, cumulative);
   draws.value = next;
-  if (tau !== null) pooledTimes.value = [...pooledTimes.value, tau];
+  if (tau !== null) {
+    pooledTimes.value = [...pooledTimes.value, tau];
+  } else {
+    // Recovery: the new draw overshot the curve area, so this individual is
+    // complete — record its offspring count (the valid events before the
+    // overshoot, = next.length − 1) toward the observed R₀.
+    pooledCounts.value = [...pooledCounts.value, next.length - 1];
+  }
 }
 
 function reset() {
   clearDraws();
   clearSim();
   pooledTimes.value = [];
+  pooledCounts.value = [];
   mode.value = "draw";
 }
 
@@ -169,7 +184,11 @@ function simulateMany() {
   clearSim();
   clearDraws(); // the manual individual is no longer the current round
   mode.value = "sim";
-  const roundTimes = simulateInfectionRuns(curve.value, SIM_RUNS, Math.random).flat();
+  const roundRuns = simulateInfectionRuns(curve.value, SIM_RUNS, Math.random);
+  // Every individual this round (including zero-offspring ones) counts toward
+  // the observed R₀ — recorded now, before the time-reveal animation.
+  pooledCounts.value = [...pooledCounts.value, ...roundRuns.map((r) => r.length)];
+  const roundTimes = roundRuns.flat();
   if (!roundTimes.length) return;
   const poolBase = pooledTimes.value; // earlier rounds keep accumulating
   simAnimating.value = true;
@@ -191,6 +210,14 @@ function simulateMany() {
 }
 
 const hasSamples = computed(() => pooledTimes.value.length > 0);
+// Observed (realized) R₀ = mean offspring count over the completed individuals;
+// it converges to the curve's area (the expected R₀) as more are sampled.
+// `null` until at least one individual has run to recovery.
+const observedR0 = computed(() => {
+  const n = pooledCounts.value.length;
+  if (!n) return null;
+  return pooledCounts.value.reduce((a, b) => a + b, 0) / n;
+});
 // The timeline shows only the current round; sim mode spans the full infectious
 // period, draw mode fills in up to the current event.
 const timelineVisible = computed(() =>
@@ -210,6 +237,7 @@ watch(
     clearDraws();
     clearSim();
     pooledTimes.value = []; // a different Λ invalidates the sampled times
+    pooledCounts.value = [];
     mode.value = "draw";
     const sig = rate.type === "library" ? `library:${rate.rates.length}` : null;
     if (sig && sig !== prevLibrarySig) libraryIndex.value = randomLibraryIndex();
@@ -598,6 +626,15 @@ function fmtTau(v: unknown): string {
               </div>
             </template>
           </BarChart>
+          <!-- Observed (realized) R₀: the mean offspring count over the
+               completed individuals, converging to the expected R₀ (area under
+               r(t)) as more are sampled. -->
+          <p v-if="observedR0 !== null" class="explorer-hint explorer-r0-readout">
+            Observed R₀ ≈ <strong>{{ fmt(observedR0) }}</strong> ·
+            expected R₀ = <strong>{{ fmt(curve.total) }}</strong> ·
+            averaged over {{ pooledCounts.length }}
+            individual{{ pooledCounts.length === 1 ? "" : "s" }}
+          </p>
         </div>
       </div>
 
@@ -609,7 +646,8 @@ function fmtTau(v: unknown): string {
           <div class="explorer-buttons">
             <Button :disabled="!hasArea || simAnimating" @click="drawNext">Draw next</Button>
             <Button variant="secondary" :disabled="!hasArea || simAnimating" @click="simulateMany">Simulate 100×</Button>
-            <Button variant="secondary" :disabled="!draws.length && !hasSamples" @click="reset">Reset</Button>
+            <Button variant="secondary" :disabled="!draws.length && !hasSamples && !pooledCounts.length"
+              @click="reset">Reset</Button>
           </div>
         </div>
         <!-- Simplified homogeneous view (constant rate). -->
@@ -927,6 +965,13 @@ function fmtTau(v: unknown): string {
 .explorer-rate-line {
   color: #2563eb;
   font-weight: 600;
+}
+
+/* Observed-vs-expected R₀ readout under the event-time distribution. */
+.explorer-r0-readout {
+  margin-top: 0.2em;
+  padding-top: 0.5em;
+  border-top: 1px dashed var(--color-border);
 }
 
 /* R₀ annotation overlaid on the rate-function chart (the shaded area = R₀). */

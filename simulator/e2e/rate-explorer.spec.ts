@@ -148,6 +148,34 @@ test.describe("Rate explorer tab", () => {
     await expect(page.locator(".timeline-title")).toBeHidden();
   });
 
+  test("Simulate 100× shows an observed-R₀ readout vs the expected R₀", async ({
+    page,
+  }) => {
+    await page.goto("/");
+    await page.getByRole("tab", { name: "Explore", exact: true }).click();
+
+    // No readout until at least one individual has run to recovery.
+    await expect(page.locator(".explorer-r0-readout")).toHaveCount(0);
+
+    const draw = page.getByRole("button", { name: "Draw next" });
+    await page.getByRole("button", { name: "Simulate 100×" }).click();
+    await expect(draw).toBeEnabled(); // wait out the animation
+
+    // The readout compares the realized R₀ to the expected R₀ (the default
+    // Constant rate's area = 0.5 × 3 = 1.5) over the 100 simulated individuals.
+    const readout = page.locator(".explorer-r0-readout");
+    await expect(readout).toContainText("Observed R₀");
+    await expect(readout).toContainText("expected R₀ = 1.5");
+    await expect(readout).toContainText("averaged over 100 individuals");
+
+    // Reset clears it along with the distribution.
+    await page
+      .locator(".explorer")
+      .getByRole("button", { name: "Reset" })
+      .click();
+    await expect(page.locator(".explorer-r0-readout")).toHaveCount(0);
+  });
+
   test("the distribution accumulates across rounds; the timeline shows only the current one", async ({
     page,
   }) => {
