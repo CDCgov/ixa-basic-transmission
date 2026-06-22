@@ -262,15 +262,53 @@ const axisTextStyle = { fontSize: 13 };
 const rateSeries = computed(() => [
   { x: curve.value.x, data: curve.value.lambda, color: BLUE, strokeWidth: 2 },
 ]);
-const rateAreas = computed(() => [
-  {
-    x: curve.value.x,
-    upper: curve.value.lambda,
-    lower: curve.value.lambda.map(() => 0),
-    color: BLUE,
-    opacity: 0.18,
-  },
-]);
+const rateAreas = computed(() => {
+  const areas = [
+    {
+      x: curve.value.x,
+      upper: curve.value.lambda,
+      lower: curve.value.lambda.map(() => 0),
+      color: BLUE,
+      opacity: 0.18,
+    },
+  ];
+  // Highlight the slice of area under r(t) between the latest two event times
+  // [τ_prev, τ_new]: ∫r over that span = c(τ_new) − c(τ_prev) = e, the Exp(1)
+  // increment the c(t) step's vertical leg represents — the "equivalent area".
+  const ls = latestScaled.value;
+  if (ls && ls.tauNew > ls.tauPrev) {
+    const N = 48;
+    const x: number[] = [];
+    const upper: number[] = [];
+    for (let i = 0; i < N; i++) {
+      const t = ls.tauPrev + ((ls.tauNew - ls.tauPrev) * i) / (N - 1);
+      x.push(t);
+      upper.push(lambdaAt(t));
+    }
+    areas.push({ x, upper, lower: x.map(() => 0), color: PURPLE, opacity: 0.3 });
+  }
+  return areas;
+});
+
+// Label the highlighted r(t) slice with its area = e, tying it to the c(t)
+// step's vertical leg (same value). Shown only once an event has been drawn.
+const rateAnnotations = computed(() => {
+  const ls = latestScaled.value;
+  if (!ls || ls.tauNew <= ls.tauPrev) return [];
+  const tMid = (ls.tauPrev + ls.tauNew) / 2;
+  return [
+    {
+      x: tMid,
+      y: lambdaAt(tMid),
+      text: `area = **e** = ${fmt(ls.e)}`,
+      offset: { x: 0, y: -14 },
+      align: "center" as const,
+      color: PURPLE,
+      pointer: "none" as const,
+      fontSize: 13,
+    },
+  ];
+});
 
 // Library only: every per-person curve (faint blue) + the population mean
 // (red), with the currently-assigned curve drawn bold on top — same normalized
@@ -567,7 +605,8 @@ function fmtTau(v: unknown): string {
         <!-- The shaded area under r(t) equals R₀; annotate it with the value so
              the chart is self-explanatory. -->
         <div class="rate-chart-wrap">
-          <LineChart :series="rateSeries" :areas="rateAreas" :height="240" :y-min="0" :menu="false"
+          <LineChart :series="rateSeries" :areas="rateAreas" :annotations="rateAnnotations"
+            :chart-padding="{ top: 16 }" :height="240" :y-min="0" :menu="false"
             :tick-label-style="axisTextStyle" :axis-label-style="axisTextStyle"
             x-label="t (days since infected)" y-label="r(t)" tooltip-trigger="hover">
             <template #tooltip="{ xLabel, values }">
