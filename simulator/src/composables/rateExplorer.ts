@@ -111,7 +111,7 @@ export function effectiveRateCurve(
     const a = area(x, rawY);
     factor = a > 0 ? rate.scale / a : 0;
   } else if (rate.type === "parametric") {
-    const pts = parametricPoints(rate.dist, rate.duration);
+    const pts = parametricPoints(rate.dist);
     x = pts.map((p) => p[0]);
     rawY = pts.map((p) => p[1]);
     const a = area(x, rawY);
@@ -399,8 +399,8 @@ export function rateFunctionDefs(rate: InfectionRate): RateFunctionDefs {
           : d.dist === "lognormal"
             ? "Lognormal"
             : "Gamma";
-      rHere = `R₀ × the truncated ${name} PDF (renormalized over [0, duration])`;
-      cHere = `R₀ × the truncated ${name} CDF (renormalized over [0, duration])`;
+      rHere = `R₀ × the ${name} PDF (truncated at its auto-derived support, renormalized)`;
+      cHere = `R₀ × the ${name} CDF (truncated at its auto-derived support, renormalized)`;
       dHere = `the inverse of that truncated, renormalized ${name} CDF (inverted numerically)`;
       break;
     }
@@ -445,7 +445,7 @@ export function describeRate(rate: InfectionRate): { title: string } {
           ? `μ=${fmt(d.mu)}, σ=${fmt(d.sigma)}`
           : `shape=${fmt(d.shape)}, scale=${fmt(d.scale)}`;
       return {
-        title: `${name} distributed ${params}, R₀ = ${fmt(rate.scale)} over t in [0, ${fmt(rate.duration)}]`,
+        title: `${name} distributed ${params}, R₀ = ${fmt(rate.scale)}`,
       };
     }
     case "library":

@@ -88,7 +88,6 @@ describe("rateExplorer", () => {
     const parametric: InfectionRate = {
       type: "parametric",
       dist: { dist: "gamma", shape: 3, scale: 1.5 },
-      duration: 14,
       scale: 2.4,
     };
     const pc = effectiveRateCurve(parametric);
@@ -200,11 +199,10 @@ describe("rateExplorer", () => {
     const gamma = rateFunctionDefs({
       type: "parametric",
       dist: { dist: "gamma", shape: 3, scale: 1.5 },
-      duration: 12,
       scale: 3,
     });
     // r(t) is the (scaled) PDF; c(t) the (scaled) CDF; d(t) the quantile.
-    // Both r and c note the kernel is truncated to [0, duration].
+    // Both r and c note the kernel is truncated at its auto-derived support.
     expect(gamma.r).toContain("Gamma PDF");
     expect(gamma.c).toContain("Gamma CDF");
     expect(gamma.r).toContain("truncated");
@@ -217,7 +215,6 @@ describe("rateExplorer", () => {
     const weibull = rateFunctionDefs({
       type: "parametric",
       dist: { dist: "weibull", shape: 2, scale: 5 },
-      duration: 15,
       scale: 2,
     });
     expect(weibull.r).toContain("Weibull PDF");
@@ -228,7 +225,6 @@ describe("rateExplorer", () => {
     const lognormal = rateFunctionDefs({
       type: "parametric",
       dist: { dist: "lognormal", mu: 1.4, sigma: 0.5 },
-      duration: 15,
       scale: 2,
     });
     expect(lognormal.d.toLowerCase()).toContain("inverse");
@@ -248,7 +244,6 @@ describe("rateExplorer", () => {
     const gamma = describeRate({
       type: "parametric",
       dist: { dist: "gamma", shape: 3, scale: 1.5 },
-      duration: 12,
       scale: 3,
     });
     expect(gamma.title).toContain("Gamma");

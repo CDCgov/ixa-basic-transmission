@@ -12,7 +12,7 @@
 //! - **Constant**: no-op — R₀ is already `value · duration` and the
 //!   user controls both directly.
 
-use crate::rate::{empirical_cum_rate, empirical_curve_duration, InfectionRate};
+use super::{empirical_cum_rate, empirical_curve_duration, InfectionRate};
 
 /// See module docs. Idempotent; no-op on degenerate (empty / zero-area)
 /// inputs — those hit `cum_rate`'s exhausted-curve path during setup
@@ -58,7 +58,7 @@ pub fn normalize_to_r0(rate: &mut InfectionRate) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::rate::{Curve, EffectiveRate};
+    use crate::rate::{EmpiricalRate, InfectiousnessRateFn};
 
     /// Trapezoidal area for a single curve (test-only sanity helper —
     /// mirrors what `normalize_to_r0` measures, kept separate so the
@@ -284,12 +284,7 @@ mod tests {
             InfectionRate::Empirical { points, scale } => (points.clone(), *scale),
             _ => panic!(),
         };
-        let curve = Curve::new(points);
-        let eff = EffectiveRate::Empirical {
-            curve: &curve,
-            scale,
-        };
-        let total = eff.cum_rate(curve.duration());
+        let total = EmpiricalRate::new(points, scale).max_cum_rate();
         assert!(
             (total - scale).abs() < 1e-12,
             "total = {total}, scale = {scale}"
@@ -307,7 +302,6 @@ mod tests {
                 shape: 3.0,
                 scale: 2.0,
             },
-            duration: 20.0,
             scale: 4.0,
         };
         materialize_parametric(&mut r);
@@ -318,12 +312,7 @@ mod tests {
         };
         assert!((trapezoid_area(&points) - 1.0).abs() < 1e-12);
         // And the integrated effective hazard equals `scale` (= R₀).
-        let curve = Curve::new(points);
-        let eff = EffectiveRate::Empirical {
-            curve: &curve,
-            scale,
-        };
-        assert!((eff.cum_rate(curve.duration()) - scale).abs() < 1e-12);
+        assert!((EmpiricalRate::new(points, scale).max_cum_rate() - scale).abs() < 1e-12);
     }
 
     #[test]
@@ -343,15 +332,11 @@ mod tests {
             InfectionRate::Library { rates, scale } => (rates.clone(), *scale),
             _ => panic!(),
         };
-        let curves: Vec<Curve> = rates.into_iter().map(Curve::new).collect();
-        let mean_total: f64 = curves
+        let mean_total: f64 = rates
             .iter()
-            .map(|c| {
-                let eff = EffectiveRate::Empirical { curve: c, scale };
-                eff.cum_rate(c.duration())
-            })
+            .map(|c| EmpiricalRate::new(c.clone(), scale).max_cum_rate())
             .sum::<f64>()
-            / curves.len() as f64;
+            / rates.len() as f64;
         assert!(
             (mean_total - scale).abs() < 1e-12,
             "mean_total = {mean_total}, scale = {scale}"

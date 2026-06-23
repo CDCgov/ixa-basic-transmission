@@ -28,7 +28,7 @@
 //!
 //!   - end_to_end(library) − end_to_end(empirical_long) ≈ Library
 //!     dispatch overhead (the extra AssignedRate property lookup +
-//!     RateLibraryPlugin lookup per event).
+//!     RateStorage lookup per event).
 //!   - end_to_end(empirical_long) − end_to_end(empirical_short) ≈ cost
 //!     of walking long curves on every event.
 //!   - setup_only(library) − setup_only(constant) ≈ per-person
@@ -53,7 +53,8 @@ use ixa_basic_transmission::modifiers::isolation::Isolation;
 use ixa_basic_transmission::modifiers::Modifiers;
 use ixa_basic_transmission::parameters::Parameters;
 use ixa_basic_transmission::rate::{
-    empirical_cum_rate, empirical_inverse_cum_rate, Curve, InfectionRate,
+    empirical_cum_rate, empirical_inverse_cum_rate, EmpiricalRate, InfectionRate,
+    InfectiousnessRateFn,
 };
 use ixa_basic_transmission::settings::SettingType;
 
@@ -252,12 +253,13 @@ fn bench_curve_eval(c: &mut Criterion) {
         .expect("library has at least one curve")
         .clone();
     let short_points = short_curve();
-    // Pre-build the Curves (with precomputed cum) once — same shape as
-    // the model's hot path, which holds `&Curve` borrowed from a data
-    // plugin populated at setup.
-    let short = Curve::new(short_points.clone());
-    let long_curve = Curve::new(long_points.clone());
-    let long_len = long_curve.points.len();
+    // Pre-build the EmpiricalRates (with precomputed cum) once — same shape as
+    // the model's hot path, which holds `&dyn InfectiousnessRateFn` borrowed
+    // from a data plugin populated at setup. Scale 1.0 so the cum/inverse math
+    // matches the slice-based reference path below bit-for-bit.
+    let short = EmpiricalRate::new(short_points.clone(), 1.0);
+    let long_curve = EmpiricalRate::new(long_points.clone(), 1.0);
+    let long_len = long_points.len();
 
     let mut g = c.benchmark_group("curve_eval");
     g.throughput(Throughput::Elements(1));
@@ -285,8 +287,7 @@ fn bench_curve_eval(c: &mut Criterion) {
     );
 
     // Reference path (no precomputed cum) — same math the slice-based
-    // helpers and `InfectionRate::cum_rate` use. Lets the diff measure
-    // the precompute savings on its own.
+    // helpers use. Lets the diff measure the precompute savings on its own.
     g.bench_function(BenchmarkId::from_parameter("short_5pt_no_cum"), |b| {
         b.iter(|| {
             let cum = empirical_cum_rate(black_box(&short_points), black_box(elapsed));

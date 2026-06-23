@@ -15,7 +15,6 @@ export type InfectionRate =
   | {
       type: "parametric";
       dist: ParametricDist;
-      duration: number;
       scale: number;
     };
 
@@ -60,12 +59,16 @@ export const DEFAULT_PARAMETRIC_DIST: ParametricDist = {
   shape: 3,
   scale: 1.5,
 };
-/// Default truncation / recovery time for the parametric variant.
-export const DEFAULT_PARAMETRIC_DURATION = 12;
 /// Grid resolution for sampling the kernel into a preview / lowered curve.
 /// Matches Rust's `PARAMETRIC_GRID` so the JS preview tracks the simulated
 /// shape.
 export const PARAMETRIC_GRID = 128;
+/// Fraction of mass captured by the auto-derived support (mirrors Rust's
+/// `SUPPORT_MASS_FRACTION`). The parametric variant has no user duration — the
+/// support is the distribution's own 99.9% mass point.
+const SUPPORT_MASS_FRACTION = 0.999;
+/// Trapezoid steps used to locate the support quantile (mirrors Rust).
+const SUPPORT_INTEGRATION_STEPS = 8192;
 
 /// Unnormalized density at τ — mirrors Rust's `ParametricDist::kernel`.
 /// Zero for τ ≤ 0 and for any non-finite evaluation (the area
@@ -89,16 +92,65 @@ export function parametricKernel(d: ParametricDist, t: number): number {
   return Number.isFinite(v) ? v : 0;
 }
 
-/// Sample the kernel on a grid over `[0, duration]` — the same lowering the
-/// wasm side does, used here for the chart preview.
+/// Auto-truncation point: the τ below which `SUPPORT_MASS_FRACTION` of the
+/// kernel's mass lies. Mirrors Rust's `ParametricDist::effective_support` so the
+/// JS preview lowers over the same support the model simulates (there is no
+/// user-specified duration). A geometric scan finds where the tail is
+/// negligible, then a trapezoid integral locates the quantile.
+export function parametricSupport(d: ParametricDist): number {
+  // Upper bound past which the kernel's tail is negligible.
+  const START = 1e-3;
+  const GROWTH = 1.5;
+  const REL = 1e-8;
+  const MAX_STEPS = 160;
+  let peak = 0;
+  let peakT = 0;
+  let hi = START;
+  for (let i = 0; i < MAX_STEPS; i++) {
+    const v = parametricKernel(d, hi);
+    if (v > peak) {
+      peak = v;
+      peakT = hi;
+    }
+    if (hi > peakT && peak > 0 && v < peak * REL) break;
+    hi *= GROWTH;
+  }
+  // Integrate to get the total, then walk again to the mass-fraction quantile.
+  const h = hi / SUPPORT_INTEGRATION_STEPS;
+  const total = (() => {
+    let cum = 0;
+    let prev = parametricKernel(d, 0);
+    for (let i = 1; i <= SUPPORT_INTEGRATION_STEPS; i++) {
+      const v = parametricKernel(d, h * i);
+      cum += 0.5 * (prev + v) * h;
+      prev = v;
+    }
+    return cum;
+  })();
+  if (!Number.isFinite(total) || total <= 0) return hi;
+  const target = SUPPORT_MASS_FRACTION * total;
+  let cum = 0;
+  let prev = parametricKernel(d, 0);
+  for (let i = 1; i <= SUPPORT_INTEGRATION_STEPS; i++) {
+    const t = h * i;
+    const v = parametricKernel(d, t);
+    cum += 0.5 * (prev + v) * h;
+    if (cum >= target) return t;
+    prev = v;
+  }
+  return hi;
+}
+
+/// Sample the kernel on a grid over `[0, parametricSupport(d)]` — the same
+/// lowering the wasm side does, used here for the chart preview.
 export function parametricPoints(
   d: ParametricDist,
-  duration: number,
   n: number = PARAMETRIC_GRID,
 ): [number, number][] {
+  const support = parametricSupport(d);
   const pts: [number, number][] = [];
   for (let i = 0; i < n; i++) {
-    const t = (duration * i) / (n - 1);
+    const t = (support * i) / (n - 1);
     pts.push([t, parametricKernel(d, t)]);
   }
   return pts;
@@ -167,12 +219,11 @@ export function withRateType(
   defaultLibrary?: [number, number][][],
 ): InfectionRate {
   if (next === current.type) return current;
-  // Best-effort carry-over of the infectious-period length.
+  // Best-effort carry-over of the infectious-period length (Constant only —
+  // Parametric has no duration, its support is auto-derived).
   const currentDuration =
-    current.type === "parametric"
-      ? current.duration
-      : empiricalDuration(current) ||
-        (current.type === "constant" ? current.duration : 0);
+    empiricalDuration(current) ||
+    (current.type === "constant" ? current.duration : 0);
   if (next === "constant") {
     return {
       type: "constant",
@@ -184,7 +235,6 @@ export function withRateType(
     return {
       type: "parametric",
       dist: { ...DEFAULT_PARAMETRIC_DIST },
-      duration: currentDuration || DEFAULT_PARAMETRIC_DURATION,
       scale: DEFAULT_R0_SCALE,
     };
   }
@@ -266,7 +316,7 @@ export function normalizeInfectionRate(rate: InfectionRate): InfectionRate {
     return { type: "empirical", points: rate.points, scale };
   }
   if (rate.type === "parametric") {
-    return { type: "parametric", dist: rate.dist, duration: rate.duration, scale };
+    return { type: "parametric", dist: rate.dist, scale };
   }
   return { type: "library", rates: rate.rates, scale };
 }

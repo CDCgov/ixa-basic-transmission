@@ -4,11 +4,12 @@ import {
   type ParametricDist,
   parametricKernel,
   parametricPoints,
+  parametricSupport,
   expectedR0,
   withRateType,
   normalizeInfectionRate,
   PARAMETRIC_GRID,
-  DEFAULT_PARAMETRIC_DURATION,
+  DEFAULT_PARAMETRIC_DIST,
 } from "./infectionRate";
 
 describe("parametric infection rate", () => {
@@ -30,49 +31,74 @@ describe("parametric infection rate", () => {
     expect(parametricKernel({ dist: "gamma", shape: 2, scale: 1 }, -1)).toBe(0);
   });
 
-  it("samples a dense grid spanning [0, duration]", () => {
+  it("samples a dense grid over the auto-derived support", () => {
     const dist: ParametricDist = { dist: "gamma", shape: 2, scale: 1.5 };
-    const pts = parametricPoints(dist, 12);
+    const pts = parametricPoints(dist);
     expect(pts).toHaveLength(PARAMETRIC_GRID);
     expect(pts[0][0]).toBe(0);
-    expect(pts[pts.length - 1][0]).toBeCloseTo(12, 12);
+    // Last anchor lands at the distribution's own support (mean 3 → well past).
+    expect(pts[pts.length - 1][0]).toBeCloseTo(parametricSupport(dist), 9);
+    expect(pts[pts.length - 1][0]).toBeGreaterThan(3);
     // Strictly increasing times.
     expect(pts.every((p, i) => i === 0 || p[0] > pts[i - 1][0])).toBe(true);
+  });
+
+  it("auto-support captures ~all the mass and is finite", () => {
+    const dist: ParametricDist = { dist: "weibull", shape: 2, scale: 5 };
+    const support = parametricSupport(dist);
+    expect(Number.isFinite(support)).toBe(true);
+    // The lowered grid's trapezoid area ≈ the kernel's far-bound integral.
+    const pts = parametricPoints(dist);
+    const captured = pts
+      .slice(1)
+      .reduce(
+        (acc, p, i) => acc + 0.5 * (pts[i][1] + p[1]) * (p[0] - pts[i][0]),
+        0,
+      );
+    let full = 0;
+    let prev = parametricKernel(dist, 0);
+    const h = 60 / 20000;
+    for (let i = 1; i <= 20000; i++) {
+      const v = parametricKernel(dist, h * i);
+      full += 0.5 * (prev + v) * h;
+      prev = v;
+    }
+    expect(captured / full).toBeGreaterThan(0.99);
   });
 
   it("R₀ under random mixing equals scale", () => {
     const rate: InfectionRate = {
       type: "parametric",
       dist: { dist: "gamma", shape: 3, scale: 1.5 },
-      duration: 14,
       scale: 2.4,
     };
     expect(expectedR0(rate, [])).toBeCloseTo(2.4, 12);
   });
 
-  it("round-trips through withRateType, preserving the infectious period", () => {
+  it("round-trips through withRateType", () => {
     const empirical = withRateType(
       { type: "constant", value: 0.5, duration: 7 },
       "empirical",
     );
     const parametric = withRateType(empirical, "parametric");
     expect(parametric.type).toBe("parametric");
-    // Switching back to constant carries the parametric duration over.
+    // Switching back to constant yields a valid constant (parametric has no
+    // duration to carry, so it falls back to the default mean period).
     const back = withRateType(parametric, "constant");
     expect(back.type).toBe("constant");
-    if (parametric.type === "parametric" && back.type === "constant") {
-      expect(back.duration).toBe(parametric.duration);
+    if (back.type === "constant") {
+      expect(back.duration).toBeGreaterThan(0);
     }
   });
 
-  it("withRateType seeds a sensible default duration", () => {
+  it("withRateType seeds the default distribution", () => {
     const parametric = withRateType(
       { type: "library", rates: [], scale: 3 },
       "parametric",
     );
     expect(parametric.type).toBe("parametric");
     if (parametric.type === "parametric") {
-      expect(parametric.duration).toBe(DEFAULT_PARAMETRIC_DURATION);
+      expect(parametric.dist).toEqual(DEFAULT_PARAMETRIC_DIST);
     }
   });
 
@@ -80,7 +106,6 @@ describe("parametric infection rate", () => {
     const raw = {
       type: "parametric",
       dist: { dist: "weibull", shape: 2, scale: 5 },
-      duration: 15,
     } as unknown as InfectionRate;
     const normalized = normalizeInfectionRate(raw);
     expect(normalized.type).toBe("parametric");

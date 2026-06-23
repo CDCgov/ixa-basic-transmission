@@ -89,8 +89,8 @@ const empiricalRecoveryAt = computed(() => empiricalDuration(props.modelValue));
 const rateScale = computed<number>({
   get: () =>
     props.modelValue.type === "empirical" ||
-    props.modelValue.type === "library" ||
-    props.modelValue.type === "parametric"
+      props.modelValue.type === "library" ||
+      props.modelValue.type === "parametric"
       ? props.modelValue.scale
       : 1,
   set: (s) => {
@@ -110,15 +110,6 @@ const parametricDist = computed<ParametricDist>(() =>
     ? props.modelValue.dist
     : DEFAULT_PARAMETRIC_DIST,
 );
-
-const parametricDuration = computed<number>({
-  get: () =>
-    props.modelValue.type === "parametric" ? props.modelValue.duration : 0,
-  set: (d) => {
-    if (props.modelValue.type !== "parametric") return;
-    emit("update:modelValue", { ...props.modelValue, duration: d });
-  },
-});
 
 // Per-family editable fields (label + key), so the template renders the
 // right inputs for the selected distribution.
@@ -308,7 +299,7 @@ const previewSeries = computed(() => {
   if (rate.type === "parametric") {
     // Sample the kernel — the same shape the model lowers to. Drawn as a
     // smooth line (no dots: the grid is dense).
-    const pts = parametricPoints(rate.dist, rate.duration);
+    const pts = parametricPoints(rate.dist);
     return [
       {
         x: pts.map((p) => p[0]),
@@ -458,31 +449,12 @@ function formatRate(v: unknown): string {
 </script>
 
 <template>
-  <SelectBox
-    label="Infectiousness"
-    :options="rateTypeOptions"
-    :model-value="modelValue.type"
-    @update:model-value="setRateType"
-  />
+  <SelectBox label="Infectiousness" :options="rateTypeOptions" :model-value="modelValue.type"
+    @update:model-value="setRateType" />
   <template v-if="modelValue.type === 'constant'">
-    <NumberInput
-      v-model="constantValue"
-      label="Infection rate"
-      slider
-      :live="live"
-      :min="0.05"
-      :max="4"
-      :step="0.05"
-    />
-    <NumberInput
-      v-model="constantDuration"
-      label="Infectious period"
-      slider
-      :live="live"
-      :min="1"
-      :max="14"
-      :step="0.5"
-    />
+    <NumberInput v-model="constantValue" label="Infection rate" slider :live="live" :min="0.05" :max="4" :step="0.05" />
+    <NumberInput v-model="constantDuration" label="Infectious period" slider :live="live" :min="1" :max="14"
+      :step="0.5" />
   </template>
   <template v-else-if="modelValue.type === 'empirical'">
     <p class="schedule-hint">
@@ -490,83 +462,33 @@ function formatRate(v: unknown): string {
       Points define the shape; the model rescales them at runtime so
       Scale is the expected R₀ under random mixing.
     </p>
-    <NumberInput
-      v-model="rateScale"
-      label="Scale (R₀)"
-      slider
-      :live="live"
-      :min="0"
-      :max="6"
-      :step="0.1"
-    />
+    <NumberInput v-model="rateScale" label="Scale (R₀)" slider :live="live" :min="0" :max="6" :step="0.1" />
     <div class="points-editor">
       <div class="points-header">
         <span>τ (time since infected)</span>
         <span>rate</span>
         <span></span>
       </div>
-      <div
-        v-for="(point, i) in empiricalPoints"
-        :key="`${point[0]}-${point[1]}-${i}`"
-        class="points-row"
-      >
-        <NumberInput
-          :model-value="point[0]"
-          :min="0"
-          :step="0.5"
-          @update:model-value="(v: number) => updatePoint(i, 0, v)"
-        />
-        <NumberInput
-          :model-value="point[1]"
-          :min="0"
-          :step="0.1"
-          @update:model-value="(v: number) => updatePoint(i, 1, v)"
-        />
-        <Button
-          variant="secondary"
-          :disabled="empiricalPoints.length <= 2"
-          @click="removePoint(i)"
-          >×</Button
-        >
+      <div v-for="(point, i) in empiricalPoints" :key="`${point[0]}-${point[1]}-${i}`" class="points-row">
+        <NumberInput :model-value="point[0]" :min="0" :step="0.5"
+          @update:model-value="(v: number) => updatePoint(i, 0, v)" />
+        <NumberInput :model-value="point[1]" :min="0" :step="0.1"
+          @update:model-value="(v: number) => updatePoint(i, 1, v)" />
+        <Button variant="secondary" :disabled="empiricalPoints.length <= 2" @click="removePoint(i)">×</Button>
       </div>
       <Button variant="secondary" @click="addPoint">Add point</Button>
     </div>
   </template>
   <template v-else-if="modelValue.type === 'parametric'">
     <p class="schedule-hint">
-      Infectiousness shape from a named distribution, recovery at τ =
-      {{ parametricDuration }}. The model samples the density and rescales it
-      at runtime so Scale is the expected R₀ under random mixing.
+      Infectiousness shape from a named distribution, auto-truncated at its
+      99.9% mass point. Scale is the expected R₀ under random mixing.
     </p>
-    <SelectBox
-      label="Distribution"
-      :options="distTypeOptions"
-      :model-value="parametricDist.dist"
-      @update:model-value="setDistType"
-    />
-    <NumberInput
-      v-for="field in distParamFields"
-      :key="field.key"
-      :model-value="field.value"
-      :label="field.label"
-      :step="field.step"
-      @update:model-value="(v: number) => setDistParam(field.key, v)"
-    />
-    <NumberInput
-      v-model="parametricDuration"
-      label="Recovery at τ"
-      :min="1"
-      :step="0.5"
-    />
-    <NumberInput
-      v-model="rateScale"
-      label="Scale (R₀)"
-      slider
-      :live="live"
-      :min="0"
-      :max="6"
-      :step="0.1"
-    />
+    <SelectBox label="Distribution" :options="distTypeOptions" :model-value="parametricDist.dist"
+      @update:model-value="setDistType" />
+    <NumberInput v-for="field in distParamFields" :key="field.key" :model-value="field.value" :label="field.label"
+      :step="field.step" @update:model-value="(v: number) => setDistParam(field.key, v)" />
+    <NumberInput v-model="rateScale" label="Scale (R₀)" slider :live="live" :min="0" :max="6" :step="0.1" />
   </template>
   <template v-else-if="modelValue.type === 'library'">
     <p class="schedule-hint">
@@ -574,52 +496,19 @@ function formatRate(v: unknown): string {
       one uniformly at setup. The model rescales the library at runtime
       so Scale is the expected R₀ under random mixing.
     </p>
-    <NumberInput
-      v-model="rateScale"
-      label="Scale (R₀)"
-      slider
-      :live="live"
-      :min="0"
-      :max="6"
-      :step="0.1"
-    />
+    <NumberInput v-model="rateScale" label="Scale (R₀)" slider :live="live" :min="0" :max="6" :step="0.1" />
     <div class="library-actions">
       <Button variant="secondary" @click="triggerUpload">Upload CSV</Button>
-      <Button variant="secondary" @click="restoreDefaultLibrary"
-        >Restore default</Button
-      >
-      <input
-        ref="fileInput"
-        type="file"
-        accept=".csv,text/csv"
-        class="library-file-input"
-        @change="onFile"
-      />
+      <Button variant="secondary" @click="restoreDefaultLibrary">Restore default</Button>
+      <input ref="fileInput" type="file" accept=".csv,text/csv" class="library-file-input" @change="onFile" />
     </div>
     <p v-if="uploadError" class="library-error">{{ uploadError }}</p>
-    <SelectBox
-      v-if="libraryCount"
-      label="View"
-      :options="libraryViewOptions"
-      :model-value="libraryView"
-      @update:model-value="(v) => (libraryView = v as LibraryView)"
-    />
-    <div
-      v-if="libraryCount && libraryView === 'mean'"
-      class="library-overlay"
-    >
-      <LineChart
-        :series="overlaySeries"
-        :height="160"
-        :y-min="0"
-        :y-max="libraryYMax"
-        :menu="false"
-        x-label="τ (days since infected)"
-        y-label="rate"
-        :axis-label-style="{ fontSize: 10 }"
-        :tick-label-style="{ fontSize: 10 }"
-        tooltip-trigger="hover"
-      >
+    <SelectBox v-if="libraryCount" label="View" :options="libraryViewOptions" :model-value="libraryView"
+      @update:model-value="(v) => (libraryView = v as LibraryView)" />
+    <div v-if="libraryCount && libraryView === 'mean'" class="library-overlay">
+      <LineChart :series="overlaySeries" :height="160" :y-min="0" :y-max="libraryYMax" :menu="false"
+        x-label="τ (days since infected)" y-label="rate" :axis-label-style="{ fontSize: 10 }"
+        :tick-label-style="{ fontSize: 10 }" tooltip-trigger="hover">
         <template #tooltip="{ xLabel, values }">
           <div class="curve-tooltip">
             <div v-if="xLabel != null" class="curve-tooltip-label">
@@ -635,22 +524,10 @@ function formatRate(v: unknown): string {
     </div>
     <template v-if="libraryCount && libraryView === 'grid'">
       <div class="library-grid" @vue:mounted="watchSize">
-        <div
-          v-for="(curve, i) in pagedCurves"
-          :key="pageStart + i"
-          class="library-cell"
-        >
+        <div v-for="(curve, i) in pagedCurves" :key="pageStart + i" class="library-cell">
           <div class="library-cell-label">#{{ pageStart + i + 1 }}</div>
-          <LineChart
-            :series="curveSeries(curve)"
-            :height="100"
-            :y-min="0"
-            :y-max="libraryYMax"
-            :menu="false"
-            :axis-label-style="{ fontSize: 9 }"
-            :tick-label-style="{ fontSize: 9 }"
-            tooltip-trigger="hover"
-          >
+          <LineChart :series="curveSeries(curve)" :height="100" :y-min="0" :y-max="libraryYMax" :menu="false"
+            :axis-label-style="{ fontSize: 9 }" :tick-label-style="{ fontSize: 9 }" tooltip-trigger="hover">
             <template #tooltip="{ xLabel, values }">
               <div class="curve-tooltip">
                 <div v-if="xLabel != null" class="curve-tooltip-label">
@@ -666,46 +543,19 @@ function formatRate(v: unknown): string {
         </div>
       </div>
       <div v-if="pageCount > 1" class="library-pager">
-        <Button
-          variant="secondary"
-          :disabled="page === 0"
-          @click="prevPage"
-          >‹ Prev</Button
-        >
-        <span class="library-page-info"
-          >Page {{ page + 1 }} / {{ pageCount }}</span
-        >
-        <Button
-          variant="secondary"
-          :disabled="page >= pageCount - 1"
-          @click="nextPage"
-          >Next ›</Button
-        >
+        <Button variant="secondary" :disabled="page === 0" @click="prevPage">‹ Prev</Button>
+        <span class="library-page-info">Page {{ page + 1 }} / {{ pageCount }}</span>
+        <Button variant="secondary" :disabled="page >= pageCount - 1" @click="nextPage">Next ›</Button>
       </div>
     </template>
   </template>
-  <div
-    v-if="modelValue.type === 'constant'"
-    class="rate-r0"
-  >
+  <div v-if="modelValue.type === 'constant'" class="rate-r0">
     <span class="rate-r0-label">R₀ (random mixing)</span>
     <span class="rate-r0-value">{{ formatR0(r0RandomMixing) }}</span>
   </div>
-  <div
-    v-if="modelValue.type !== 'library'"
-    class="rate-preview"
-  >
-    <LineChart
-      :series="previewSeries"
-      :height="120"
-      :y-min="0"
-      :menu="false"
-      x-label="τ (days since infected)"
-      y-label="rate"
-      :axis-label-style="{ fontSize: 10 }"
-      :tick-label-style="{ fontSize: 10 }"
-      tooltip-trigger="hover"
-    >
+  <div v-if="modelValue.type !== 'library'" class="rate-preview">
+    <LineChart :series="previewSeries" :height="120" :y-min="0" :menu="false" x-label="τ (days since infected)"
+      y-label="rate" :axis-label-style="{ fontSize: 10 }" :tick-label-style="{ fontSize: 10 }" tooltip-trigger="hover">
       <template #tooltip="{ xLabel, values }">
         <div class="curve-tooltip">
           <div v-if="xLabel != null" class="curve-tooltip-label">
@@ -727,11 +577,13 @@ function formatRate(v: unknown): string {
   font-size: var(--font-size-sm, 0.875rem);
   color: var(--color-text-secondary);
 }
+
 .points-editor {
   display: flex;
   flex-direction: column;
   gap: 0.4em;
 }
+
 .points-header {
   display: grid;
   grid-template-columns: 1fr 1fr 2em;
@@ -739,15 +591,18 @@ function formatRate(v: unknown): string {
   font-size: var(--font-size-xs, 0.75rem);
   color: var(--color-text-secondary);
 }
+
 .points-row {
   display: grid;
   grid-template-columns: 1fr 1fr 2em;
   gap: 0.4em;
   align-items: center;
 }
+
 .rate-preview {
   margin-top: 0.5em;
 }
+
 .rate-r0 {
   display: flex;
   align-items: baseline;
@@ -759,35 +614,42 @@ function formatRate(v: unknown): string {
   border-radius: var(--radius-sm, 4px);
   background: var(--color-bg-1);
 }
+
 .rate-r0-label {
   font-size: var(--font-size-sm, 0.875rem);
   color: var(--color-text-secondary);
 }
+
 .rate-r0-value {
   font-size: var(--font-size-sm, 0.875rem);
   font-variant-numeric: tabular-nums;
   font-weight: 600;
   color: var(--color-text);
 }
+
 .library-actions {
   display: flex;
   gap: 0.4em;
   flex-wrap: wrap;
 }
+
 .library-file-input {
   display: none;
 }
+
 .library-error {
   margin: 0;
   font-size: var(--font-size-sm, 0.875rem);
   color: var(--color-error);
 }
+
 .library-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 0.4em;
   margin-top: 0.5em;
 }
+
 .library-cell {
   display: flex;
   flex-direction: column;
@@ -796,10 +658,12 @@ function formatRate(v: unknown): string {
   border-radius: var(--radius-sm, 4px);
   padding: 4px;
 }
+
 .library-cell-label {
   font-size: var(--font-size-xs, 0.75rem);
   color: var(--color-text-secondary);
 }
+
 .library-pager {
   display: flex;
   align-items: center;
@@ -807,10 +671,12 @@ function formatRate(v: unknown): string {
   margin-top: 0.5em;
   gap: 0.5em;
 }
+
 .library-page-info {
   font-size: var(--font-size-sm, 0.875rem);
   color: var(--color-text-secondary);
 }
+
 .curve-tooltip {
   display: flex;
   flex-direction: column;
@@ -819,17 +685,21 @@ function formatRate(v: unknown): string {
   line-height: 1.2;
   white-space: nowrap;
 }
+
 .curve-tooltip-label {
   font-weight: 500;
 }
+
 .curve-tooltip-row {
   display: flex;
   justify-content: space-between;
   gap: 0.5em;
 }
+
 .curve-tooltip-mean {
   color: #dc2626;
 }
+
 .library-overlay {
   margin-top: 0.4em;
 }

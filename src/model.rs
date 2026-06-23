@@ -6,8 +6,10 @@ use crate::modifiers::intrinsic::IntrinsicModifierExt;
 use crate::modifiers::ModifierExt;
 use crate::parameters::Parameters;
 use crate::person::{InfectionStatus, InfectionTime, Person, PersonId};
-use crate::rate::{empirical_curve_duration, Curve, EffectiveRate, InfectionRate};
-use crate::rate_library::{AssignedRate, Rate, RateLibraryData};
+use crate::rate::{
+    build_empirical_library, empirical_support_end, AssignedRate, ConstantRate, EmpiricalRate,
+    InfectionRate, InfectiousnessRateFn, RateFn, RateStorage,
+};
 use crate::settings::SettingsExt;
 use crate::stats::ModelStats;
 
@@ -22,9 +24,11 @@ define_data_plugin!(ModelStatsPlugin, ModelStats, |context| {
     ModelStats::new(params.initial_infections)
 });
 
-define_data_plugin!(RateLibraryPlugin, RateLibraryData, |_context| {
-    RateLibraryData::new()
-});
+// The data container (`RateStorage`) lives in `crate::rate::storage`; the
+// plugin wrapper is defined here because `define_data_plugin!` produces a
+// private type and it's only read from this module's hot path.
+define_data_plugin!(RateStoragePlugin, RateStorage, |_context| RateStorage::new(
+));
 
 trait InfectionLoop {
     fn get_params(&self) -> &Parameters;
@@ -38,10 +42,10 @@ trait InfectionLoop {
     fn infect_person(&mut self, p: PersonId, t: Option<f64>);
     fn recover_person(&mut self, p: PersonId);
     /// Schedule `p`'s recovery and return the realized infectious-period
-    /// duration (`Exp` sample for `Constant`, curve support otherwise) so
-    /// the caller can place a facemask within that same window.
+    /// duration (`Exp` sample for `Constant`, the max-cumulative reach time for
+    /// empirical curves) so the caller can place a facemask within that window.
     fn schedule_recovery(&mut self, p: PersonId) -> f64;
-    fn effective_rate(&self, person: PersonId) -> EffectiveRate<'_>;
+    fn effective_rate(&self, person: PersonId) -> &RateFn;
     fn schedule_next_infection_attempt(&mut self, infector: PersonId);
     fn setup(&mut self);
 }
@@ -75,18 +79,26 @@ impl InfectionLoop for Context {
         self.get_data_mut(ModelStatsPlugin).record_recovery();
     }
     fn schedule_recovery(&mut self, p: PersonId) -> f64 {
-        // For empirical infectiousness curves, recovery is deterministic at the
-        // end of the assigned curve. For `Constant`, recovery follows
-        // `Exp(1/duration)` (the `duration` field is the mean).
+        // For empirical curves, recovery is deterministic at the time integrated
+        // infectiousness is exhausted (the max-cumulative reach time). For
+        // `Constant`, recovery follows `Exp(1/duration)` (the `duration` field
+        // is the mean).
         let t_inf = self.get_property::<_, InfectionTime>(p).0;
         let recovery_dt = match self.get_params().infection_rate {
-            InfectionRate::Empirical { ref points, .. } => empirical_curve_duration(points),
+            // Recovery is the homogeneous-Poisson `Exp(1/duration)` clock; the rate
+            // itself is unbounded in time.
             InfectionRate::Constant { duration, .. } => {
                 self.sample_distr(RecoveryRng, Exp::new(1.0 / duration).unwrap())
             }
+            // Deterministic recovery when integrated infectiousness is exhausted —
+            // the earliest τ at which the cumulative reaches its max.
+            InfectionRate::Empirical { ref points, .. } => empirical_support_end(points),
             InfectionRate::Library { .. } => {
-                let rate_id = self.get_property::<_, AssignedRate>(p);
-                self.get_data(RateLibraryPlugin).curve(rate_id).duration()
+                let idx = self
+                    .get_property::<_, AssignedRate>(p)
+                    .0
+                    .expect("AssignedRate is None in Library mode");
+                self.get_data(RateStoragePlugin).recovery_time(idx)
             }
             // Lowered to `Empirical` at `run`/`setup_only` entry; never seen here.
             InfectionRate::Parametric { .. } => {
@@ -101,22 +113,38 @@ impl InfectionLoop for Context {
         });
         recovery_dt
     }
-    fn effective_rate(&self, person: PersonId) -> EffectiveRate<'_> {
-        // Resolve `InfectionRate` + per-person state into the primitive
-        // the inverse-CDF math actually needs
+    fn effective_rate(&self, person: PersonId) -> &RateFn {
+        // Resolve `InfectionRate` + per-person state into the `RateFn` the
+        // inverse-CDF math dispatches through. Single-rate variants
+        // (`Constant`/`Empirical`) are built lazily into the storage's one-shot
+        // slot on first access; `Library` indexes the per-curve vector built at
+        // setup.
         match &self.get_params().infection_rate {
-            InfectionRate::Constant { value, .. } => EffectiveRate::Constant { value: *value },
-            InfectionRate::Empirical { points, scale } => EffectiveRate::Empirical {
-                curve: self.get_data(RateLibraryPlugin).empirical_or_build(points),
-                scale: *scale,
-            },
-            InfectionRate::Library { scale, .. } => {
-                let assigned = self.get_property::<_, AssignedRate>(person);
-                let curve = self.get_data(RateLibraryPlugin).curve(assigned);
-                EffectiveRate::Empirical {
-                    curve,
-                    scale: *scale,
-                }
+            InfectionRate::Constant { value, .. } => {
+                let value = *value;
+                &self
+                    .get_data(RateStoragePlugin)
+                    .single_or_build(|| (RateFn::Constant(ConstantRate::new(value)), f64::INFINITY))
+                    .0
+            }
+            InfectionRate::Empirical { points, scale } => {
+                let points = points.clone();
+                let scale = *scale;
+                &self
+                    .get_data(RateStoragePlugin)
+                    .single_or_build(|| {
+                        let er = EmpiricalRate::new(points, scale);
+                        let recovery = er.recovery_time();
+                        (RateFn::Empirical(er), recovery)
+                    })
+                    .0
+            }
+            InfectionRate::Library { .. } => {
+                let idx = self
+                    .get_property::<_, AssignedRate>(person)
+                    .0
+                    .expect("AssignedRate is None in Library mode");
+                self.get_data(RateStoragePlugin).library_fn(idx)
             }
             // Lowered to `Empirical` at `run`/`setup_only` entry; never seen here.
             InfectionRate::Parametric { .. } => {
@@ -253,26 +281,17 @@ impl InfectionLoop for Context {
         let params = self.get_params().clone();
         crate::modifiers::register_all(self, &params);
 
-        // For `Library` mode, instantiate one `Rate` entity per curve
-        // and populate the EntityMap with precomputed-cum `Curve`s.
-        // Cloning the points once at setup is fine — the hot path
-        // borrows from the EntityMap and doesn't allocate. (The
-        // single-curve `Empirical` variant is lazily built on first
-        // access by `RateLibraryData::empirical_or_build`.)
+        // For `Library` mode, build one boxed `EmpiricalRate` per curve (plus
+        // its recovery time) and install them in the storage plugin. Each
+        // person is assigned an index into this vector. (The single-curve
+        // `Empirical` / `Constant` variants are built lazily on first access by
+        // `RateStorage::single_or_build`.)
         let library_size: usize =
-            if let InfectionRate::Library { rates, .. } = &self.get_params().infection_rate {
-                let curves: Vec<Curve> = rates.iter().map(|r| Curve::new(r.clone())).collect();
-                let mut ids: Vec<crate::rate_library::RateId> = Vec::with_capacity(curves.len());
-                for _ in 0..curves.len() {
-                    ids.push(self.add_entity(Rate).unwrap());
-                }
-                let n = ids.len();
-                let lib = self.get_data_mut(RateLibraryPlugin);
-                lib.ids = ids.clone();
-                lib.curves.reserve(curves.len());
-                for (id, curve) in ids.into_iter().zip(curves.into_iter()) {
-                    lib.curves.insert(id, curve);
-                }
+            if let InfectionRate::Library { rates, scale } = &self.get_params().infection_rate {
+                let (rate_fns, recovery_times) = build_empirical_library(rates, *scale);
+                let n = rate_fns.len();
+                self.get_data_mut(RateStoragePlugin)
+                    .set_library(rate_fns, recovery_times);
                 n
             } else {
                 0
@@ -283,8 +302,7 @@ impl InfectionLoop for Context {
             if library_size > 0 {
                 // Uniform random assignment: each person draws independently.
                 let idx: usize = self.sample_range(RateAssignmentRng, 0..library_size);
-                let assigned = self.get_data(RateLibraryPlugin).ids[idx];
-                self.set_property(p, AssignedRate(Some(assigned)));
+                self.set_property(p, AssignedRate(Some(idx)));
             }
         }
 
@@ -319,7 +337,7 @@ pub fn run(params: Parameters) -> ModelStats {
     // of the pipeline (normalize, setup, hot path) only ever sees the three
     // concrete variants. `normalize_to_r0` then makes `scale = R₀`.
     crate::rate::materialize_parametric(&mut params.infection_rate);
-    crate::normalize::normalize_to_r0(&mut params.infection_rate);
+    crate::rate::normalize_to_r0(&mut params.infection_rate);
     let mut ctx = Context::new();
     ctx.set_global_property_value(Params, params).unwrap();
     ctx.setup();
@@ -339,7 +357,7 @@ pub fn setup_only(params: Parameters) {
     // of the pipeline (normalize, setup, hot path) only ever sees the three
     // concrete variants. `normalize_to_r0` then makes `scale = R₀`.
     crate::rate::materialize_parametric(&mut params.infection_rate);
-    crate::normalize::normalize_to_r0(&mut params.infection_rate);
+    crate::rate::normalize_to_r0(&mut params.infection_rate);
     let mut ctx = Context::new();
     ctx.set_global_property_value(Params, params).unwrap();
     ctx.setup();
@@ -387,7 +405,6 @@ mod tests {
                     shape: 3.0,
                     scale: 1.5,
                 },
-                duration: 14.0,
                 scale: 2.0,
             },
             ..Parameters::default()
@@ -990,14 +1007,15 @@ mod tests {
 
     #[test]
     fn library_heterogeneous_curves_produce_different_durations() {
-        // Two curves of clearly different support: one short (τ=1), one
-        // long (τ=10). Run a population where everyone is initially
-        // infected, then observe the spread of recovery times. If
-        // assignment is per-person, recovery times must straddle both
-        // anchor endpoints; if everyone shared a single curve, they'd
-        // all bunch near one value.
-        let short = vec![[0.0_f64, 0.0], [1.0, 0.0]]; // λ=0 → no transmissions, deterministic recovery at τ=1
-        let long = vec![[0.0_f64, 0.0], [10.0, 0.0]]; // recovery at τ=10
+        // Two curves whose integrated infectiousness is exhausted at clearly
+        // different times: one short (max cumulative reached at τ=1), one long
+        // (τ=10). Everyone is initially infected (so there are no susceptibles
+        // and no transmission), leaving only the deterministic recovery times.
+        // If assignment is per-person, recovery times must straddle both
+        // endpoints; if everyone shared a single curve, they'd bunch near one
+        // value.
+        let short = vec![[0.0_f64, 1.0], [1.0, 1.0]]; // recovery at τ=1
+        let long = vec![[0.0_f64, 1.0], [10.0, 1.0]]; // recovery at τ=10
         let params = Parameters {
             infection_rate: InfectionRate::Library {
                 rates: vec![short.clone(), long.clone()],

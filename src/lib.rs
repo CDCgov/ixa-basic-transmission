@@ -6,11 +6,9 @@
 pub mod abc_smc;
 pub mod model;
 pub mod modifiers;
-pub mod normalize;
 pub mod parameters;
 pub mod person;
 pub mod rate;
-pub mod rate_library;
 pub mod settings;
 pub mod stats;
 
