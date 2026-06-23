@@ -1028,7 +1028,7 @@ function fmtTau(v: unknown): string {
   padding: 0.2em 0.5em;
   font-size: var(--font-size-sm, 0.875rem);
   color: var(--color-text-secondary);
-  background: color-mix(in srgb, var(--color-surface, #fff) 88%, transparent);
+  background: color-mix(in srgb, var(--color-bg-0) 88%, transparent);
   border: 1px solid var(--color-border);
   border-radius: 4px;
   pointer-events: none;
