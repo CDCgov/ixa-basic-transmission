@@ -253,6 +253,7 @@ function fmt(v: number): string {
 const BLUE = "#2563eb";
 const PURPLE = "#7c3aed";
 const GUIDE = "#9ca3af";
+const GRAY = "#6b7280";
 const RED = "#dc2626";
 
 // Bigger axis text, passed as props so each chart reserves the right gutter.
@@ -388,16 +389,30 @@ const cumSeries = computed(() => {
     lineOpacity?: number;
     showInTooltip?: boolean;
   }> = [{ x: display.x, data: display.data, color: BLUE, strokeWidth: 2 }];
+  // Horizontal guide from each event back to the y-axis (x=0) at its cumulative
+  // level c_i. The gap between two consecutive guides on the c-axis is exactly
+  // the Exp(1) increment e_i = c_i − c_{i−1} that produced that event, so the
+  // y-axis spacing visualizes every draw at once.
+  for (const ev of validEvents.value) {
+    series.push({
+      x: [0, ev.tau as number],
+      data: [ev.cumulative, ev.cumulative],
+      color: GUIDE,
+      strokeWidth: 1,
+      lineOpacity: 0.45,
+      dashed: true,
+      showInTooltip: false,
+    });
+  }
   const ls = latestScaled.value;
   if (ls) {
-    // Vertical leg: the Exp(1) increment e, rising from the previous event
-    // (d(c), c) to the new cumulative level (d(c), c+e).
+    // Vertical leg: the Exp(1) increment e, a solid line rising from the
+    // previous event (d(c), c) to the new cumulative level (d(c), c+e).
     series.push({
       x: [ls.tauPrev, ls.tauPrev],
       data: [ls.cPrev, ls.cNew],
-      color: GUIDE,
-      strokeWidth: 1,
-      dashed: true,
+      color: GRAY,
+      strokeWidth: 1.5,
       showInTooltip: false,
     });
     // Horizontal leg: Δτ, running at the new level from (d(c), c+e) across to
@@ -441,7 +456,7 @@ const cumAnnotations = computed(() => {
       text: `e = ${fmt(ls.e)}`,
       offset: { x: eLeft ? -10 : 10, y: 0 },
       align: (eLeft ? "right" : "left") as "right" | "left",
-      color: "#6b7280",
+      color: GRAY,
       pointer: "none" as const,
       fontSize: 13,
     },
@@ -701,8 +716,10 @@ function fmtTau(v: unknown): string {
           <p class="explorer-hint">{{ defs.c }}</p>
           <!-- The step annotates the latest inversion: the Exp(1) increment e
                (vertical leg) maps across to the next event, the run being the
-               time-scaled gap Δτ = d(c+e) − d(c). `chart-padding` reserves room
-               so the e/Δτ labels aren't clipped at the plot edges. -->
+               time-scaled gap Δτ = d(c+e) − d(c). Each event also has a dashed
+               guide back to the y-axis at its cumulative level — the gaps
+               between consecutive guides are the Exp(1) draws e. `chart-padding`
+               reserves room so the e/Δτ labels aren't clipped at the plot edges. -->
           <LineChart :series="cumSeries" :annotations="cumAnnotations" :chart-padding="{ top: 18 }" :height="200"
             :y-min="0" :menu="false" x-label="t (days since infected)"
             :tick-label-style="axisTextStyle" :axis-label-style="axisTextStyle"
