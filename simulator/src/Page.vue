@@ -376,12 +376,12 @@ const axisTextStyle = { fontSize: 13 };
   </Teleport>
   <h1>Ixa Basic Transmission</h1>
   <p>
-    Stochastic SIR model simulated with
+    Stochastic transmission model simulated with
     <a
       href="https://github.com/CDCgov/ixa"
       target="_blank"
       rel="noopener noreferrer"
-      >ixa</a
+      >Ixa</a
     >. Each newly infectious person schedules their own recovery and their own
     next transmission attempt; contacts are picked from a setting in their
     itinerary, or uniformly from the population when no settings are configured.
