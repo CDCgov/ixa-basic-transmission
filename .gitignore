@@ -7,3 +7,4 @@ simulator/playwright-report/
 .vite/
 .DS_Store
 CLAUDE.md
+output/

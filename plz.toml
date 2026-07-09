@@ -2,13 +2,14 @@
 # Docs: https://plzplz.org/reference.html
 # Show the schema for this file: plz plz schema
 
-# Faster way to check for errors
+# Faster way to check for errors. `--no-default-features` drops the `cli`
+# feature so the host-only `model` bin (clap/toml) stays out of the wasm build.
 [tasks.check]
-run = "cargo check --target wasm32-unknown-unknown"
+run = "cargo check --target wasm32-unknown-unknown --no-default-features"
 
 # Build, development mode
 [tasks.build]
-run = "cargo build --target wasm32-unknown-unknown"
+run = "cargo build --target wasm32-unknown-unknown --no-default-features"
 
 # Run tests
 [tasks.test]
@@ -20,15 +21,29 @@ git_hook = "pre-push"
 [tasks.bench]
 run = "cargo bench"
 
-# Check linting and formatting
+# Run the model on the host from a params file (config-preset shape).
+# Pass the file path + flags after `--`, e.g.
+#   plz run -- config/parameters/baseline.toml --sims 20
+# (Equivalent to `cargo run -- config/parameters/baseline.toml --sims 20`.)
+[tasks.run]
+run = "cargo run --bin model"
+
+# Check linting and formatting. Wasm clippy drops `cli` (see check); fmt still
+# covers the bin (it formats every target regardless of features).
 [tasks.lint]
-run_serial = ["cargo clippy --target wasm32-unknown-unknown", "cargo fmt --check"]
+run_serial = [
+  "cargo clippy --target wasm32-unknown-unknown --no-default-features",
+  "cargo fmt --check",
+]
 fail_hook = { suggest_command = "plz fix" }
 git_hook = "pre-commit"
 
 # Fix lint and formatting issues
 [tasks.fix]
-run_serial = ["cargo fmt", "cargo clippy --fix --allow-dirty --target wasm32-unknown-unknown"]
+run_serial = [
+  "cargo fmt",
+  "cargo clippy --fix --allow-dirty --target wasm32-unknown-unknown --no-default-features",
+]
 
 # UI tasks run inside simulator/ with pnpm-resolved bins
 [taskgroup.ui.extends]
