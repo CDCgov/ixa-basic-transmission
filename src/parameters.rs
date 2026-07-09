@@ -5,6 +5,7 @@ use crate::rate::InfectionRate;
 use crate::settings::SettingType;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
 pub struct Parameters {
     // Per-person infectiousness profile. The `Constant` variant bundles
     // its own `duration` (mean of the `Exp` recovery); the `Empirical`

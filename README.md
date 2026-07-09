@@ -11,9 +11,18 @@ plz check       # cargo check (wasm32 target)
 plz test        # cargo test
 plz lint        # clippy + fmt --check
 plz fix         # auto-format and auto-fix lints
+plz run         # run the model on the host from a params file, writing CSVs
 plz ui dev      # start the dev server (builds the wasm model, watches the UI)
 plz ui build    # production build to simulator/dist/
 plz ui preview  # preview the production build
+```
+
+`plz run` (or `cargo run`) drives the model on the host from a
+[`config/parameters/`](./config/parameters) preset and writes tidy CSV output:
+
+```sh
+plz run                                              # defaults to config/parameters/baseline.toml
+plz run -- config/parameters/library.toml --sims 20  # override the preset, run 20 sims
 ```
 
 Run `plz` with no arguments to pick a task interactively, or see
