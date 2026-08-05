@@ -444,7 +444,7 @@ impl SettingsExt for Context {
     }
 
     fn settings_clear_restriction(&mut self, person: PersonId) {
-        self.get_data_mut(SettingsPlugin).restriction.remove(person);
+        let _ = self.get_data_mut(SettingsPlugin).restriction.remove(person);
     }
 
     fn settings_is_restricted(&self, person: PersonId) -> bool {

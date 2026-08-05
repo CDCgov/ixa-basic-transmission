@@ -49,7 +49,7 @@ impl MeanVarianceEstimator {
 #[cfg(test)]
 mod test {
     use super::MeanVarianceEstimator;
-    use rand::{rngs::StdRng, Rng, SeedableRng};
+    use rand::{rngs::StdRng, RngExt, SeedableRng};
     use rand_distr::Normal;
 
     // Ported verbatim from def_abc_smc/src/stats.rs::test::test_normal.

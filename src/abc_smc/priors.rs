@@ -10,7 +10,7 @@
 //     `model::run` then calls `normalize_to_r0`, so r0 reads as the
 //     expected R0 under random mixing for every variant.
 
-use rand::Rng;
+use rand::{Rng, RngExt};
 
 use super::dist::{DiscreteUniform, Distribution, Normal, Uniform};
 use super::stats::MeanVarianceEstimator;
