@@ -2,7 +2,7 @@
 // k88 chose Uniform (instead of def's Exp) for the r0 prior, so the
 // `Exp` distribution is omitted here.
 
-use rand::Rng;
+use rand::{Rng, RngExt};
 
 pub trait Distribution<T> {
     fn sample(&self, rng: &mut impl Rng) -> T;
