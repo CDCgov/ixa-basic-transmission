@@ -11,6 +11,9 @@ import {
   expFromUniform,
   simulateInfectionRuns,
   eventTimeHistogram,
+  histogramBins,
+  rateAtTime,
+  sparseBinLabel,
   describeRate,
   rateFunctionDefs,
 } from "../composables/rateExplorer";
@@ -284,7 +287,7 @@ const rateAreas = computed(() => {
     for (let i = 0; i < N; i++) {
       const t = ls.tauPrev + ((ls.tauNew - ls.tauPrev) * i) / (N - 1);
       x.push(t);
-      upper.push(lambdaAt(t));
+      upper.push(rateAtTime(curve.value, t));
     }
     areas.push({ x, upper, lower: x.map(() => 0), color: PURPLE, opacity: 0.3 });
   }
@@ -300,7 +303,7 @@ const rateAnnotations = computed(() => {
   return [
     {
       x: tMid,
-      y: lambdaAt(tMid),
+      y: rateAtTime(curve.value, tMid),
       text: `area = **e** = ${fmt(ls.e)}`,
       offset: { x: 0, y: -14 },
       align: "center" as const,
@@ -480,13 +483,7 @@ const cumAnnotations = computed(() => {
 // of wide bars), refining toward the curve as more accumulate (more data
 // supports finer resolution before the bars get noisy). Stays coarse at/below
 // ~10 samples, then grows ~√n bins, clamped to [MIN_BINS, MAX_BINS].
-const MIN_BINS = 8;
-const MAX_BINS = 60;
-const distBins = computed(() => {
-  const n = pooledTimes.value.length;
-  if (n <= 10) return MIN_BINS;
-  return Math.min(MAX_BINS, Math.max(MIN_BINS, Math.round(2 * Math.sqrt(n))));
-});
+const distBins = computed(() => histogramBins(pooledTimes.value.length));
 const timeHistogram = computed(() =>
   eventTimeHistogram(pooledTimes.value, curve.value.duration, distBins.value),
 );
@@ -495,20 +492,6 @@ const timeHistogram = computed(() =>
 const distSeries = computed(() => [
   { data: timeHistogram.value.percentages, color: PURPLE },
 ]);
-/** Linear interpolation of the effective λ(τ) at a single time. */
-function lambdaAt(t: number): number {
-  const { x, lambda } = curve.value;
-  if (!x.length) return 0;
-  if (t <= x[0]) return lambda[0];
-  for (let i = 1; i < x.length; i++) {
-    if (t <= x[i]) {
-      const span = x[i] - x[i - 1];
-      if (span === 0) return lambda[i];
-      return lambda[i - 1] + ((t - x[i - 1]) / span) * (lambda[i] - lambda[i - 1]);
-    }
-  }
-  return lambda[lambda.length - 1];
-}
 // The expected shape r(t), sampled at the bin centers and overlaid on the bars
 // (a BarChart summary line auto-scales to its own extent) so you can watch the
 // sampled distribution converge to the rate curve.
@@ -517,18 +500,15 @@ const distOverlay = computed(() => {
   return [
     {
       x: h.centers.map((_, i) => i),
-      data: h.centers.map((c) => lambdaAt(c)),
+      data: h.centers.map((c) => rateAtTime(curve.value, c)),
       color: BLUE,
       strokeWidth: 2,
       dots: false,
     },
   ];
 });
-// Thin the bin labels so the τ axis keeps ~5 ticks regardless of bin count
-// (every 5th at 20 bins, but sparser as the bins multiply).
 function distLabel(label: string, index: number): string {
-  const step = Math.max(1, Math.ceil(distBins.value / 5));
-  return index % step === 0 ? label : "";
+  return sparseBinLabel(label, index, distBins.value);
 }
 
 // --- Hand-drawn SVG timeline -------------------------------------------

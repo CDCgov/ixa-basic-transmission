@@ -12,6 +12,9 @@ import {
   simulateInfectionTimes,
   simulateInfectionRuns,
   eventTimeHistogram,
+  histogramBins,
+  rateAtTime,
+  sparseBinLabel,
   describeRate,
   rateFunctionDefs,
 } from "./rateExplorer";
@@ -372,5 +375,37 @@ describe("rateExplorer event-time histogram", () => {
     // The peak is at τ=4 (boundary of bins 1 and 2); both interior bins should
     // hold more than the first bin (which starts at λ=0).
     expect(h.counts[1] + h.counts[2]).toBeGreaterThan(h.counts[0] + h.counts[3]);
+  });
+});
+
+describe("rateAtTime", () => {
+  it("interpolates linearly and clamps to the endpoints", () => {
+    const curve = effectiveRateCurve({
+      type: "empirical",
+      points: [
+        [0, 0],
+        [2, 1],
+        [4, 0],
+      ],
+      scale: 2,
+    });
+    expect(rateAtTime(curve, 1)).toBeCloseTo(curve.lambda[1] / 2, 12);
+    expect(rateAtTime(curve, -1)).toBe(curve.lambda[0]);
+    expect(rateAtTime(curve, 9)).toBe(curve.lambda[2]);
+  });
+});
+
+describe("histogram helpers", () => {
+  it("bins grow ~2√n between the clamps", () => {
+    expect(histogramBins(0)).toBe(8);
+    expect(histogramBins(10)).toBe(8);
+    expect(histogramBins(100)).toBe(20);
+    expect(histogramBins(10000)).toBe(60);
+    expect(histogramBins(10000, 8, 40)).toBe(40);
+  });
+
+  it("labels keep roughly five ticks", () => {
+    const labels = Array.from({ length: 20 }, (_, i) => sparseBinLabel(`${i}`, i, 20));
+    expect(labels.filter(Boolean)).toEqual(["0", "4", "8", "12", "16"]);
   });
 });

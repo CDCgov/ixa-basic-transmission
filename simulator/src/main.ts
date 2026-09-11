@@ -13,10 +13,11 @@ const router = createRouter({
   routes: [
     { path: "/calibrate", component: CalibratePage },
     // The simulate route carries the main-area tab in its path: "/" (or
-    // "/simulate") = run charts, "/explore" = the rate-function explainer.
+    // "/simulate") = run charts, "/explore" = the rate-function explainer,
+    // "/modifiers" = the thinning-vs-rescheduling explainer.
     // One route record + optional param → switching tabs reuses `Page.vue`
     // (no remount), so the model params and in-flight simulation persist.
-    { path: "/:view(simulate|explore)?", component: Page },
+    { path: "/:view(simulate|explore|modifiers)?", component: Page },
   ],
 });
 

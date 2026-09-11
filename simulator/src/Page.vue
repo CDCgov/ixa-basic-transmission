@@ -20,6 +20,7 @@ import presets from "virtual:presets";
 import defaultLibrary from "virtual:rateLibrary";
 import RateEditor from "./components/RateEditor.vue";
 import RateExplorer from "./components/RateExplorer.vue";
+import ModifierExplorer from "./components/ModifierExplorer.vue";
 import SettingsEditor from "./components/SettingsEditor.vue";
 import ModifiersEditor from "./components/ModifiersEditor.vue";
 import settingsLibrary from "virtual:settingsLibrary";
@@ -50,26 +51,31 @@ const router = useRouter();
 const route = useRoute();
 
 // Main-area tab is reflected in the URL path: "/" (or "/simulate") = the run
-// charts, "/explore" = the rate-function explainer. The sidebar (incl. the
-// rate editor) stays mounted across both, so the explorer reacts live to rate
-// edits; switching carries the query string (the model params) along.
-const mainTab = computed<"simulate" | "explore">(() =>
-  route.params.view === "explore" ? "explore" : "simulate",
+// charts, "/explore" = the rate-function explainer, "/modifiers" = the
+// thinning-vs-rescheduling explainer. The sidebar (incl. the rate editor)
+// stays mounted across all of them, so the explorers react live to edits;
+// switching carries the query string (the model params) along.
+type MainTab = "simulate" | "explore" | "modifiers";
+const mainTab = computed<MainTab>(() =>
+  route.params.view === "explore" || route.params.view === "modifiers"
+    ? route.params.view
+    : "simulate",
 );
-function setMainTab(tab: "simulate" | "explore") {
+function setMainTab(tab: MainTab) {
   if (tab === mainTab.value) return;
   // `useUrlParams` debounces its URL write (~300ms), so `route.query` can lag
   // the live params. Serialize the current params ourselves and carry them
   // across the path change — otherwise the route watcher would re-hydrate
   // params from a stale query and reset them to defaults.
   router.push({
-    path: tab === "explore" ? "/explore" : "/",
+    path: tab === "simulate" ? "/" : `/${tab}`,
     query: paramsToQuery(params, defaults, urlCodecs),
   });
 }
 const mainTabs: SelectOption[] = [
   { value: "simulate", label: "Simulate" },
   { value: "explore", label: "Explore" },
+  { value: "modifiers", label: "Modifiers" },
 ];
 
 // `shallowReactive` (not `reactive`) so nested values like
@@ -395,7 +401,7 @@ const axisTextStyle = { fontSize: 13 };
       class="main-tab"
       :class="{ 'main-tab-active': mainTab === tab.value }"
       :aria-selected="mainTab === tab.value"
-      @click="setMainTab(tab.value as 'simulate' | 'explore')"
+      @click="setMainTab(tab.value as MainTab)"
     >
       {{ tab.label }}
     </button>
@@ -438,7 +444,8 @@ const axisTextStyle = { fontSize: 13 };
       :menu="false"
     />
   </template>
-  <RateExplorer v-else :model-value="params.infectionRate" />
+  <RateExplorer v-else-if="mainTab === 'explore'" :model-value="params.infectionRate" />
+  <ModifierExplorer v-else :model-value="params.infectionRate" />
 </template>
 
 <style scoped>

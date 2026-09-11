@@ -30,7 +30,7 @@ export interface RateCurve {
   total: number;
 }
 
-function cumulativeTrapezoid(x: number[], y: number[]): number[] {
+export function cumulativeTrapezoid(x: number[], y: number[]): number[] {
   const cum = [0];
   for (let i = 1; i < x.length; i++) {
     cum.push(cum[i - 1] + 0.5 * (y[i - 1] + y[i]) * (x[i] - x[i - 1]));
@@ -178,6 +178,21 @@ export function libraryOverlay(rate: InfectionRate): LibraryOverlay {
     data.push((sum / rate.rates.length) * factor);
   }
   return { curves, mean: { x, data } };
+}
+
+/** Linear interpolation of λ(τ) at `t`, clamped to the curve's endpoints. */
+export function rateAtTime(curve: RateCurve, t: number): number {
+  const { x, lambda } = curve;
+  if (!x.length) return 0;
+  if (t <= x[0]) return lambda[0];
+  for (let i = 1; i < x.length; i++) {
+    if (t <= x[i]) {
+      const span = x[i] - x[i - 1];
+      if (span === 0) return lambda[i];
+      return lambda[i - 1] + ((t - x[i - 1]) / span) * (lambda[i] - lambda[i - 1]);
+    }
+  }
+  return lambda[lambda.length - 1];
 }
 
 /** Λ(τ) — cumulative hazard at time `t` (linear within a segment). */
@@ -363,6 +378,21 @@ export function eventTimeHistogram(
     binWidth,
     total,
   };
+}
+
+/**
+ * Histogram bin count for `n` samples: coarse at or below 10, then ~2√n,
+ * clamped to [minBins, maxBins].
+ */
+export function histogramBins(n: number, minBins = 8, maxBins = 60): number {
+  if (n <= 10) return minBins;
+  return Math.min(maxBins, Math.max(minBins, Math.round(2 * Math.sqrt(n))));
+}
+
+/** Keep about five category labels regardless of the bin count. */
+export function sparseBinLabel(label: string, index: number, bins: number): string {
+  const step = Math.max(1, Math.ceil(bins / 5));
+  return index % step === 0 ? label : "";
 }
 
 function fmt(v: number): string {
