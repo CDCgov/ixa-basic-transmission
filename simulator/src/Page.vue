@@ -52,7 +52,7 @@ const route = useRoute();
 
 // Main-area tab is reflected in the URL path: "/" (or "/simulate") = the run
 // charts, "/explore" = the rate-function explainer, "/modifiers" = the
-// thinning-vs-rescheduling explainer. The sidebar (incl. the rate editor)
+// rejection-sampling-vs-rescheduling explainer. The sidebar (incl. the rate editor)
 // stays mounted across all of them, so the explorers react live to edits;
 // switching carries the query string (the model params) along.
 type MainTab = "simulate" | "explore" | "modifiers";

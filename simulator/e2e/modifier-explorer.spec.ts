@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
 
-// The "Modifiers" tab (/modifiers): thinning vs rescheduling of a modifier
+// The "Modifiers" tab (/modifiers): rejection sampling vs rescheduling of a modifier
 // that switches on mid-infection, driven by shared Draw next / Simulate 100×.
 
 test.describe("Modifier explorer tab", () => {
@@ -15,7 +15,7 @@ test.describe("Modifier explorer tab", () => {
       page.getByRole("heading", { name: "Transmission modifiers" }),
     ).toBeVisible();
     await expect(
-      page.getByRole("heading", { name: "Thinning (rejection sampling)" }),
+      page.getByRole("heading", { name: "Rejection sampling" }),
     ).toBeVisible();
     await expect(
       page.getByRole("heading", { name: "Rescheduling", exact: true }),
@@ -52,7 +52,7 @@ test.describe("Modifier explorer tab", () => {
     await expect(summary).toBeVisible();
     const rows = summary.locator("tbody tr");
     await expect(rows).toHaveCount(2);
-    await expect(rows.nth(0)).toContainText("Thinning");
+    await expect(rows.nth(0)).toContainText("Rejection sampling");
     await expect(rows.nth(0)).toContainText("100");
     await expect(rows.nth(0)).toContainText("rejected attempts");
     await expect(rows.nth(1)).toContainText("Rescheduling");
@@ -77,7 +77,7 @@ test.describe("Modifier explorer tab", () => {
     await expect(summary).toBeVisible();
   });
 
-  test("f > 1 greys out thinning and runs rescheduling only", async ({
+  test("f > 1 greys out rejection sampling and runs rescheduling only", async ({
     page,
   }) => {
     await page.goto("/modifiers");

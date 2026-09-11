@@ -105,7 +105,7 @@ interface MethodStats {
   times: number[];
   /** Offspring count per completed individual. */
   counts: number[];
-  /** Thinning rejections or rescheduling cancellations. */
+  /** Rejection-sampling rejections or rescheduling cancellations. */
   discarded: number;
 }
 const emptyStats = (): MethodStats => ({ times: [], counts: [], discarded: 0 });
@@ -268,7 +268,7 @@ const dotsOnly = (color: string) => ({
   showInTooltip: false,
 });
 
-// Thinning: rejections sit on the forecast r(t); accepted attempts on f·r(t).
+// Rejection sampling: rejections sit on the forecast r(t); accepted attempts on f·r(t).
 const thinSeries = computed(() => {
   const s: Record<string, unknown>[] = [
     {
@@ -437,7 +437,7 @@ const reschedHist = computed(() =>
 );
 const distSeries = computed(() => [
   ...(thinningOk.value
-    ? [{ data: thinHist.value.percentages, color: PURPLE, legend: "Thinning" }]
+    ? [{ data: thinHist.value.percentages, color: PURPLE, legend: "Rejection sampling" }]
     : []),
   { data: reschedHist.value.percentages, color: TEAL, legend: "Rescheduling" },
 ]);
@@ -473,7 +473,7 @@ const summaryRows = computed(() => [
   ...(thinningOk.value
     ? [
         {
-          method: "Thinning",
+          method: "Rejection sampling",
           color: PURPLE,
           stats: thinStats.value,
           discardedLabel: "rejected attempts",
@@ -508,7 +508,7 @@ const timelinesVisible = computed(
         A modifier switches on partway through an infection and scales the person's intrinsic rate r(t) by a
         factor <strong>f</strong> from then on. Below 1 it reduces infectiousness (an antiviral: 1 − efficacy after
         its delay; a facemask: 1 − effectiveness once donned); above 1 it raises it. The model already forecast that person's next attempt on the
-        unmodified r(t), so we need to reconcile the pending forecast with the new rate. There are two ways to do this: thinning and rescheduling.
+        unmodified r(t), so we need to reconcile the pending forecast with the new rate. There are two ways to do this: rejection sampling and rescheduling.
       </p>
       <div class="mexp-controls">
         <NumberInput v-model="activatesAt" label="Activates at (day)" :min="0" :max="curve.duration" :step="0.1"
@@ -527,12 +527,12 @@ const timelinesVisible = computed(
     </header>
 
     <div class="mexp-grid">
-      <!-- Thinning -->
+      <!-- Rejection sampling -->
       <div class="mexp-panel mexp-panel-thin" :class="{ 'mexp-panel-off': !thinningOk }">
-        <h3>Thinning (rejection sampling)</h3>
+        <h3>Rejection sampling</h3>
         <p v-if="!thinningOk" class="mexp-note mexp-off-note">
           Not available when the modifier raises the rate (f = {{ fmt(factor) }} &gt; 1): the unmodified r(t) is
-          no longer an upper bound, so current ÷ forecast would exceed 1 and there is nothing to thin. Only
+          no longer an upper bound, so current ÷ forecast would exceed 1 and there is nothing to reject. Only
           rescheduling can be used.
         </p>
         <div class="mexp-panel-body">
@@ -666,7 +666,7 @@ const timelinesVisible = computed(
           <template #tooltip="{ category, values }">
             <div class="mexp-tooltip">
               <div>t ≈ {{ category }}</div>
-              <div v-if="thinningOk" class="c-purple">thinning: {{ fmtTau(values[0]?.value) }}%</div>
+              <div v-if="thinningOk" class="c-purple">rejection sampling: {{ fmtTau(values[0]?.value) }}%</div>
               <div class="c-teal">rescheduling: {{ fmtTau(values[thinningOk ? 1 : 0]?.value) }}%</div>
             </div>
           </template>
