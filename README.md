@@ -89,7 +89,7 @@ All comments, messages, pull requests, and other submissions received through
 CDC including this GitHub page may be subject to applicable federal law,
 including but not limited to the Federal Records Act, and may be archived. Learn
 more at
-[http://www.cdc.gov/other/privacy.html](http://www.cdc.gov/other/privacy.html).
+<http://www.cdc.gov/other/privacy.html>.
 
 ## Records Management Standard Notice
 

@@ -53,8 +53,7 @@ use ixa_basic_transmission::modifiers::isolation::Isolation;
 use ixa_basic_transmission::modifiers::Modifiers;
 use ixa_basic_transmission::parameters::Parameters;
 use ixa_basic_transmission::rate::{
-    empirical_cum_rate, empirical_inverse_cum_rate, EmpiricalRate, InfectionRate,
-    InfectiousnessRateFn,
+    empirical_cum_rate, empirical_inverse_cum_rate, EmpiricalRateFn, InfectionRate, InvertibleRate,
 };
 use ixa_basic_transmission::settings::SettingType;
 
@@ -254,11 +253,11 @@ fn bench_curve_eval(c: &mut Criterion) {
         .clone();
     let short_points = short_curve();
     // Pre-build the EmpiricalRates (with precomputed cum) once — same shape as
-    // the model's hot path, which holds `&dyn InfectiousnessRateFn` borrowed
+    // the model's hot path, which holds `&dyn InvertibleRate` borrowed
     // from a data plugin populated at setup. Scale 1.0 so the cum/inverse math
     // matches the slice-based reference path below bit-for-bit.
-    let short = EmpiricalRate::new(short_points.clone(), 1.0);
-    let long_curve = EmpiricalRate::new(long_points.clone(), 1.0);
+    let short = EmpiricalRateFn::new(short_points.clone(), 1.0);
+    let long_curve = EmpiricalRateFn::new(long_points.clone(), 1.0);
     let long_len = long_points.len();
 
     let mut g = c.benchmark_group("curve_eval");

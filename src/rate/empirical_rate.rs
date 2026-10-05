@@ -1,9 +1,9 @@
-use super::InfectiousnessRateFn;
+use super::InvertibleRate;
 
 /// Cumulative hazard `Λ(τ)` for a single piecewise-linear empirical
 /// curve. Slice-based helper (no precomputed cumulative): takes a slice so
 /// the caller can avoid allocating or cloning. Used by `normalize`, the
-/// benchmarks, and as the reference implementation `EmpiricalRate`'s
+/// benchmarks, and as the reference implementation `EmpiricalRateFn`'s
 /// precomputed walk is pinned against.
 #[inline]
 pub fn empirical_cum_rate(points: &[[f64; 2]], t: f64) -> f64 {
@@ -95,7 +95,7 @@ pub fn empirical_support_end(points: &[[f64; 2]]) -> f64 {
 }
 
 /// Recovery time from precomputed cumulative — the earliest anchor whose
-/// cumulative equals the curve's max (factored out so `EmpiricalRate::new`
+/// cumulative equals the curve's max (factored out so `EmpiricalRateFn::new`
 /// reuses the `cum` it already built rather than rebuilding it).
 fn support_end_from_cum(points: &[[f64; 2]], cum: &[f64]) -> f64 {
     if points.is_empty() {
@@ -167,7 +167,7 @@ fn build_cum(points: &[[f64; 2]]) -> Vec<f64> {
 /// points, so the float arithmetic is identical to evaluating the shape and
 /// scaling afterward.
 #[derive(Clone, Debug)]
-pub struct EmpiricalRate {
+pub struct EmpiricalRateFn {
     points: Vec<[f64; 2]>,
     /// `cum[i] = Λ(points[i].0)` for the **unscaled** shape; `cum[0] = 0`.
     cum: Vec<f64>,
@@ -175,7 +175,7 @@ pub struct EmpiricalRate {
     recovery_time: f64,
 }
 
-impl EmpiricalRate {
+impl EmpiricalRateFn {
     #[must_use]
     pub fn new(points: Vec<[f64; 2]>, scale: f64) -> Self {
         let cum = build_cum(&points);
@@ -254,7 +254,7 @@ impl EmpiricalRate {
     }
 }
 
-impl InfectiousnessRateFn for EmpiricalRate {
+impl InvertibleRate for EmpiricalRateFn {
     /// Instantaneous rate `λ(τ) = scale · shape(τ)`; zero outside the
     /// curve's anchor range.
     #[inline]
@@ -296,11 +296,11 @@ impl InfectiousnessRateFn for EmpiricalRate {
 mod test {
     use super::{
         empirical_cum_rate, empirical_curve_duration, empirical_inverse_cum_rate,
-        empirical_support_end, rate_at_curve, EmpiricalRate, InfectiousnessRateFn,
+        empirical_support_end, rate_at_curve, EmpiricalRateFn, InvertibleRate,
     };
 
-    fn unit(points: Vec<[f64; 2]>) -> EmpiricalRate {
-        EmpiricalRate::new(points, 1.0)
+    fn unit(points: Vec<[f64; 2]>) -> EmpiricalRateFn {
+        EmpiricalRateFn::new(points, 1.0)
     }
 
     // --- Instantaneous rate ------------------------------------------------
@@ -379,7 +379,7 @@ mod test {
 
     #[test]
     fn scale_multiplies_cum_rate() {
-        let r = EmpiricalRate::new(vec![[0.0, 1.0], [10.0, 1.0]], 0.5);
+        let r = EmpiricalRateFn::new(vec![[0.0, 1.0], [10.0, 1.0]], 0.5);
         assert!((r.cum_rate(5.0) - 2.5).abs() < 1e-12);
         let t = r.inverse_cum_rate(2.5).unwrap();
         assert!((t - 5.0).abs() < 1e-9);
@@ -387,7 +387,7 @@ mod test {
 
     #[test]
     fn scale_zero_makes_curve_unreachable() {
-        let r = EmpiricalRate::new(vec![[0.0, 1.0], [10.0, 1.0]], 0.0);
+        let r = EmpiricalRateFn::new(vec![[0.0, 1.0], [10.0, 1.0]], 0.0);
         assert_eq!(r.cum_rate(5.0), 0.0);
         assert_eq!(r.inverse_cum_rate(0.1), None);
         assert_eq!(r.max_cum_rate(), 0.0);
@@ -397,7 +397,7 @@ mod test {
 
     #[test]
     fn max_cum_rate_is_total_area_times_scale() {
-        let r = EmpiricalRate::new(vec![[0.0, 0.0], [1.0, 1.0], [2.0, 2.0]], 3.0);
+        let r = EmpiricalRateFn::new(vec![[0.0, 0.0], [1.0, 1.0], [2.0, 2.0]], 3.0);
         // Raw total area = 0.5 + 1.5 = 2.0; scaled = 6.0.
         assert!((r.max_cum_rate() - 6.0).abs() < 1e-12);
         assert_eq!(r.inverse_cum_rate(r.max_cum_rate() + 0.1), None);

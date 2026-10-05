@@ -1,4 +1,4 @@
-use super::InfectiousnessRateFn;
+use super::InvertibleRate;
 
 /// A time-invariant infectiousness rate (a homogeneous Poisson hazard). `value` is an
 /// absolute hazard rate that applies for all time — the rate is **not** capped by a
@@ -10,18 +10,18 @@ use super::InfectiousnessRateFn;
 /// `inverse_cum_rate` never returns `None` for a positive rate — consistent with a
 /// homogeneous Poisson process that only stops when the recovery clock fires.
 #[derive(Debug, Clone, Copy)]
-pub struct ConstantRate {
+pub struct ConstantRateFn {
     value: f64,
 }
 
-impl ConstantRate {
+impl ConstantRateFn {
     #[must_use]
     pub fn new(value: f64) -> Self {
         Self { value }
     }
 }
 
-impl InfectiousnessRateFn for ConstantRate {
+impl InvertibleRate for ConstantRateFn {
     #[inline]
     fn rate(&self, _t: f64) -> f64 {
         self.value
@@ -65,12 +65,11 @@ impl InfectiousnessRateFn for ConstantRate {
 
 #[cfg(test)]
 mod test {
-    use super::ConstantRate;
-    use super::InfectiousnessRateFn;
+    use super::{ConstantRateFn, InvertibleRate};
 
     #[test]
     fn rate_is_time_invariant() {
-        let r = ConstantRate::new(0.7);
+        let r = ConstantRateFn::new(0.7);
         assert_eq!(r.rate(0.0), 0.7);
         assert_eq!(r.rate(100.0), 0.7);
         assert_eq!(r.rate(-5.0), 0.7);
@@ -78,7 +77,7 @@ mod test {
 
     #[test]
     fn cum_rate_is_linear() {
-        let r = ConstantRate::new(0.5);
+        let r = ConstantRateFn::new(0.5);
         assert_eq!(r.cum_rate(0.0), 0.0);
         assert_eq!(r.cum_rate(10.0), 5.0);
         assert_eq!(r.cum_rate(-1.0), 0.0);
@@ -86,7 +85,7 @@ mod test {
 
     #[test]
     fn inverse_cum_rate_roundtrips() {
-        let r = ConstantRate::new(0.3);
+        let r = ConstantRateFn::new(0.3);
         for c in [0.5, 1.0, 7.7] {
             let t = r.inverse_cum_rate(c).unwrap();
             assert!((r.cum_rate(t) - c).abs() < 1e-12);
@@ -95,7 +94,7 @@ mod test {
 
     #[test]
     fn inverse_cum_rate_zero_rate_is_unattainable() {
-        let r = ConstantRate::new(0.0);
+        let r = ConstantRateFn::new(0.0);
         assert_eq!(r.inverse_cum_rate(1.0), None);
         // Zero events is always reachable at t=0.
         assert_eq!(r.inverse_cum_rate(0.0), Some(0.0));
@@ -103,7 +102,7 @@ mod test {
 
     #[test]
     fn max_cum_rate_is_infinite_when_positive() {
-        assert_eq!(ConstantRate::new(0.5).max_cum_rate(), f64::INFINITY);
-        assert_eq!(ConstantRate::new(0.0).max_cum_rate(), 0.0);
+        assert_eq!(ConstantRateFn::new(0.5).max_cum_rate(), f64::INFINITY);
+        assert_eq!(ConstantRateFn::new(0.0).max_cum_rate(), 0.0);
     }
 }

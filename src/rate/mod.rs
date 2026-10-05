@@ -2,8 +2,8 @@
 //!
 //! The [`InfectionRate`] enum is the **config / wire format** (serde-tagged,
 //! consumed by the wasm args, calibration, presets, and the frontend). At model
-//! entry it is resolved into [`RateFn`] values (a static-dispatch enum that
-//! implements [`InfectiousnessRateFn`], held in [`storage::RateStorage`]) that
+//! entry it is resolved into [`InvertibleRateFn`] values (a static-dispatch enum that
+//! implements [`InvertibleRate`], held in [`storage::RateStorage`]) that
 //! the transmission loop dispatches through. Concrete rate functions live in
 //! the submodules: [`ConstantRate`], [`EmpiricalRate`], and the [`parametric`]
 //! lowering.
@@ -17,15 +17,15 @@ pub mod parametric;
 pub mod rate_fn;
 pub mod storage;
 
-pub use constant_rate::ConstantRate;
+pub use constant_rate::ConstantRateFn;
 pub use empirical_rate::{
     empirical_cum_rate, empirical_curve_duration, empirical_inverse_cum_rate,
-    empirical_support_end, EmpiricalRate,
+    empirical_support_end, EmpiricalRateFn,
 };
 pub use normalize::normalize_to_r0;
 pub use parametric::{materialize_parametric, ParametricDist, PARAMETRIC_GRID};
-pub use rate_fn::{InfectiousnessRateFn, ScaledRateFn};
-pub use storage::{build_empirical_library, AssignedRate, RateFn, RateStorage};
+pub use rate_fn::{InvertibleRate, TransformedInvertibleRateFn};
+pub use storage::{build_empirical_library, AssignedRate, InvertibleRateFn, RateStorage};
 
 /// Per-person infectiousness rate, indexed by time since the person became
 /// infectious (τ). Each variant carries its own duration since the two
@@ -34,7 +34,7 @@ pub use storage::{build_empirical_library, AssignedRate, RateFn, RateStorage};
 /// curve (when its integrated infectiousness is exhausted).
 ///
 /// This enum is the configuration format only; the running model resolves it
-/// into [`RateFn`] values via [`storage`].
+/// into [`InvertibleRateFn`] values via [`storage`].
 ///
 /// - `Constant { value, duration }`: fixed rate, recovery is
 ///   `Exp(1/duration)`. `value` is an absolute hazard rate.
