@@ -12,9 +12,11 @@ use crate::rate::{
 };
 use crate::settings::SettingsExt;
 use crate::stats::ModelStats;
+use ixa::rand::distr::Bernoulli;
 
 define_global_property!(Params, Parameters);
 
+define_rng!(TransmissionRng);
 define_rng!(InfectionRng);
 define_rng!(RecoveryRng);
 define_rng!(RateAssignmentRng);
@@ -30,15 +32,148 @@ define_data_plugin!(ModelStatsPlugin, ModelStats, |context| {
 define_data_plugin!(RateStoragePlugin, RateStorage, |_context| RateStorage::new(
 ));
 
-trait InfectionLoop {
+/// Infection loop transmission dynamics.
+///
+/// Transmission occurs due to a combination of three factors: (potential)
+/// infector's infectiousness, the contact rate between the infector and
+/// (potential) infectees, and the susceptibility of (potential) infectees.
+///
+/// A transmission "attempt" is when a transmission would occur if the
+/// potential infectee is susceptible. Attempts account for infectiousness
+/// and contact rates.
+///
+/// The loop algorithm is:
+/// 1. Draw proposed attempt times based majorizing transmission attempt rates.
+/// 2. Thin proposed attempts to get attempts.
+/// 3. Attempts become transmissions based on the potential infectee's susceptibility.
+pub trait Transmission: ixa::ContextBase + ixa::ContextRandomExt {
+    /// Inverse cumulative majorizing transmission attempt rate. Returns the time until
+    /// the expected number of onward transmission attempts from `person` is `e`.
+    fn inv_cum_maj_transm_attempt_rate(&self, person: PersonId, e: f64) -> f64;
+    /// Majorizing transmission attempt rate. It should be consistent with the
+    /// the inverse cumulative rate.
+    fn maj_transm_attempt_rate(&self, person: PersonId) -> f64;
+    /// Actual attempt rate, bounded at all times by the majorizing attempt rate.
+    /// `None` signals that the rate is zero and will continue to be zero,
+    /// i.e., that the infection loop for this infector should break.
+    fn transm_attempt_rate(&self, person: PersonId) -> Option<f64>;
+    fn select_infectee(&self, infector: PersonId) -> Option<PersonId>;
+    fn susceptibility(&self, person: PersonId) -> f64;
+    /// Do the transmission. This should, at a minimum, trigger the infectee's
+    /// own infection loop,
+    fn transmit(&mut self, infector: PersonId, infectee: PersonId);
+
+    /// Schedule the next attempt proposal.
+    ///
+    /// This function begins the transmission loop for an infector.
+    fn schedule_next_trans_attempt_proposal(&mut self, infector: PersonId) {
+        let e = self.sample_distr(TransmissionRng, Exp::new(1.0).unwrap());
+        let delay = self.inv_cum_maj_transm_attempt_rate(infector, e);
+        let t = self.get_current_time() + delay;
+        self.add_plan(t, move |ctx| ctx.handle_transm_attempt_proposal(infector));
+    }
+
+    fn handle_transm_attempt_proposal(&mut self, infector: PersonId) {
+        // If the current attempt rate is None, break the infection loop
+        if let Some(current_rate) = self.transm_attempt_rate(infector) {
+            let maj_rate = self.maj_transm_attempt_rate(infector);
+            assert!(
+                current_rate <= maj_rate + 1e-10,
+                "person {infector:?}: current rate {current_rate} exceeds majorizing rate {maj_rate}"
+            );
+
+            // Thin the attempt proposals
+            if self.sample_distr(
+                TransmissionRng,
+                Bernoulli::new(current_rate / maj_rate).unwrap(),
+            ) {
+                if let Some(infectee) = self.select_infectee(infector) {
+                    let p = self.susceptibility(infectee);
+                    if self.sample_distr(TransmissionRng, Bernoulli::new(p).unwrap()) {
+                        self.transmit(infector, infectee);
+                    } // else: infectee non-susceptibility prevented transmission
+                } // else: no person to sample
+            } // else: contact+infectiousness were not sufficient for transmission
+
+            self.schedule_next_trans_attempt_proposal(infector);
+        } // else: one of the contact rate or infectiousness was None; stop the loop for this infector
+    }
+}
+
+pub trait ContactStructure: ixa::ContextBase {
+    fn maj_contact_rate(&self, person: PersonId) -> f64;
+    fn current_contact_rate(&self, person: PersonId) -> Option<f64>;
+}
+
+impl ContactStructure for Context {
+    fn maj_contact_rate(&self, person: PersonId) -> f64 {
+        self.settings_forecast_multiplier(person)
+    }
+
+    fn current_contact_rate(&self, person: PersonId) -> Option<f64> {
+        Some(self.settings_current_multiplier(person))
+    }
+}
+
+pub trait Infectiousness: ixa::ContextBase {
+    fn maj_infectiousness(&self, person: PersonId) -> f64;
+    fn current_infectiousness(&self, person: PersonId) -> Option<f64>;
+}
+
+impl Infectiousness for Context {
+    fn maj_infectiousness(&self, person: PersonId) -> f64 {
+        self.settings_forecast_multiplier(person)
+    }
+    fn current_infectiousness(&self, person: PersonId) -> Option<f64> {
+        if self.get_property::<_, InfectionStatus>(person) == InfectionStatus::Infectious {
+            Some(self.settings_current_multiplier(person))
+        } else {
+            // None signals that the transmission loop should stop for this person
+            None
+        }
+    }
+}
+
+impl Transmission for Context {
+    fn inv_cum_maj_transm_attempt_rate(&self, person: PersonId, e: f64) -> f64 {
+        // Λ(t) = constant_rate * time ==> Λ-1(e) = e / constant_rate
+        let rate = self.maj_transm_attempt_rate(person);
+        e / rate
+    }
+
+    fn maj_transm_attempt_rate(&self, person: PersonId) -> f64 {
+        self.maj_infectiousness(person) * self.maj_contact_rate(person)
+    }
+
+    fn transm_attempt_rate(&self, person: PersonId) -> Option<f64> {
+        // None if either of ci or ccr is none
+        let ci = self.current_infectiousness(person)?;
+        let ccr = self.current_contact_rate(person)?;
+        Some(ci * ccr)
+    }
+
+    fn select_infectee(&self, infector: PersonId) -> Option<PersonId> {
+        self.settings_sample_contact(infector)
+    }
+
+    fn susceptibility(&self, person: PersonId) -> f64 {
+        if InfectionStatus::Susceptible == self.get_property(person) {
+            1.0
+        } else {
+            0.0
+        }
+    }
+
+    fn transmit(&mut self, _infector: PersonId, infectee: PersonId) {
+        self.infect_person(infectee, None)
+    }
+}
+
+trait Infection {
     fn get_params(&self) -> &Parameters;
     fn get_stats(&self) -> &ModelStats;
     #[cfg_attr(not(test), allow(dead_code))]
     fn infected_people(&self) -> usize;
-    fn forecast_total_infectiousness_multiplier(&self, person: PersonId) -> f64;
-    fn current_total_infectiousness_multiplier(&self, person: PersonId) -> f64;
-    fn evaluate_forecast(&mut self, infector: PersonId, forecasted: f64) -> bool;
-    fn infection_attempt(&mut self, infector: PersonId);
     fn infect_person(&mut self, p: PersonId, t: Option<f64>);
     fn recover_person(&mut self, p: PersonId);
     /// Schedule `p`'s recovery and return the realized infectious-period
@@ -46,11 +181,10 @@ trait InfectionLoop {
     /// empirical curves) so the caller can place a facemask within that window.
     fn schedule_recovery(&mut self, p: PersonId) -> f64;
     fn effective_rate(&self, person: PersonId) -> &RateFn;
-    fn schedule_next_infection_attempt(&mut self, infector: PersonId);
     fn setup(&mut self);
 }
 
-impl InfectionLoop for Context {
+impl Infection for Context {
     fn get_params(&self) -> &Parameters {
         self.get_global_property_value(Params).unwrap()
     }
@@ -73,6 +207,8 @@ impl InfectionLoop for Context {
             self.get_data_mut(ModelStatsPlugin)
                 .record_infection(current_t);
         }
+        // begin the infection loop for this infector
+        self.schedule_next_trans_attempt_proposal(p);
     }
     fn recover_person(&mut self, p: PersonId) {
         self.set_property(p, InfectionStatus::Recovered);
@@ -153,99 +289,6 @@ impl InfectionLoop for Context {
         }
     }
 
-    fn forecast_total_infectiousness_multiplier(&self, person: PersonId) -> f64 {
-        // Upper bound on per-person scaling of the intrinsic rate. The forecast
-        // samples on this upper-bound process and `evaluate_forecast` thins down
-        // to the true marginal rate. With no itinerary restriction in play this
-        // bound is the *exact* constant total rate `Σ p_s · M_s` (so thinning is
-        // a no-op); isolation widens it to `max_s M_s`. 1.0 when settings are
-        // disabled. See `SettingsExt::settings_forecast_multiplier`.
-        self.settings_forecast_multiplier(person)
-    }
-
-    fn current_total_infectiousness_multiplier(&self, person: PersonId) -> f64 {
-        // True per-person scaling: `Σ p_s · M_s` over the person's settings.
-        // Equals 1.0 when settings are disabled.
-        self.settings_current_multiplier(person)
-    }
-
-    fn infection_attempt(&mut self, infector: PersonId) {
-        if let Some(target) = self.settings_sample_contact(infector) {
-            let now = self.get_current_time();
-            self.infect_person(target, Some(now));
-        }
-    }
-
-    fn evaluate_forecast(&mut self, infector: PersonId, forecasted: f64) -> bool {
-        // Thinning step: the forecast was sampled on the upper-bound rate
-        // (intrinsic × forecast_total_infectiousness_multiplier), so the actual
-        // current rate is ≤ forecasted. Accept the event with probability
-        // current / forecasted; when the two are equal (e.g. settings
-        // disabled, where both multipliers are 1.0) the branch short-
-        // circuits and consumes no randomness.
-        let t_inf = self.get_property::<_, InfectionTime>(infector).0;
-        let elapsed = self.get_current_time() - t_inf;
-        // Intervention modifiers scale *intrinsic* infectiousness λ(τ) — the
-        // per-person rate, not the settings/contact multiplier. Their cached
-        // product (`intrinsic_multiplier`, see `crate::modifiers`) is ≤ 1, so
-        // the forecast upper bound (built from the un-modified λ) stays valid
-        // and this thinning step brings the realized rate down correctly.
-        let intrinsic =
-            self.effective_rate(infector).rate(elapsed) * self.intrinsic_multiplier(infector);
-        let current = intrinsic * self.current_total_infectiousness_multiplier(infector);
-
-        assert!(
-            current <= forecasted + 1e-10,
-            "person {infector:?}: current rate {current} exceeds forecasted upper bound {forecasted}"
-        );
-
-        if current < forecasted {
-            self.sample_bool(InfectionRng, current / forecasted)
-        } else {
-            true
-        }
-    }
-
-    fn schedule_next_infection_attempt(&mut self, infector: PersonId) {
-        // Inverse-CDF sampling on the upper-bound process
-        // λ_fc(τ) = λ(τ) · forecast_total_infectiousness_multiplier.
-        // Draw e ~ Exp(1) and solve Λ_fc(τ_next) − Λ_fc(elapsed) = e,
-        // which rearranges to Λ(τ_next) = Λ(elapsed) + e / fc_mult.
-        // `None` from `inverse_cum_rate` means the curve is exhausted —
-        // no further attempts for this person.
-        let t_inf = self.get_property::<_, InfectionTime>(infector).0;
-        let elapsed = self.get_current_time() - t_inf;
-        let fc_mult = self.forecast_total_infectiousness_multiplier(infector);
-
-        // A zero upper bound means there are no contacts this person can
-        // reach (e.g. they're in a size-1 household and the model is in
-        // settings mode). Skip the inverse-CDF — `e / 0 = inf` would
-        // otherwise schedule a plan at t = ∞.
-        if fc_mult <= 0.0 {
-            return;
-        }
-
-        let e: f64 = self.sample_distr(InfectionRng, Exp::new(1.0).unwrap());
-        let forecast = {
-            let eff = self.effective_rate(infector);
-            eff.inverse_cum_rate(eff.cum_rate(elapsed) + e / fc_mult)
-                .map(|tau| (tau, eff.rate(tau) * fc_mult))
-        };
-        let Some((elapsed_next, forecasted)) = forecast else {
-            return;
-        };
-        let next_time = t_inf + elapsed_next;
-        self.add_plan(next_time, move |context| {
-            // The person is no longer infected, exit the loop
-            if context.get_property::<_, InfectionStatus>(infector) != InfectionStatus::Infectious {
-                return;
-            }
-            if context.evaluate_forecast(infector, forecasted) {
-                context.infection_attempt(infector);
-            }
-            context.schedule_next_infection_attempt(infector);
-        });
-    }
     fn setup(&mut self) {
         let &Parameters {
             population,
@@ -271,7 +314,7 @@ impl InfectionLoop for Context {
                 // `modifiers::register_all`; this loop never changes when
                 // one is added (see `crate::modifiers`).
                 context.run_activation_hooks(p, infectious_duration);
-                context.schedule_next_infection_attempt(p);
+                context.schedule_next_trans_attempt_proposal(p);
             },
         );
 
