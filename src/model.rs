@@ -48,12 +48,16 @@ define_data_plugin!(RateStoragePlugin, RateStorage, |_context| RateStorage::new(
 /// 3. Attempts become transmissions based on the potential infectee's susceptibility.
 pub trait Transmission: ixa::ContextBase + ixa::ContextRandomExt {
     /// Majorizing rate for transmission attempts from `person`
-    fn maj_transm_attempt_rate_fn(&self, infector: PersonId) -> impl InfectiousnessRateFn;
+    fn maj_transm_attempt_rate_fn(&self, infector: PersonId) -> &impl InfectiousnessRateFn;
     /// Actual attempt rate, bounded at all times by the majorizing attempt rate.
     /// `None` signals that the rate is zero and will continue to be zero,
     /// i.e., that the infection loop for this infector should break.
     fn transm_attempt_rate(&self, person: PersonId) -> Option<f64>;
+    /// Given a transmission attempt from `infector`, who is the candidate infectee?
+    /// `None` breaks the loop.
+    // TO DO: `None` is probably a sign of inconsistency in the selection of the attempt rate!
     fn select_infectee(&self, infector: PersonId) -> Option<PersonId>;
+    /// Probability that a person, subjected to an infection attempt, will be infected.
     fn susceptibility(&self, person: PersonId) -> f64;
     /// Do the transmission. This should, at a minimum, trigger the infectee's
     /// own infection loop,
@@ -64,14 +68,10 @@ pub trait Transmission: ixa::ContextBase + ixa::ContextRandomExt {
     /// This function begins the transmission loop for an infector.
     fn schedule_next_trans_attempt_proposal(&mut self, infector: PersonId) {
         let e = self.sample_distr(TransmissionRng, Exp::new(1.0).unwrap());
-        let maybe_delay = self
-            .maj_transm_attempt_rate_fn(infector)
-            .inverse_cum_rate(e);
-
-        if let Some(delay) = maybe_delay {
+        let maj_rate_fn = self.maj_transm_attempt_rate_fn(infector);
+        if let Some(delay) = maj_rate_fn.inverse_cum_rate(e) {
             let t = self.get_current_time() + delay;
-
-            let maj_rate = self.maj_transm_attempt_rate_fn(infector).rate(t);
+            let maj_rate = maj_rate_fn.rate(t);
 
             self.add_plan(t, move |ctx| {
                 ctx.handle_transm_attempt_proposal(infector, maj_rate)
@@ -111,13 +111,14 @@ pub trait Transmission: ixa::ContextBase + ixa::ContextRandomExt {
 }
 
 pub trait ContactStructure: ixa::ContextBase {
-    fn maj_contact_rate(&self, person: PersonId) -> impl InfectiousnessRateFn;
+    fn maj_contact_rate(&self, person: PersonId) -> &impl InfectiousnessRateFn;
     fn current_contact_rate(&self, person: PersonId) -> Option<f64>;
 }
 
 impl ContactStructure for Context {
-    fn maj_contact_rate(&self, person: PersonId) -> impl InfectiousnessRateFn {
-        ConstantRate::new(1.0 * self.settings_forecast_multiplier(person))
+    fn maj_contact_rate(&self, person: PersonId) -> &impl InfectiousnessRateFn {
+        let rate_fn = ConstantRate::new(1.0 * self.settings_forecast_multiplier(person));
+        &rate_fn
     }
 
     fn current_contact_rate(&self, person: PersonId) -> Option<f64> {
@@ -126,21 +127,54 @@ impl ContactStructure for Context {
 }
 
 pub trait Infectiousness: ixa::ContextBase {
-    fn maj_infectiousness(&self, person: PersonId) -> impl InfectiousnessRateFn;
+    fn maj_infectiousness(&self, person: PersonId) -> &impl InfectiousnessRateFn;
     fn current_infectiousness(&self, person: PersonId) -> Option<f64>;
 }
 
 impl Infectiousness for Context {
-    fn maj_infectiousness(&self, person: PersonId) -> impl InfectiousnessRateFn {
-        ConstantRate::new(1.0 * self.settings_forecast_multiplier(person))
+    fn maj_infectiousness(&self, person: PersonId) -> &impl InfectiousnessRateFn {
+        // Resolve `InfectionRate` + per-person state into the `RateFn` the
+        // inverse-CDF math dispatches through. Single-rate variants
+        // (`Constant`/`Empirical`) are built lazily into the storage's one-shot
+        // slot on first access; `Library` indexes the per-curve vector built at
+        // setup.
+        match &self.get_params().infection_rate {
+            InfectionRate::Constant { value, .. } => {
+                let value = *value;
+                &self
+                    .get_data(RateStoragePlugin)
+                    .single_or_build(|| (RateFn::Constant(ConstantRate::new(value)), f64::INFINITY))
+                    .0
+            }
+            InfectionRate::Empirical { points, scale } => {
+                let points = points.clone();
+                let scale = *scale;
+                &self
+                    .get_data(RateStoragePlugin)
+                    .single_or_build(|| {
+                        let er = EmpiricalRate::new(points, scale);
+                        let recovery = er.recovery_time();
+                        (RateFn::Empirical(er), recovery)
+                    })
+                    .0
+            }
+            InfectionRate::Library { .. } => {
+                let idx = self
+                    .get_property::<_, AssignedRate>(person)
+                    .0
+                    .expect("AssignedRate is None in Library mode");
+                self.get_data(RateStoragePlugin).library_fn(idx)
+            }
+            // Lowered to `Empirical` at `run`/`setup_only` entry; never seen here.
+            InfectionRate::Parametric { .. } => {
+                unreachable!("Parametric is materialized to Empirical before setup")
+            }
+        }
     }
     fn current_infectiousness(&self, person: PersonId) -> Option<f64> {
-        if self.get_property::<_, InfectionStatus>(person) == InfectionStatus::Infectious {
-            Some(self.settings_current_multiplier(person))
-        } else {
-            // None signals that the transmission loop should stop for this person
-            None
-        }
+        // TO DO: Figure out where this comes from.
+        // Is this just the (current) majorizing rate times and a modifier?
+        // Where do modifiers come from?
     }
 }
 
@@ -167,6 +201,7 @@ impl Transmission for Context {
     }
 
     fn susceptibility(&self, person: PersonId) -> f64 {
+        // TO DO: This should be a person property other than "InfectionStatus"?
         if InfectionStatus::Susceptible == self.get_property(person) {
             1.0
         } else {
@@ -224,6 +259,7 @@ impl Infection for Context {
         self.set_property(p, InfectionStatus::Recovered);
         self.get_data_mut(ModelStatsPlugin).record_recovery();
     }
+    // TO DO: Figure out how to fold this into the (majorizing?) rate function
     fn schedule_recovery(&mut self, p: PersonId) -> f64 {
         // For empirical curves, recovery is deterministic at the time integrated
         // infectiousness is exhausted (the max-cumulative reach time). For
@@ -258,45 +294,6 @@ impl Infection for Context {
             }
         });
         recovery_dt
-    }
-    fn effective_rate(&self, person: PersonId) -> &RateFn {
-        // Resolve `InfectionRate` + per-person state into the `RateFn` the
-        // inverse-CDF math dispatches through. Single-rate variants
-        // (`Constant`/`Empirical`) are built lazily into the storage's one-shot
-        // slot on first access; `Library` indexes the per-curve vector built at
-        // setup.
-        match &self.get_params().infection_rate {
-            InfectionRate::Constant { value, .. } => {
-                let value = *value;
-                &self
-                    .get_data(RateStoragePlugin)
-                    .single_or_build(|| (RateFn::Constant(ConstantRate::new(value)), f64::INFINITY))
-                    .0
-            }
-            InfectionRate::Empirical { points, scale } => {
-                let points = points.clone();
-                let scale = *scale;
-                &self
-                    .get_data(RateStoragePlugin)
-                    .single_or_build(|| {
-                        let er = EmpiricalRate::new(points, scale);
-                        let recovery = er.recovery_time();
-                        (RateFn::Empirical(er), recovery)
-                    })
-                    .0
-            }
-            InfectionRate::Library { .. } => {
-                let idx = self
-                    .get_property::<_, AssignedRate>(person)
-                    .0
-                    .expect("AssignedRate is None in Library mode");
-                self.get_data(RateStoragePlugin).library_fn(idx)
-            }
-            // Lowered to `Empirical` at `run`/`setup_only` entry; never seen here.
-            InfectionRate::Parametric { .. } => {
-                unreachable!("Parametric is materialized to Empirical before setup")
-            }
-        }
     }
 
     fn setup(&mut self) {
