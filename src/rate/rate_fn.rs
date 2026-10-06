@@ -1,5 +1,7 @@
 use enum_dispatch::enum_dispatch;
 
+// TO DO: Rename this as InvertibleRateFn
+
 /// Utility functions for calculating the rate of infection over time
 /// See `ScaledRateFn` for how to calculate the inverse cumulative rate for an interval starting
 /// at a time other than 0.

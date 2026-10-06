@@ -47,12 +47,8 @@ define_data_plugin!(RateStoragePlugin, RateStorage, |_context| RateStorage::new(
 /// 2. Thin proposed attempts to get attempts.
 /// 3. Attempts become transmissions based on the potential infectee's susceptibility.
 pub trait Transmission: ixa::ContextBase + ixa::ContextRandomExt {
-    /// Inverse cumulative majorizing transmission attempt rate. Returns the time until
-    /// the expected number of onward transmission attempts from `person` is `e`.
-    fn inv_cum_maj_transm_attempt_rate(&self, person: PersonId, e: f64) -> f64;
-    /// Majorizing transmission attempt rate. It should be consistent with the
-    /// the inverse cumulative rate.
-    fn maj_transm_attempt_rate(&self, person: PersonId) -> f64;
+    /// Majorizing rate for transmission attempts from `person`
+    fn maj_transm_attempt_rate_fn(&self, infector: PersonId) -> impl InfectiousnessRateFn;
     /// Actual attempt rate, bounded at all times by the majorizing attempt rate.
     /// `None` signals that the rate is zero and will continue to be zero,
     /// i.e., that the infection loop for this infector should break.
@@ -68,25 +64,39 @@ pub trait Transmission: ixa::ContextBase + ixa::ContextRandomExt {
     /// This function begins the transmission loop for an infector.
     fn schedule_next_trans_attempt_proposal(&mut self, infector: PersonId) {
         let e = self.sample_distr(TransmissionRng, Exp::new(1.0).unwrap());
-        let delay = self.inv_cum_maj_transm_attempt_rate(infector, e);
-        let t = self.get_current_time() + delay;
-        self.add_plan(t, move |ctx| ctx.handle_transm_attempt_proposal(infector));
+        let maybe_delay = self
+            .maj_transm_attempt_rate_fn(infector)
+            .inverse_cum_rate(e);
+
+        if let Some(delay) = maybe_delay {
+            let t = self.get_current_time() + delay;
+
+            let maj_rate = self.maj_transm_attempt_rate_fn(infector).rate(t);
+
+            self.add_plan(t, move |ctx| {
+                ctx.handle_transm_attempt_proposal(infector, maj_rate)
+            });
+        } // else: we are past the end of the majorizing rate's support; end the loop
     }
 
-    fn handle_transm_attempt_proposal(&mut self, infector: PersonId) {
+    /// Handle an infection attempt proposal, thinning attempt proposals to attempts
+    /// based on the majorizing and current infection attempt rates, then thinning
+    /// attempts to transmissions based on susceptibility.
+    fn handle_transm_attempt_proposal(&mut self, infector: PersonId, maj_rate: f64) {
         // If the current attempt rate is None, break the infection loop
         if let Some(current_rate) = self.transm_attempt_rate(infector) {
-            let maj_rate = self.maj_transm_attempt_rate(infector);
+            assert!(maj_rate > 0.0, "zero majorizing rate; this is impossible");
             assert!(
                 current_rate <= maj_rate + 1e-10,
                 "person {infector:?}: current rate {current_rate} exceeds majorizing rate {maj_rate}"
             );
 
-            // Thin the attempt proposals
+            // Thin the attempt proposals based on majorizing and current attempt rates
             if self.sample_distr(
                 TransmissionRng,
                 Bernoulli::new(current_rate / maj_rate).unwrap(),
             ) {
+                // Thin the attemps to infections based on susceptibility
                 if let Some(infectee) = self.select_infectee(infector) {
                     let p = self.susceptibility(infectee);
                     if self.sample_distr(TransmissionRng, Bernoulli::new(p).unwrap()) {
@@ -101,13 +111,13 @@ pub trait Transmission: ixa::ContextBase + ixa::ContextRandomExt {
 }
 
 pub trait ContactStructure: ixa::ContextBase {
-    fn maj_contact_rate(&self, person: PersonId) -> f64;
+    fn maj_contact_rate(&self, person: PersonId) -> impl InfectiousnessRateFn;
     fn current_contact_rate(&self, person: PersonId) -> Option<f64>;
 }
 
 impl ContactStructure for Context {
-    fn maj_contact_rate(&self, person: PersonId) -> f64 {
-        self.settings_forecast_multiplier(person)
+    fn maj_contact_rate(&self, person: PersonId) -> impl InfectiousnessRateFn {
+        ConstantRate::new(1.0 * self.settings_forecast_multiplier(person))
     }
 
     fn current_contact_rate(&self, person: PersonId) -> Option<f64> {
@@ -116,13 +126,13 @@ impl ContactStructure for Context {
 }
 
 pub trait Infectiousness: ixa::ContextBase {
-    fn maj_infectiousness(&self, person: PersonId) -> f64;
+    fn maj_infectiousness(&self, person: PersonId) -> impl InfectiousnessRateFn;
     fn current_infectiousness(&self, person: PersonId) -> Option<f64>;
 }
 
 impl Infectiousness for Context {
-    fn maj_infectiousness(&self, person: PersonId) -> f64 {
-        self.settings_forecast_multiplier(person)
+    fn maj_infectiousness(&self, person: PersonId) -> impl InfectiousnessRateFn {
+        ConstantRate::new(1.0 * self.settings_forecast_multiplier(person))
     }
     fn current_infectiousness(&self, person: PersonId) -> Option<f64> {
         if self.get_property::<_, InfectionStatus>(person) == InfectionStatus::Infectious {
