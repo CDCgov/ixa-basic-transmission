@@ -12,9 +12,11 @@ use crate::rate::{
 };
 use crate::settings::SettingsExt;
 use crate::stats::ModelStats;
+use ixa::rand::distr::Bernoulli;
 
 define_global_property!(Params, Parameters);
 
+define_rng!(TransmissionRng);
 define_rng!(InfectionRng);
 define_rng!(RecoveryRng);
 define_rng!(RateAssignmentRng);
@@ -30,90 +32,107 @@ define_data_plugin!(ModelStatsPlugin, ModelStats, |context| {
 define_data_plugin!(RateStoragePlugin, RateStorage, |_context| RateStorage::new(
 ));
 
-trait InfectionLoop {
-    fn get_params(&self) -> &Parameters;
-    fn get_stats(&self) -> &ModelStats;
-    #[cfg_attr(not(test), allow(dead_code))]
-    fn infected_people(&self) -> usize;
-    fn forecast_total_infectiousness_multiplier(&self, person: PersonId) -> f64;
-    fn current_total_infectiousness_multiplier(&self, person: PersonId) -> f64;
-    fn evaluate_forecast(&mut self, infector: PersonId, forecasted: f64) -> bool;
-    fn infection_attempt(&mut self, infector: PersonId);
-    fn infect_person(&mut self, p: PersonId, t: Option<f64>);
-    fn recover_person(&mut self, p: PersonId);
-    /// Schedule `p`'s recovery and return the realized infectious-period
-    /// duration (`Exp` sample for `Constant`, the max-cumulative reach time for
-    /// empirical curves) so the caller can place a facemask within that window.
-    fn schedule_recovery(&mut self, p: PersonId) -> f64;
-    fn effective_rate(&self, person: PersonId) -> &RateFn;
-    fn schedule_next_infection_attempt(&mut self, infector: PersonId);
-    fn setup(&mut self);
+/// Infection loop transmission dynamics.
+///
+/// Transmission occurs due to a combination of three factors: (potential)
+/// infector's infectiousness, the contact rate between the infector and
+/// (potential) infectees, and the susceptibility of (potential) infectees.
+///
+/// A transmission "attempt" is when a transmission would occur if the
+/// potential infectee is susceptible. Attempts account for infectiousness
+/// and contact rates.
+///
+/// The loop algorithm is:
+/// 1. Draw proposed attempt times based majorizing transmission attempt rates.
+/// 2. Thin proposed attempts to get attempts.
+/// 3. Attempts become transmissions based on the potential infectee's susceptibility.
+pub trait Transmission: ixa::ContextBase + ixa::ContextRandomExt {
+    /// Majorizing rate for transmission attempts from `person`
+    fn maj_transm_attempt_rate_fn(&self, infector: PersonId) -> &impl InfectiousnessRateFn;
+    /// Actual attempt rate, bounded at all times by the majorizing attempt rate.
+    /// `None` signals that the rate is zero and will continue to be zero,
+    /// i.e., that the infection loop for this infector should break.
+    fn transm_attempt_rate(&self, person: PersonId) -> Option<f64>;
+    /// Given a transmission attempt from `infector`, who is the candidate infectee?
+    /// `None` breaks the loop.
+    // TO DO: `None` is probably a sign of inconsistency in the selection of the attempt rate!
+    fn select_infectee(&self, infector: PersonId) -> Option<PersonId>;
+    /// Probability that a person, subjected to an infection attempt, will be infected.
+    fn susceptibility(&self, person: PersonId) -> f64;
+    /// Do the transmission. This should, at a minimum, trigger the infectee's
+    /// own infection loop,
+    fn transmit(&mut self, infector: PersonId, infectee: PersonId);
+
+    /// Schedule the next attempt proposal.
+    ///
+    /// This function begins the transmission loop for an infector.
+    fn schedule_next_trans_attempt_proposal(&mut self, infector: PersonId) {
+        let e = self.sample_distr(TransmissionRng, Exp::new(1.0).unwrap());
+        let maj_rate_fn = self.maj_transm_attempt_rate_fn(infector);
+        if let Some(delay) = maj_rate_fn.inverse_cum_rate(e) {
+            let t = self.get_current_time() + delay;
+            let maj_rate = maj_rate_fn.rate(t);
+
+            self.add_plan(t, move |ctx| {
+                ctx.handle_transm_attempt_proposal(infector, maj_rate)
+            });
+        } // else: we are past the end of the majorizing rate's support; end the loop
+    }
+
+    /// Handle an infection attempt proposal, thinning attempt proposals to attempts
+    /// based on the majorizing and current infection attempt rates, then thinning
+    /// attempts to transmissions based on susceptibility.
+    fn handle_transm_attempt_proposal(&mut self, infector: PersonId, maj_rate: f64) {
+        // If the current attempt rate is None, break the infection loop
+        if let Some(current_rate) = self.transm_attempt_rate(infector) {
+            assert!(maj_rate > 0.0, "zero majorizing rate; this is impossible");
+            assert!(
+                current_rate <= maj_rate + 1e-10,
+                "person {infector:?}: current rate {current_rate} exceeds majorizing rate {maj_rate}"
+            );
+
+            // Thin the attempt proposals based on majorizing and current attempt rates
+            if self.sample_distr(
+                TransmissionRng,
+                Bernoulli::new(current_rate / maj_rate).unwrap(),
+            ) {
+                // Thin the attemps to infections based on susceptibility
+                if let Some(infectee) = self.select_infectee(infector) {
+                    let p = self.susceptibility(infectee);
+                    if self.sample_distr(TransmissionRng, Bernoulli::new(p).unwrap()) {
+                        self.transmit(infector, infectee);
+                    } // else: infectee non-susceptibility prevented transmission
+                } // else: no person to sample
+            } // else: contact+infectiousness were not sufficient for transmission
+
+            self.schedule_next_trans_attempt_proposal(infector);
+        } // else: one of the contact rate or infectiousness was None; stop the loop for this infector
+    }
 }
 
-impl InfectionLoop for Context {
-    fn get_params(&self) -> &Parameters {
-        self.get_global_property_value(Params).unwrap()
+pub trait ContactStructure: ixa::ContextBase {
+    fn maj_contact_rate(&self, person: PersonId) -> &impl InfectiousnessRateFn;
+    fn current_contact_rate(&self, person: PersonId) -> Option<f64>;
+}
+
+impl ContactStructure for Context {
+    fn maj_contact_rate(&self, person: PersonId) -> &impl InfectiousnessRateFn {
+        let rate_fn = ConstantRate::new(1.0 * self.settings_forecast_multiplier(person));
+        &rate_fn
     }
-    fn get_stats(&self) -> &ModelStats {
-        self.get_data(ModelStatsPlugin)
+
+    fn current_contact_rate(&self, person: PersonId) -> Option<f64> {
+        Some(self.settings_current_multiplier(person))
     }
-    fn infected_people(&self) -> usize {
-        self.query_entity_count(with!(Person, InfectionStatus::Infectious))
-    }
-    fn infect_person(&mut self, p: PersonId, t: Option<f64>) {
-        if self.get_property::<_, InfectionStatus>(p) != InfectionStatus::Susceptible {
-            return;
-        }
-        // Record infection time before the status flip so the
-        // PropertyChangeEvent subscriber can read it on the same person.
-        let now = self.get_current_time();
-        self.set_property(p, InfectionTime(now));
-        self.set_property(p, InfectionStatus::Infectious);
-        if let Some(current_t) = t {
-            self.get_data_mut(ModelStatsPlugin)
-                .record_infection(current_t);
-        }
-    }
-    fn recover_person(&mut self, p: PersonId) {
-        self.set_property(p, InfectionStatus::Recovered);
-        self.get_data_mut(ModelStatsPlugin).record_recovery();
-    }
-    fn schedule_recovery(&mut self, p: PersonId) -> f64 {
-        // For empirical curves, recovery is deterministic at the time integrated
-        // infectiousness is exhausted (the max-cumulative reach time). For
-        // `Constant`, recovery follows `Exp(1/duration)` (the `duration` field
-        // is the mean).
-        let t_inf = self.get_property::<_, InfectionTime>(p).0;
-        let recovery_dt = match self.get_params().infection_rate {
-            // Recovery is the homogeneous-Poisson `Exp(1/duration)` clock; the rate
-            // itself is unbounded in time.
-            InfectionRate::Constant { duration, .. } => {
-                self.sample_distr(RecoveryRng, Exp::new(1.0 / duration).unwrap())
-            }
-            // Deterministic recovery when integrated infectiousness is exhausted —
-            // the earliest τ at which the cumulative reaches its max.
-            InfectionRate::Empirical { ref points, .. } => empirical_support_end(points),
-            InfectionRate::Library { .. } => {
-                let idx = self
-                    .get_property::<_, AssignedRate>(p)
-                    .0
-                    .expect("AssignedRate is None in Library mode");
-                self.get_data(RateStoragePlugin).recovery_time(idx)
-            }
-            // Lowered to `Empirical` at `run`/`setup_only` entry; never seen here.
-            InfectionRate::Parametric { .. } => {
-                unreachable!("Parametric is materialized to Empirical before setup")
-            }
-        };
-        let recovery_time = t_inf + recovery_dt;
-        self.add_plan(recovery_time, move |context| {
-            if context.get_property::<_, InfectionStatus>(p) == InfectionStatus::Infectious {
-                context.recover_person(p);
-            }
-        });
-        recovery_dt
-    }
-    fn effective_rate(&self, person: PersonId) -> &RateFn {
+}
+
+pub trait Infectiousness: ixa::ContextBase {
+    fn maj_infectiousness(&self, person: PersonId) -> &impl InfectiousnessRateFn;
+    fn current_infectiousness(&self, person: PersonId) -> Option<f64>;
+}
+
+impl Infectiousness for Context {
+    fn maj_infectiousness(&self, person: PersonId) -> &impl InfectiousnessRateFn {
         // Resolve `InfectionRate` + per-person state into the `RateFn` the
         // inverse-CDF math dispatches through. Single-rate variants
         // (`Constant`/`Empirical`) are built lazily into the storage's one-shot
@@ -152,100 +171,131 @@ impl InfectionLoop for Context {
             }
         }
     }
+    fn current_infectiousness(&self, person: PersonId) -> Option<f64> {
+        // TO DO: Figure out where this comes from.
+        // Is this just the (current) majorizing rate times and a modifier?
+        // Where do modifiers come from?
+    }
+}
 
-    fn forecast_total_infectiousness_multiplier(&self, person: PersonId) -> f64 {
-        // Upper bound on per-person scaling of the intrinsic rate. The forecast
-        // samples on this upper-bound process and `evaluate_forecast` thins down
-        // to the true marginal rate. With no itinerary restriction in play this
-        // bound is the *exact* constant total rate `Σ p_s · M_s` (so thinning is
-        // a no-op); isolation widens it to `max_s M_s`. 1.0 when settings are
-        // disabled. See `SettingsExt::settings_forecast_multiplier`.
-        self.settings_forecast_multiplier(person)
+impl Transmission for Context {
+    fn inv_cum_maj_transm_attempt_rate(&self, person: PersonId, e: f64) -> f64 {
+        // Λ(t) = constant_rate * time ==> Λ-1(e) = e / constant_rate
+        let rate = self.maj_transm_attempt_rate(person);
+        e / rate
     }
 
-    fn current_total_infectiousness_multiplier(&self, person: PersonId) -> f64 {
-        // True per-person scaling: `Σ p_s · M_s` over the person's settings.
-        // Equals 1.0 when settings are disabled.
-        self.settings_current_multiplier(person)
+    fn maj_transm_attempt_rate(&self, person: PersonId) -> f64 {
+        self.maj_infectiousness(person) * self.maj_contact_rate(person)
     }
 
-    fn infection_attempt(&mut self, infector: PersonId) {
-        if let Some(target) = self.settings_sample_contact(infector) {
-            let now = self.get_current_time();
-            self.infect_person(target, Some(now));
-        }
+    fn transm_attempt_rate(&self, person: PersonId) -> Option<f64> {
+        // None if either of ci or ccr is none
+        let ci = self.current_infectiousness(person)?;
+        let ccr = self.current_contact_rate(person)?;
+        Some(ci * ccr)
     }
 
-    fn evaluate_forecast(&mut self, infector: PersonId, forecasted: f64) -> bool {
-        // Thinning step: the forecast was sampled on the upper-bound rate
-        // (intrinsic × forecast_total_infectiousness_multiplier), so the actual
-        // current rate is ≤ forecasted. Accept the event with probability
-        // current / forecasted; when the two are equal (e.g. settings
-        // disabled, where both multipliers are 1.0) the branch short-
-        // circuits and consumes no randomness.
-        let t_inf = self.get_property::<_, InfectionTime>(infector).0;
-        let elapsed = self.get_current_time() - t_inf;
-        // Intervention modifiers scale *intrinsic* infectiousness λ(τ) — the
-        // per-person rate, not the settings/contact multiplier. Their cached
-        // product (`intrinsic_multiplier`, see `crate::modifiers`) is ≤ 1, so
-        // the forecast upper bound (built from the un-modified λ) stays valid
-        // and this thinning step brings the realized rate down correctly.
-        let intrinsic =
-            self.effective_rate(infector).rate(elapsed) * self.intrinsic_multiplier(infector);
-        let current = intrinsic * self.current_total_infectiousness_multiplier(infector);
+    fn select_infectee(&self, infector: PersonId) -> Option<PersonId> {
+        self.settings_sample_contact(infector)
+    }
 
-        assert!(
-            current <= forecasted + 1e-10,
-            "person {infector:?}: current rate {current} exceeds forecasted upper bound {forecasted}"
-        );
-
-        if current < forecasted {
-            self.sample_bool(InfectionRng, current / forecasted)
+    fn susceptibility(&self, person: PersonId) -> f64 {
+        // TO DO: This should be a person property other than "InfectionStatus"?
+        if InfectionStatus::Susceptible == self.get_property(person) {
+            1.0
         } else {
-            true
+            0.0
         }
     }
 
-    fn schedule_next_infection_attempt(&mut self, infector: PersonId) {
-        // Inverse-CDF sampling on the upper-bound process
-        // λ_fc(τ) = λ(τ) · forecast_total_infectiousness_multiplier.
-        // Draw e ~ Exp(1) and solve Λ_fc(τ_next) − Λ_fc(elapsed) = e,
-        // which rearranges to Λ(τ_next) = Λ(elapsed) + e / fc_mult.
-        // `None` from `inverse_cum_rate` means the curve is exhausted —
-        // no further attempts for this person.
-        let t_inf = self.get_property::<_, InfectionTime>(infector).0;
-        let elapsed = self.get_current_time() - t_inf;
-        let fc_mult = self.forecast_total_infectiousness_multiplier(infector);
+    fn transmit(&mut self, _infector: PersonId, infectee: PersonId) {
+        self.infect_person(infectee, None)
+    }
+}
 
-        // A zero upper bound means there are no contacts this person can
-        // reach (e.g. they're in a size-1 household and the model is in
-        // settings mode). Skip the inverse-CDF — `e / 0 = inf` would
-        // otherwise schedule a plan at t = ∞.
-        if fc_mult <= 0.0 {
+trait Infection {
+    fn get_params(&self) -> &Parameters;
+    fn get_stats(&self) -> &ModelStats;
+    #[cfg_attr(not(test), allow(dead_code))]
+    fn infected_people(&self) -> usize;
+    fn infect_person(&mut self, p: PersonId, t: Option<f64>);
+    fn recover_person(&mut self, p: PersonId);
+    /// Schedule `p`'s recovery and return the realized infectious-period
+    /// duration (`Exp` sample for `Constant`, the max-cumulative reach time for
+    /// empirical curves) so the caller can place a facemask within that window.
+    fn schedule_recovery(&mut self, p: PersonId) -> f64;
+    fn effective_rate(&self, person: PersonId) -> &RateFn;
+    fn setup(&mut self);
+}
+
+impl Infection for Context {
+    fn get_params(&self) -> &Parameters {
+        self.get_global_property_value(Params).unwrap()
+    }
+    fn get_stats(&self) -> &ModelStats {
+        self.get_data(ModelStatsPlugin)
+    }
+    fn infected_people(&self) -> usize {
+        self.query_entity_count(with!(Person, InfectionStatus::Infectious))
+    }
+    fn infect_person(&mut self, p: PersonId, t: Option<f64>) {
+        if self.get_property::<_, InfectionStatus>(p) != InfectionStatus::Susceptible {
             return;
         }
-
-        let e: f64 = self.sample_distr(InfectionRng, Exp::new(1.0).unwrap());
-        let forecast = {
-            let eff = self.effective_rate(infector);
-            eff.inverse_cum_rate(eff.cum_rate(elapsed) + e / fc_mult)
-                .map(|tau| (tau, eff.rate(tau) * fc_mult))
-        };
-        let Some((elapsed_next, forecasted)) = forecast else {
-            return;
-        };
-        let next_time = t_inf + elapsed_next;
-        self.add_plan(next_time, move |context| {
-            // The person is no longer infected, exit the loop
-            if context.get_property::<_, InfectionStatus>(infector) != InfectionStatus::Infectious {
-                return;
+        // Record infection time before the status flip so the
+        // PropertyChangeEvent subscriber can read it on the same person.
+        let now = self.get_current_time();
+        self.set_property(p, InfectionTime(now));
+        self.set_property(p, InfectionStatus::Infectious);
+        if let Some(current_t) = t {
+            self.get_data_mut(ModelStatsPlugin)
+                .record_infection(current_t);
+        }
+        // begin the infection loop for this infector
+        self.schedule_next_trans_attempt_proposal(p);
+    }
+    fn recover_person(&mut self, p: PersonId) {
+        self.set_property(p, InfectionStatus::Recovered);
+        self.get_data_mut(ModelStatsPlugin).record_recovery();
+    }
+    // TO DO: Figure out how to fold this into the (majorizing?) rate function
+    fn schedule_recovery(&mut self, p: PersonId) -> f64 {
+        // For empirical curves, recovery is deterministic at the time integrated
+        // infectiousness is exhausted (the max-cumulative reach time). For
+        // `Constant`, recovery follows `Exp(1/duration)` (the `duration` field
+        // is the mean).
+        let t_inf = self.get_property::<_, InfectionTime>(p).0;
+        let recovery_dt = match self.get_params().infection_rate {
+            // Recovery is the homogeneous-Poisson `Exp(1/duration)` clock; the rate
+            // itself is unbounded in time.
+            InfectionRate::Constant { duration, .. } => {
+                self.sample_distr(RecoveryRng, Exp::new(1.0 / duration).unwrap())
             }
-            if context.evaluate_forecast(infector, forecasted) {
-                context.infection_attempt(infector);
+            // Deterministic recovery when integrated infectiousness is exhausted —
+            // the earliest τ at which the cumulative reaches its max.
+            InfectionRate::Empirical { ref points, .. } => empirical_support_end(points),
+            InfectionRate::Library { .. } => {
+                let idx = self
+                    .get_property::<_, AssignedRate>(p)
+                    .0
+                    .expect("AssignedRate is None in Library mode");
+                self.get_data(RateStoragePlugin).recovery_time(idx)
             }
-            context.schedule_next_infection_attempt(infector);
+            // Lowered to `Empirical` at `run`/`setup_only` entry; never seen here.
+            InfectionRate::Parametric { .. } => {
+                unreachable!("Parametric is materialized to Empirical before setup")
+            }
+        };
+        let recovery_time = t_inf + recovery_dt;
+        self.add_plan(recovery_time, move |context| {
+            if context.get_property::<_, InfectionStatus>(p) == InfectionStatus::Infectious {
+                context.recover_person(p);
+            }
         });
+        recovery_dt
     }
+
     fn setup(&mut self) {
         let &Parameters {
             population,
@@ -271,7 +321,7 @@ impl InfectionLoop for Context {
                 // `modifiers::register_all`; this loop never changes when
                 // one is added (see `crate::modifiers`).
                 context.run_activation_hooks(p, infectious_duration);
-                context.schedule_next_infection_attempt(p);
+                context.schedule_next_trans_attempt_proposal(p);
             },
         );
 
