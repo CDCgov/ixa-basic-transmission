@@ -172,28 +172,28 @@ pub struct EmpiricalRateFn {
     /// `cum[i] = Λ(points[i].0)` for the **unscaled** shape; `cum[0] = 0`.
     cum: Vec<f64>,
     scale: f64,
-    recovery_time: f64,
+    duration: f64,
 }
 
 impl EmpiricalRateFn {
     #[must_use]
     pub fn new(points: Vec<[f64; 2]>, scale: f64) -> Self {
         let cum = build_cum(&points);
-        let recovery_time = support_end_from_cum(&points, &cum);
+        let duration = support_end_from_cum(&points, &cum);
         Self {
             points,
             cum,
             scale,
-            recovery_time,
+            duration,
         }
     }
 
-    /// Recovery time: earliest τ where cumulative infectiousness peaks. See
-    /// [`empirical_support_end`].
+    /// The infectious period: earliest τ where cumulative infectiousness
+    /// peaks. See [`empirical_support_end`].
     #[inline]
     #[must_use]
-    pub fn recovery_time(&self) -> f64 {
-        self.recovery_time
+    pub fn duration(&self) -> f64 {
+        self.duration
     }
 
     /// `Λ(τ)` for the **unscaled** shape. Walks segments to find the one
@@ -408,7 +408,7 @@ mod test {
     #[test]
     fn support_end_positive_to_last_anchor() {
         let r = unit(vec![[0.0, 1.0], [5.0, 1.0]]);
-        assert_eq!(r.recovery_time(), 5.0);
+        assert_eq!(r.duration(), 5.0);
         assert_eq!(empirical_support_end(&[[0.0, 1.0], [5.0, 1.0]]), 5.0);
     }
 

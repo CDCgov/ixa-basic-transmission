@@ -1,10 +1,11 @@
 use std::cell::OnceCell;
 
 use enum_dispatch::enum_dispatch;
+use ixa::data_structures::entity_map::EntityMap;
 use ixa::impl_property;
 
 use super::{ConstantRateFn, EmpiricalRateFn, InvertibleRate};
-use crate::person::Person;
+use crate::person::{Person, PersonId};
 
 /// A resolved concrete rate function. There are only two concrete shapes in
 /// this model, so we dispatch through an enum (static dispatch, inlinable)
@@ -25,8 +26,9 @@ pub enum InvertibleRateFn {
 }
 
 /// Per-person assignment for the `Library` variant: the index into the
-/// storage's `library` vector of rate functions. `None` outside Library mode
-/// (the default), and never read in that case.
+/// storage's `library` vector of rate functions, drawn when the person is
+/// infected. `None` outside Library mode or before infection (the default), and
+/// never read in that case.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct AssignedRate(pub Option<usize>);
 
@@ -34,17 +36,19 @@ impl_property!(AssignedRate, Person, default_const = AssignedRate(None));
 
 /// Storage for resolved per-person infectiousness rate functions.
 ///
-/// - `library` / `recovery_times`: one rate function (and its recovery time)
-///   per curve in a `Library` rate, built eagerly in `model::setup` (each
-///   person is assigned an index into these). Empty for non-Library rates.
-/// - `single`: a lazily-built slot for the single-rate `Constant` / `Empirical`
-///   variants, populated on first hot-path access — so tests that build a
-///   `Context` without `setup()` still resolve a rate function. Mirrors the old
+/// - `library`: one rate function per curve in a `Library` rate, built on the
+///   first infection (each infected person is assigned an index into it).
+///   Empty for non-Library rates.
+/// - `single`: a lazily-built slot for the single-rate `Empirical` variant,
+///   populated on first hot-path access — so tests that build a `Context`
+///   without `setup()` still resolve a rate function. Mirrors the old
 ///   `RateLibraryData::empirical_or_build` `OnceCell`.
+/// - `assigned`: one rate function assigned to each person when infected; used
+///   by `Constant`, whose infectious period is drawn per person.
 pub struct RateStorage {
     library: Vec<InvertibleRateFn>,
-    recovery_times: Vec<f64>,
-    single: OnceCell<(InvertibleRateFn, f64)>,
+    single: OnceCell<InvertibleRateFn>,
+    assigned: EntityMap<Person, InvertibleRateFn>,
 }
 
 impl Default for RateStorage {
@@ -58,15 +62,26 @@ impl RateStorage {
     pub fn new() -> Self {
         Self {
             library: Vec::new(),
-            recovery_times: Vec::new(),
             single: OnceCell::new(),
+            assigned: EntityMap::new(),
         }
     }
 
-    /// Install the per-curve library (`Library` variant only); called once at setup.
-    pub fn set_library(&mut self, rate_fns: Vec<InvertibleRateFn>, recovery_times: Vec<f64>) {
+    /// Store `person`'s own rate function.
+    pub fn set_assigned_fn(&mut self, person: PersonId, rate_fn: InvertibleRateFn) {
+        self.assigned.insert(person, rate_fn);
+    }
+
+    /// Borrow `person`'s assigned rate function, if any.
+    #[inline]
+    #[must_use]
+    pub fn assigned_fn(&self, person: PersonId) -> Option<&InvertibleRateFn> {
+        self.assigned.get(person)
+    }
+
+    /// Install the per-curve library (`Library` variant only); called once.
+    pub fn set_library(&mut self, rate_fns: Vec<InvertibleRateFn>) {
         self.library = rate_fns;
-        self.recovery_times = recovery_times;
     }
 
     #[inline]
@@ -82,38 +97,20 @@ impl RateStorage {
         &self.library[idx]
     }
 
-    /// Recovery time for a Library index (= the curve's max-cum reach time).
+    /// Borrow the single-rate function, building it on first access via `build`.
     #[inline]
-    #[must_use]
-    pub fn recovery_time(&self, idx: usize) -> f64 {
-        self.recovery_times[idx]
-    }
-
-    /// Borrow the single-rate function, building it (and its recovery time) on
-    /// first access via `build`.
-    #[inline]
-    pub fn single_or_build(
-        &self,
-        build: impl FnOnce() -> (InvertibleRateFn, f64),
-    ) -> &(InvertibleRateFn, f64) {
+    pub fn single_or_build(&self, build: impl FnOnce() -> InvertibleRateFn) -> &InvertibleRateFn {
         self.single.get_or_init(build)
     }
 }
 
-/// Build one `EmpiricalRate` per curve in a `Library` rate, plus the matching
-/// recovery times. All curves share `scale` (per-curve heterogeneity is
-/// preserved by the area normalization, not the scale).
+/// Build one `EmpiricalRateFn` per curve in a `Library` rate. All curves share
+/// `scale` (per-curve heterogeneity is preserved by the area normalization, not
+/// the scale).
 #[must_use]
-pub fn build_empirical_library(
-    rates: &[Vec<[f64; 2]>],
-    scale: f64,
-) -> (Vec<InvertibleRateFn>, Vec<f64>) {
-    let mut rate_fns: Vec<InvertibleRateFn> = Vec::with_capacity(rates.len());
-    let mut recovery_times = Vec::with_capacity(rates.len());
-    for curve in rates {
-        let er = EmpiricalRateFn::new(curve.clone(), scale);
-        recovery_times.push(er.recovery_time());
-        rate_fns.push(InvertibleRateFn::Empirical(er));
-    }
-    (rate_fns, recovery_times)
+pub fn build_empirical_library(rates: &[Vec<[f64; 2]>], scale: f64) -> Vec<InvertibleRateFn> {
+    rates
+        .iter()
+        .map(|curve| InvertibleRateFn::Empirical(EmpiricalRateFn::new(curve.clone(), scale)))
+        .collect()
 }

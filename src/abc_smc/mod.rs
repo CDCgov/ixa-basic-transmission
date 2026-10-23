@@ -28,7 +28,7 @@ mod tests {
         Parameters {
             infection_rate: InfectionRate::Constant {
                 value: 0.5, // r0 = value * duration = 0.5 * 3 = 1.5
-                duration: 3.0,
+                exp_mean_duration: 3.0,
             },
             population: 2000,
             initial_infections: 10,
@@ -227,7 +227,7 @@ mod tests {
         let mut p = Parameters {
             infection_rate: InfectionRate::Constant {
                 value: 0.0,
-                duration: 4.0,
+                exp_mean_duration: 4.0,
             },
             ..truth_params()
         };
@@ -238,9 +238,12 @@ mod tests {
         };
         apply(&cp, &mut p);
         match p.infection_rate {
-            InfectionRate::Constant { value, duration } => {
+            InfectionRate::Constant {
+                value,
+                exp_mean_duration,
+            } => {
                 assert!((value - 0.5).abs() < 1e-12);
-                assert!((duration - 4.0).abs() < 1e-12);
+                assert!((exp_mean_duration - 4.0).abs() < 1e-12);
             }
             _ => panic!("expected Constant"),
         }
