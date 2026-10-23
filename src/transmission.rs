@@ -38,6 +38,10 @@ pub trait ContactStructure<E: Entity>: ixa::ContextBase {
 /// 1. Draw attempt proposal times based on majorizing transmission attempt rates.
 /// 2. Thin proposed attempts to attempts.
 /// 3. Attempts become transmissions based on the potential infectee's susceptibility.
+///
+/// The loop ends when the majorizing rate's integrated infectiousness is
+/// exhausted (its inverse cumulative returns `None`, so no further proposal is
+/// scheduled).
 pub trait Transmission<E>: Infectiousness<E> + ContactStructure<E> + ixa::ContextRandomExt
 where
     E: Entity,
@@ -57,15 +61,15 @@ where
 
     /// Transmission attempt rate, bounded at all times by the majorizing attempt
     /// rate: current infectiousness times current contact rate. `None` signals
-    /// that the rate is zero and will continue to be zero, i.e., that the
-    /// infection loop for this infector should break.
+    /// that the rate is zero and will continue to be zero, ending the loop at the
+    /// next proposal (the already-scheduled one fires and does nothing).
     fn transmission_attempt_rate(&self, person: EntityId<E>) -> Option<f64> {
         Some(self.infectiousness_rate(person)? * self.contact_rate(person)?)
     }
 
     /// Given a transmission attempt from `infector`, who is the candidate infectee?
-    /// `None` breaks the loop.
-    // TO DO: `None` is probably a sign of inconsistency in the selection of the attempt rate!
+    /// `None` means nobody could be contacted this time; the attempt is dropped
+    /// and the loop continues.
     fn select_infectee(&self, infector: EntityId<E>) -> Option<EntityId<E>>;
 
     /// Probability that a person, subjected to an infection attempt, will be infected.
@@ -107,7 +111,8 @@ where
     where
         Context: Transmission<E>,
     {
-        // If the attempt rate is None, break the infection loop
+        // A `None` attempt rate means infectiousness has ended for good: do not
+        // reschedule, so this is the infector's last proposal.
         if let Some(rate) = self.transmission_attempt_rate(infector) {
             // The scheduler evaluated the bound at `delay + (now - t_inf)` and the
             // handler evaluates the rate at `(now + delay) - t_inf`: the same

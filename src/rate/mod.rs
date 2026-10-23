@@ -5,7 +5,7 @@
 //! entry it is resolved into [`InvertibleRateFn`] values (a static-dispatch enum that
 //! implements [`InvertibleRate`], held in [`storage::RateStorage`]) that
 //! the transmission loop dispatches through. Concrete rate functions live in
-//! the submodules: [`ConstantRate`], [`EmpiricalRate`], and the [`parametric`]
+//! the submodules: [`ConstantRateFn`], [`EmpiricalRateFn`], and the [`parametric`]
 //! lowering.
 
 use serde::{Deserialize, Serialize};

@@ -1,7 +1,7 @@
 use enum_dispatch::enum_dispatch;
 
 /// Utility functions for calculating the rate of infection over time
-/// See `ScaledRateFn` for how to calculate the inverse cumulative rate for an interval starting
+/// See `TransformedInvertibleRateFn` for the inverse cumulative rate of an interval starting
 /// at a time other than 0.
 ///
 /// `#[enum_dispatch]` lets the `InvertibleRateFn` enum (see `storage`) implement this trait by
