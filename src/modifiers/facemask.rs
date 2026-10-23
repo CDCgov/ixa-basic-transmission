@@ -93,7 +93,10 @@ impl FacemaskExt for Context {
         if !self.sample_bool(FacemaskRng, facemask.coverage) {
             return;
         }
-        let t_inf = self.get_property::<_, InfectionTime>(person).0;
+        let t_inf = self
+            .get_property::<_, InfectionTime>(person)
+            .0
+            .expect("infectious person has an infection time");
         let u: f64 = self.sample_range(FacemaskRng, 0.0..1.0);
         let don_time = t_inf + u * infectious_duration;
         let factor = 1.0 - facemask.effectiveness;
@@ -172,7 +175,7 @@ mod tests {
         let mut people = Vec::with_capacity(n);
         for _ in 0..n {
             let p = ctx.add_entity(Person).unwrap();
-            ctx.set_property(p, InfectionTime(0.0));
+            ctx.set_property(p, InfectionTime(Some(0.0)));
             ctx.set_property(p, InfectionStatus::Infectious);
             ctx.facemask_schedule(p, fm, duration);
             people.push(p);

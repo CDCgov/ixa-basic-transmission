@@ -22,7 +22,8 @@ pub trait Transmission<E>: ixa::ContextBase + ixa::ContextRandomExt
 where
     E: Entity,
 {
-    /// Majorizing rate for transmission attempts from `person`
+    /// Majorizing rate for transmission attempts from `infector`, indexed by
+    /// time from now (`t = 0` is the current simulation time).
     fn majorizing_transmission_attempt_rate_fn(&self, infector: EntityId<E>)
         -> impl InvertibleRate;
 
@@ -50,19 +51,18 @@ where
     where
         Context: Transmission<E>,
     {
-        // Determine if & when the next attempt proposal will occur
+        // Determine if & when the next attempt proposal will occur. The majorizing
+        // rate function is indexed by time from now, so inverting an Exp(1) draw
+        // gives the delay to the proposal. If `e` is beyond the support of the
+        // inverse cumulative there is no next event and the loop ends.
         let e = self.sample_distr(TransmissionRng, Exp::new(1.0).unwrap());
-        let t_majorizing_rate = {
-            // The rate functions work on clock time, so we simply draw the next time `t`
-            // If `e` is beyond the support of the inverse cumulative, then there is no
-            // next event. Return `None` here and break the infection loop.
-            // TO DO: refactor so that cum_rate is from some time, rather than time zero
+        let proposal = {
             let f = self.majorizing_transmission_attempt_rate_fn(infector);
-            let e_now = f.cum_rate(self.get_current_time());
-            f.inverse_cum_rate(e + e_now).map(|t| (t, f.rate(t)))
+            f.inverse_cum_rate(e).map(|delay| (delay, f.rate(delay)))
         };
 
-        if let Some((t, majorizing_rate)) = t_majorizing_rate {
+        if let Some((delay, majorizing_rate)) = proposal {
+            let t = self.get_current_time() + delay;
             self.add_plan(t, move |ctx| {
                 ctx.handle_transmission_attempt_proposal(infector, majorizing_rate);
             });
@@ -78,8 +78,11 @@ where
     {
         // If the attempt rate is None, break the infection loop
         if let Some(rate) = self.transmission_attempt_rate(infector) {
+            // The scheduler evaluated the bound at `delay + (now - t_inf)` and the
+            // handler evaluates the rate at `(now + delay) - t_inf`: the same
+            // instant computed two ways, so allow floating-point drift.
             assert!(
-                rate <= majorizing_rate,
+                rate <= majorizing_rate + 1e-10,
                 "person {infector:?}: attempt rate {rate} exceeds majorizing attempt proposal rate {majorizing_rate}"
             );
 

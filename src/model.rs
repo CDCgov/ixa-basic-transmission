@@ -37,8 +37,15 @@ pub trait ContactStructure: ixa::ContextBase {
     fn contact_rate(&self, person: PersonId) -> Option<f64>;
 }
 pub trait Infectiousness: ixa::ContextBase {
+    /// Majorizing infectiousness of `person`, indexed by time from now.
     fn majorizing_infectiousness_rate_fn(&self, person: PersonId) -> impl InvertibleRate;
     fn infectiousness_rate(&self, person: PersonId) -> Option<f64>;
+}
+
+/// Time since `person` was infected; `None` if they never were.
+fn time_since_infection(context: &Context, person: PersonId) -> Option<f64> {
+    let InfectionTime(t_inf) = context.get_property(person);
+    Some(context.get_current_time() - t_inf?)
 }
 
 // TO DO: refactor this, so that we store parameters and resolve them for individuals
@@ -85,38 +92,31 @@ impl ContactStructure for Context {
 
 impl Infectiousness for Context {
     fn majorizing_infectiousness_rate_fn(&self, person: PersonId) -> impl InvertibleRate {
-        let base_rate_fn = base_infectiousness_rate_fn(self, person);
-        // shift that rate function, so that it is with respect to clock time
-        // TO DO: move to None, rather than NAN
-        let InfectionTime(infection_time) = self.get_property(person);
-        TransformedInvertibleRateFn {
-            base: base_rate_fn,
-            scale: 1.0,
-            // TO DO: refactor from "elapsed" to "t0" or something easier
-            elapsed: -infection_time,
-        }
+        // The stored rate is in time since infection; shift it to time from now.
+        TransformedInvertibleRateFn::new(
+            base_infectiousness_rate_fn(self, person),
+            1.0,
+            time_since_infection(self, person).expect("person was never infected"),
+        )
     }
 
-    // target rates is majorizing rate times the infectiousness modification
+    // target rate is the stored rate now, times the infectiousness modification
     fn infectiousness_rate(&self, person: PersonId) -> Option<f64> {
-        let t = self.get_current_time();
-        // TO DO: I'm mixing up two uses of the word "base" here
-        let base_rate = self.majorizing_infectiousness_rate_fn(person).rate(t);
+        let rate =
+            base_infectiousness_rate_fn(self, person).rate(time_since_infection(self, person)?);
         // TO DO: how to ensure that infectiousness modifier is in [0, 1]?
         let scale = self.intrinsic_multiplier(person);
-        Some(scale * base_rate)
+        Some(scale * rate)
     }
 }
 
 impl Transmission<Person> for Context {
     fn majorizing_transmission_attempt_rate_fn(&self, infector: PersonId) -> impl InvertibleRate {
-        let InfectionTime(infection_time) = self.get_property(infector);
-
-        TransformedInvertibleRateFn {
-            base: base_infectiousness_rate_fn(self, infector),
-            scale: self.majorizing_contact_rate(infector),
-            elapsed: -infection_time,
-        }
+        TransformedInvertibleRateFn::new(
+            base_infectiousness_rate_fn(self, infector),
+            self.majorizing_contact_rate(infector),
+            time_since_infection(self, infector).expect("infector was never infected"),
+        )
     }
 
     fn transmission_attempt_rate(&self, person: PersonId) -> Option<f64> {
@@ -178,7 +178,7 @@ impl Infection for Context {
         // Record infection time before the status flip so the
         // PropertyChangeEvent subscriber can read it on the same person.
         let now = self.get_current_time();
-        self.set_property(p, InfectionTime(now));
+        self.set_property(p, InfectionTime(Some(now)));
         self.assign_rate(p);
         // setting the person to "Infectious" triggers the transmission loop via a subscription
         self.set_property(p, InfectionStatus::Infectious);
@@ -229,7 +229,10 @@ impl Infection for Context {
         // Recovery is when the person's rate function exhausts its integrated
         // infectiousness: the drawn period for a constant rate, the earliest τ
         // at which the cumulative peaks for an empirical curve.
-        let t_inf = self.get_property::<_, InfectionTime>(p).0;
+        let t_inf = self
+            .get_property::<_, InfectionTime>(p)
+            .0
+            .expect("person was never infected");
         let recovery_dt = match base_infectiousness_rate_fn(self, p) {
             InvertibleRateFn::Constant(c) => c.duration(),
             InvertibleRateFn::Empirical(e) => e.duration(),

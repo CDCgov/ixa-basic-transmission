@@ -111,7 +111,10 @@ pub fn register(ctx: &mut Context, config: Option<Isolation>, settings: &[Settin
         if !c.sample_bool(IsolationRng, coverage) {
             return;
         }
-        let t_inf = c.get_property::<_, InfectionTime>(person).0;
+        let t_inf = c
+            .get_property::<_, InfectionTime>(person)
+            .0
+            .expect("infectious person has an infection time");
         let start = t_inf + delay;
         c.add_plan(start, move |context| {
             // Only isolate the still-infectious; recovered-first → no-op.
