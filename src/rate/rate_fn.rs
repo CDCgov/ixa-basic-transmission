@@ -56,7 +56,12 @@ impl<T: ?Sized + InvertibleRate> InvertibleRate for TransformedInvertibleRateFn<
         (self.base.cum_rate(t + self.elapsed) - self.base.cum_rate(self.elapsed)) * self.scale
     }
 
+    /// A non-positive `scale` means no events are ever reached (mirrors
+    /// `ConstantRateFn` at zero), rather than `events / 0 = inf`.
     fn inverse_cum_rate(&self, events: f64) -> Option<f64> {
+        if self.scale <= 0.0 {
+            return (events <= 0.0).then_some(0.0);
+        }
         let elapsed_cum_rate = self.base.cum_rate(self.elapsed);
         Some(
             self.base
@@ -67,6 +72,9 @@ impl<T: ?Sized + InvertibleRate> InvertibleRate for TransformedInvertibleRateFn<
 
     /// Propagates `f64::INFINITY` from an unbounded base.
     fn max_cum_rate(&self) -> f64 {
+        if self.scale <= 0.0 {
+            return 0.0;
+        }
         (self.base.max_cum_rate() - self.base.cum_rate(self.elapsed)) * self.scale
     }
 }
@@ -76,7 +84,7 @@ mod test {
     use ixa::assert_almost_eq;
 
     use super::{InvertibleRate, TransformedInvertibleRateFn};
-    use crate::rate::EmpiricalRateFn;
+    use crate::rate::{ConstantRateFn, EmpiricalRateFn};
 
     // A flat empirical curve of height 2.0 on [0, 5] (rate 0 outside that range) — a
     // finite-support stand-in for a "constant 2.0 for 5 days" profile. Unlike the
@@ -148,5 +156,22 @@ mod test {
             elapsed: 3.0,
         };
         assert_almost_eq!(scaled_rate_fn.max_cum_rate(), 8.0, 0.0);
+    }
+
+    #[test]
+    fn zero_scale_transform_is_unreachable() {
+        // A zero contact bound (a size-1 household) must not invert to t = inf.
+        let rate_fn = ConstantRateFn::new(1.0);
+        let zero = TransformedInvertibleRateFn::new(&rate_fn, 0.0, 0.0);
+        assert_eq!(zero.inverse_cum_rate(1.0), None);
+        assert_eq!(zero.inverse_cum_rate(0.0), Some(0.0));
+        assert_eq!(zero.max_cum_rate(), 0.0);
+        assert_eq!(zero.rate(3.0), 0.0);
+        assert_eq!(zero.cum_rate(3.0), 0.0);
+
+        let curve = flat_capped();
+        let zero = TransformedInvertibleRateFn::new(&curve, 0.0, 1.0);
+        assert_eq!(zero.inverse_cum_rate(0.5), None);
+        assert_eq!(zero.max_cum_rate(), 0.0);
     }
 }

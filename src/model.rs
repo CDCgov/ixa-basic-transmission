@@ -1110,6 +1110,34 @@ mod tests {
     }
 
     #[test]
+    fn size_one_household_schedules_no_attempt() {
+        // Alone in a size-1 household the majorizing contact rate is 0; the loop
+        // must end rather than invert `e / 0 = inf` into a plan at t = inf.
+        let household = crate::settings::SettingType {
+            name: "household".into(),
+            alpha: 1.0,
+            sizes: vec![(1, 1.0)],
+            proportion: 1.0,
+        };
+        let mut ctx = Context::new();
+        ctx.set_global_property_value(
+            Params,
+            Parameters {
+                population: 1,
+                settings: vec![household.clone()],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        ctx.init_random(1);
+        let infector = ctx.add_entity(Person).unwrap();
+        ctx.settings_setup(&[household]);
+        ctx.infect_person(infector, None);
+        ctx.schedule_next_transmission_attempt_proposal(infector);
+        ctx.execute();
+    }
+
+    #[test]
     fn facemask_coverage_zero_matches_no_facemask() {
         // coverage=0 schedules no masks. The facemask RNG stream is
         // independent of the transmission streams, so a coverage-0 run must

@@ -44,7 +44,7 @@ impl InvertibleRate for ConstantRateFn {
         if events == 0.0 {
             return Some(0.0);
         }
-        if !self.value.is_finite() || self.value <= 0.0 {
+        if !events.is_finite() || !self.value.is_finite() || self.value <= 0.0 {
             None
         } else {
             Some(events / self.value)
@@ -98,6 +98,14 @@ mod test {
         assert_eq!(r.inverse_cum_rate(1.0), None);
         // Zero events is always reachable at t=0.
         assert_eq!(r.inverse_cum_rate(0.0), Some(0.0));
+    }
+
+    #[test]
+    fn inverse_cum_rate_infinite_events_is_unattainable() {
+        // Never turn an infinite cumulative into an infinite plan time.
+        let r = ConstantRateFn::new(0.5);
+        assert_eq!(r.inverse_cum_rate(f64::INFINITY), None);
+        assert_eq!(r.inverse_cum_rate(f64::NAN), None);
     }
 
     #[test]
