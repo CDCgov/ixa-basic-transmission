@@ -58,7 +58,8 @@ use ixa_basic_transmission::rate::{
 use ixa_basic_transmission::settings::SettingType;
 
 const POPULATION: usize = 2_000;
-const INITIAL_INFECTIONS: usize = 5;
+// 20 seeds so the R0 = 1.5 epidemic does not die out.
+const INITIAL_INFECTIONS: usize = 20;
 const MAX_TIME: f64 = 50.0;
 const SEED: u64 = 7;
 
