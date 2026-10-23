@@ -1,6 +1,5 @@
 use crate::rate::InvertibleRate;
 use ixa::prelude::*;
-use ixa::rand::distr::Bernoulli;
 use rand_distr::Exp;
 
 define_rng!(TransmissionRng);
@@ -80,23 +79,23 @@ where
         // If the attempt rate is None, break the infection loop
         if let Some(rate) = self.transmission_attempt_rate(infector) {
             assert!(
-                majorizing_rate > 0.0,
-                "zero majorizing rate; this is impossible"
-            );
-            assert!(
-                rate <= majorizing_rate + 1e-10,
+                rate <= majorizing_rate,
                 "person {infector:?}: attempt rate {rate} exceeds majorizing attempt proposal rate {majorizing_rate}"
             );
 
-            // Thin the attempt proposals based on majorizing and target rates
-            if self.sample_distr(
-                TransmissionRng,
-                Bernoulli::new(rate / majorizing_rate).unwrap(),
-            ) {
-                // Thin the attemps to infections based on susceptibility
+            // Thin the attempt proposals based on majorizing and target rates. A
+            // tight bound (the common case) accepts without drawing; a zero bound
+            // (a proposal exactly at the end of the support) can never attempt.
+            let attempt = majorizing_rate > 0.0
+                && (rate >= majorizing_rate
+                    || self.sample_bool(TransmissionRng, rate / majorizing_rate));
+            if attempt {
+                // Thin the attempts to infections based on susceptibility, drawing
+                // only when the outcome is uncertain.
                 if let Some(infectee) = self.select_infectee(infector) {
                     let p = self.susceptibility(infectee);
-                    if self.sample_distr(TransmissionRng, Bernoulli::new(p).unwrap()) {
+                    let infected = p >= 1.0 || (p > 0.0 && self.sample_bool(TransmissionRng, p));
+                    if infected {
                         self.transmit(infector, infectee);
                     } // else: infectee non-susceptibility prevented transmission
                 } // else: no person to sample
