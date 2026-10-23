@@ -8,7 +8,7 @@ use crate::settings::SettingType;
 #[serde(rename_all = "camelCase")]
 pub struct Parameters {
     // Per-person infectiousness profile. The `Constant` variant bundles
-    // its own `duration` (mean of the `Exp` recovery); the `Empirical`
+    // its own `exp_mean_duration` (`duration` on the wire); the `Empirical`
     // variant derives the period from its curve's support.
     pub infection_rate: InfectionRate,
     pub population: usize,
@@ -32,7 +32,7 @@ impl Default for Parameters {
         Self {
             infection_rate: InfectionRate::Constant {
                 value: 0.5,
-                duration: 3.0,
+                exp_mean_duration: 3.0,
             },
             population: 10000,
             initial_infections: 5,

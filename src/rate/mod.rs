@@ -2,10 +2,10 @@
 //!
 //! The [`InfectionRate`] enum is the **config / wire format** (serde-tagged,
 //! consumed by the wasm args, calibration, presets, and the frontend). At model
-//! entry it is resolved into [`RateFn`] values (a static-dispatch enum that
-//! implements [`InfectiousnessRateFn`], held in [`storage::RateStorage`]) that
+//! entry it is resolved into [`InvertibleRateFn`] values (a static-dispatch enum that
+//! implements [`InvertibleRate`], held in [`storage::RateStorage`]) that
 //! the transmission loop dispatches through. Concrete rate functions live in
-//! the submodules: [`ConstantRate`], [`EmpiricalRate`], and the [`parametric`]
+//! the submodules: [`ConstantRateFn`], [`EmpiricalRateFn`], and the [`parametric`]
 //! lowering.
 
 use serde::{Deserialize, Serialize};
@@ -17,15 +17,15 @@ pub mod parametric;
 pub mod rate_fn;
 pub mod storage;
 
-pub use constant_rate::ConstantRate;
+pub use constant_rate::ConstantRateFn;
 pub use empirical_rate::{
     empirical_cum_rate, empirical_curve_duration, empirical_inverse_cum_rate,
-    empirical_support_end, EmpiricalRate,
+    empirical_support_end, EmpiricalRateFn,
 };
 pub use normalize::normalize_to_r0;
 pub use parametric::{materialize_parametric, ParametricDist, PARAMETRIC_GRID};
-pub use rate_fn::{InfectiousnessRateFn, ScaledRateFn};
-pub use storage::{build_empirical_library, AssignedRate, RateFn, RateStorage};
+pub use rate_fn::{InvertibleRate, ScaledRateFn, TransformedInvertibleRateFn};
+pub use storage::{build_empirical_library, AssignedRate, InvertibleRateFn, RateStorage};
 
 /// Per-person infectiousness rate, indexed by time since the person became
 /// infectious (τ). Each variant carries its own duration since the two
@@ -34,10 +34,12 @@ pub use storage::{build_empirical_library, AssignedRate, RateFn, RateStorage};
 /// curve (when its integrated infectiousness is exhausted).
 ///
 /// This enum is the configuration format only; the running model resolves it
-/// into [`RateFn`] values via [`storage`].
+/// into [`InvertibleRateFn`] values via [`storage`].
 ///
-/// - `Constant { value, duration }`: fixed rate, recovery is
-///   `Exp(1/duration)`. `value` is an absolute hazard rate.
+/// - `Constant { value, duration }`: fixed rate over an exponential
+///   infectious period with mean `duration` (`exp_mean_duration` in Rust),
+///   drawn per person at infection and stored as that person's own truncated
+///   [`ConstantRateFn`]. `value` is an absolute hazard rate.
 /// - `Empirical { points, scale }`: piecewise-linear infectiousness curve
 ///   in τ-space. Rate is 0 outside the anchor range. **The point values are
 ///   relative hazards** — `scale` converts them to absolute rates by
@@ -58,7 +60,11 @@ pub use storage::{build_empirical_library, AssignedRate, RateFn, RateStorage};
 pub enum InfectionRate {
     Constant {
         value: f64,
-        duration: f64,
+        /// Mean of the exponential infectious period drawn per person at
+        /// infection.
+        // TODO: accept other distributions (fixed, gamma, ...) for the period.
+        #[serde(rename = "duration")]
+        exp_mean_duration: f64,
     },
     Empirical {
         points: Vec<[f64; 2]>,
@@ -131,15 +137,18 @@ fn validate_empirical_points(points: &[[f64; 2]]) -> Result<(), String> {
 impl InfectionRate {
     pub fn validate(&self) -> Result<(), String> {
         match self {
-            InfectionRate::Constant { value, duration } => {
+            InfectionRate::Constant {
+                value,
+                exp_mean_duration,
+            } => {
                 if !value.is_finite() || *value < 0.0 {
                     return Err(format!(
                         "infection_rate value must be a finite non-negative number, got {value}"
                     ));
                 }
-                if !duration.is_finite() || *duration <= 0.0 {
+                if !exp_mean_duration.is_finite() || *exp_mean_duration <= 0.0 {
                     return Err(format!(
-                        "infection_rate duration must be a finite positive number, got {duration}"
+                        "infection_rate duration must be a finite positive number, got {exp_mean_duration}"
                     ));
                 }
             }
@@ -176,7 +185,7 @@ mod tests {
     fn constant_rejects_negative_value() {
         let r = InfectionRate::Constant {
             value: -1.0,
-            duration: 3.0,
+            exp_mean_duration: 3.0,
         };
         assert!(r.validate().is_err());
     }
@@ -185,7 +194,7 @@ mod tests {
     fn constant_rejects_nan_value() {
         let r = InfectionRate::Constant {
             value: f64::NAN,
-            duration: 3.0,
+            exp_mean_duration: 3.0,
         };
         assert!(r.validate().is_err());
     }
@@ -194,7 +203,7 @@ mod tests {
     fn constant_accepts_zero_value() {
         let r = InfectionRate::Constant {
             value: 0.0,
-            duration: 3.0,
+            exp_mean_duration: 3.0,
         };
         r.validate().unwrap();
     }
@@ -203,7 +212,7 @@ mod tests {
     fn constant_rejects_zero_duration() {
         let r = InfectionRate::Constant {
             value: 0.5,
-            duration: 0.0,
+            exp_mean_duration: 0.0,
         };
         assert!(r.validate().is_err());
     }
@@ -212,7 +221,7 @@ mod tests {
     fn constant_rejects_infinite_duration() {
         let r = InfectionRate::Constant {
             value: 0.5,
-            duration: f64::INFINITY,
+            exp_mean_duration: f64::INFINITY,
         };
         assert!(r.validate().is_err());
     }
@@ -299,7 +308,7 @@ mod tests {
     fn constant_serde_roundtrip_json() {
         let r = InfectionRate::Constant {
             value: 0.42,
-            duration: 3.0,
+            exp_mean_duration: 3.0,
         };
         let json = serde_json::to_string(&r).unwrap();
         assert_eq!(

@@ -53,13 +53,13 @@ use ixa_basic_transmission::modifiers::isolation::Isolation;
 use ixa_basic_transmission::modifiers::Modifiers;
 use ixa_basic_transmission::parameters::Parameters;
 use ixa_basic_transmission::rate::{
-    empirical_cum_rate, empirical_inverse_cum_rate, EmpiricalRate, InfectionRate,
-    InfectiousnessRateFn,
+    empirical_cum_rate, empirical_inverse_cum_rate, EmpiricalRateFn, InfectionRate, InvertibleRate,
 };
 use ixa_basic_transmission::settings::SettingType;
 
 const POPULATION: usize = 2_000;
-const INITIAL_INFECTIONS: usize = 5;
+// 20 seeds so the R0 = 1.5 epidemic does not die out.
+const INITIAL_INFECTIONS: usize = 20;
 const MAX_TIME: f64 = 50.0;
 const SEED: u64 = 7;
 
@@ -80,7 +80,7 @@ fn base_params(rate: InfectionRate) -> Parameters {
 fn constant_rate() -> InfectionRate {
     InfectionRate::Constant {
         value: 0.5,
-        duration: 3.0,
+        exp_mean_duration: 3.0,
     }
 }
 
@@ -164,7 +164,7 @@ fn bench_end_to_end(c: &mut Criterion) {
     g.bench_function(BenchmarkId::from_parameter("constant"), |b| {
         let p = base_params(InfectionRate::Constant {
             value: 0.5,
-            duration: 3.0,
+            exp_mean_duration: 3.0,
         });
         b.iter(|| model::run(p.clone()));
     });
@@ -211,7 +211,7 @@ fn bench_setup_only(c: &mut Criterion) {
     g.bench_function(BenchmarkId::from_parameter("constant"), |b| {
         let p = base_params(InfectionRate::Constant {
             value: 0.5,
-            duration: 3.0,
+            exp_mean_duration: 3.0,
         });
         b.iter(|| model::setup_only(p.clone()));
     });
@@ -254,11 +254,11 @@ fn bench_curve_eval(c: &mut Criterion) {
         .clone();
     let short_points = short_curve();
     // Pre-build the EmpiricalRates (with precomputed cum) once — same shape as
-    // the model's hot path, which holds `&dyn InfectiousnessRateFn` borrowed
+    // the model's hot path, which holds `&dyn InvertibleRate` borrowed
     // from a data plugin populated at setup. Scale 1.0 so the cum/inverse math
     // matches the slice-based reference path below bit-for-bit.
-    let short = EmpiricalRate::new(short_points.clone(), 1.0);
-    let long_curve = EmpiricalRate::new(long_points.clone(), 1.0);
+    let short = EmpiricalRateFn::new(short_points.clone(), 1.0);
+    let long_curve = EmpiricalRateFn::new(long_points.clone(), 1.0);
     let long_len = long_points.len();
 
     let mut g = c.benchmark_group("curve_eval");

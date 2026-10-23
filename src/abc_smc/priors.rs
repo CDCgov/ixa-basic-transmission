@@ -4,7 +4,7 @@
 //     one from scratch, so the user-selected `infection_rate` shape +
 //     `population` + `max_time` + `settings` carry through.
 //   - R0 mapping onto `InfectionRate`:
-//       * Constant  → set `value = r0 / duration`
+//       * Constant  → set `value = r0 / exp_mean_duration`
 //       * Empirical → set `scale = r0`
 //       * Library   → set `scale = r0`
 //     `model::run` then calls `normalize_to_r0`, so r0 reads as the
@@ -61,9 +61,11 @@ pub fn apply(params: &CalibratedParams, base: &mut Parameters) {
     base.initial_infections = params.initial_infections as usize;
     base.seed = params.seed;
     base.infection_rate = match &base.infection_rate {
-        InfectionRate::Constant { duration, .. } => InfectionRate::Constant {
-            value: params.r0 / *duration,
-            duration: *duration,
+        InfectionRate::Constant {
+            exp_mean_duration, ..
+        } => InfectionRate::Constant {
+            value: params.r0 / *exp_mean_duration,
+            exp_mean_duration: *exp_mean_duration,
         },
         InfectionRate::Empirical { points, .. } => InfectionRate::Empirical {
             points: points.clone(),

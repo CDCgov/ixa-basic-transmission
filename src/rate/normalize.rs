@@ -58,7 +58,7 @@ pub fn normalize_to_r0(rate: &mut InfectionRate) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::rate::{EmpiricalRate, InfectiousnessRateFn};
+    use crate::rate::{EmpiricalRateFn, InvertibleRate};
 
     /// Trapezoidal area for a single curve (test-only sanity helper —
     /// mirrors what `normalize_to_r0` measures, kept separate so the
@@ -163,7 +163,7 @@ mod tests {
         // rescale. The struct must be byte-identical after normalize.
         let mut r = InfectionRate::Constant {
             value: 0.5,
-            duration: 6.0,
+            exp_mean_duration: 6.0,
         };
         let before = r.clone();
         normalize_to_r0(&mut r);
@@ -284,7 +284,7 @@ mod tests {
             InfectionRate::Empirical { points, scale } => (points.clone(), *scale),
             _ => panic!(),
         };
-        let total = EmpiricalRate::new(points, scale).max_cum_rate();
+        let total = EmpiricalRateFn::new(points, scale).max_cum_rate();
         assert!(
             (total - scale).abs() < 1e-12,
             "total = {total}, scale = {scale}"
@@ -312,7 +312,7 @@ mod tests {
         };
         assert!((trapezoid_area(&points) - 1.0).abs() < 1e-12);
         // And the integrated effective hazard equals `scale` (= R₀).
-        assert!((EmpiricalRate::new(points, scale).max_cum_rate() - scale).abs() < 1e-12);
+        assert!((EmpiricalRateFn::new(points, scale).max_cum_rate() - scale).abs() < 1e-12);
     }
 
     #[test]
@@ -334,7 +334,7 @@ mod tests {
         };
         let mean_total: f64 = rates
             .iter()
-            .map(|c| EmpiricalRate::new(c.clone(), scale).max_cum_rate())
+            .map(|c| EmpiricalRateFn::new(c.clone(), scale).max_cum_rate())
             .sum::<f64>()
             / rates.len() as f64;
         assert!(

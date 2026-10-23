@@ -12,11 +12,8 @@ define_property!(
     default_const = InfectionStatus::Susceptible
 );
 
+/// When the person was infected; `None` until they are.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct InfectionTime(pub f64);
+pub struct InfectionTime(pub Option<f64>);
 
-impl_property!(
-    InfectionTime,
-    Person,
-    default_const = InfectionTime(f64::NAN)
-);
+impl_property!(InfectionTime, Person, default_const = InfectionTime(None));

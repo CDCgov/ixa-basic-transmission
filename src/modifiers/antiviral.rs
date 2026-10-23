@@ -95,7 +95,10 @@ impl AntiviralExt for Context {
         if !self.sample_bool(AntiviralRng, antiviral.coverage) {
             return;
         }
-        let t_inf = self.get_property::<_, InfectionTime>(person).0;
+        let t_inf = self
+            .get_property::<_, InfectionTime>(person)
+            .0
+            .expect("infectious person has an infection time");
         let start = t_inf + antiviral.delay;
         let factor = 1.0 - antiviral.efficacy;
         self.add_plan(start, move |context| {
@@ -172,7 +175,7 @@ mod tests {
         let mut people = Vec::with_capacity(n);
         for _ in 0..n {
             let p = ctx.add_entity(Person).unwrap();
-            ctx.set_property(p, InfectionTime(0.0));
+            ctx.set_property(p, InfectionTime(Some(0.0)));
             ctx.set_property(p, InfectionStatus::Infectious);
             ctx.antiviral_schedule(p, av);
             people.push(p);
