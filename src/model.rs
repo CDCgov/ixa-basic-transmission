@@ -12,7 +12,7 @@ use crate::rate::{
 };
 use crate::settings::SettingsExt;
 use crate::stats::ModelStats;
-use crate::transmission::Transmission;
+use crate::transmission::{ContactStructure, Infectiousness, Transmission};
 
 define_global_property!(Params, Parameters);
 
@@ -29,18 +29,6 @@ define_data_plugin!(ModelStatsPlugin, ModelStats, |context| {
 // private type and it's only read from this module's hot path.
 define_data_plugin!(RateStoragePlugin, RateStorage, |_context| RateStorage::new(
 ));
-
-// TO DO: refactor so that ContactStructe and Infectiousness are reusable across
-// simulations? Move them into `transmission.rs` somehow
-pub trait ContactStructure: ixa::ContextBase {
-    fn majorizing_contact_rate(&self, person: PersonId) -> f64;
-    fn contact_rate(&self, person: PersonId) -> Option<f64>;
-}
-pub trait Infectiousness: ixa::ContextBase {
-    /// Majorizing infectiousness of `person`, indexed by time from now.
-    fn majorizing_infectiousness_rate_fn(&self, person: PersonId) -> impl InvertibleRate;
-    fn infectiousness_rate(&self, person: PersonId) -> Option<f64>;
-}
 
 /// Time since `person` was infected; `None` if they never were.
 fn time_since_infection(context: &Context, person: PersonId) -> Option<f64> {
@@ -80,7 +68,7 @@ fn base_infectiousness_rate_fn(context: &Context, person: PersonId) -> &Invertib
     }
 }
 
-impl ContactStructure for Context {
+impl ContactStructure<Person> for Context {
     fn majorizing_contact_rate(&self, person: PersonId) -> f64 {
         self.settings_forecast_multiplier(person)
     }
@@ -90,7 +78,7 @@ impl ContactStructure for Context {
     }
 }
 
-impl Infectiousness for Context {
+impl Infectiousness<Person> for Context {
     fn majorizing_infectiousness_rate_fn(&self, person: PersonId) -> impl InvertibleRate {
         // The stored rate is in time since infection; shift it to time from now.
         TransformedInvertibleRateFn::new(
@@ -111,18 +99,6 @@ impl Infectiousness for Context {
 }
 
 impl Transmission<Person> for Context {
-    fn majorizing_transmission_attempt_rate_fn(&self, infector: PersonId) -> impl InvertibleRate {
-        TransformedInvertibleRateFn::new(
-            base_infectiousness_rate_fn(self, infector),
-            self.majorizing_contact_rate(infector),
-            time_since_infection(self, infector).expect("infector was never infected"),
-        )
-    }
-
-    fn transmission_attempt_rate(&self, person: PersonId) -> Option<f64> {
-        Some(self.infectiousness_rate(person)? * self.contact_rate(person)?)
-    }
-
     fn select_infectee(&self, infector: PersonId) -> Option<PersonId> {
         self.settings_sample_contact(infector)
     }

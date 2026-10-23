@@ -24,7 +24,7 @@ pub use empirical_rate::{
 };
 pub use normalize::normalize_to_r0;
 pub use parametric::{materialize_parametric, ParametricDist, PARAMETRIC_GRID};
-pub use rate_fn::{InvertibleRate, TransformedInvertibleRateFn};
+pub use rate_fn::{InvertibleRate, ScaledRateFn, TransformedInvertibleRateFn};
 pub use storage::{build_empirical_library, AssignedRate, InvertibleRateFn, RateStorage};
 
 /// Per-person infectiousness rate, indexed by time since the person became

@@ -47,6 +47,44 @@ impl<'a, T: ?Sized + InvertibleRate> TransformedInvertibleRateFn<'a, T> {
     }
 }
 
+/// An invertible rate function multiplied by a constant `factor`.
+pub struct ScaledRateFn<F: InvertibleRate> {
+    pub inner: F,
+    pub factor: f64,
+}
+
+impl<F: InvertibleRate> ScaledRateFn<F> {
+    #[must_use]
+    pub fn new(inner: F, factor: f64) -> Self {
+        Self { inner, factor }
+    }
+}
+
+impl<F: InvertibleRate> InvertibleRate for ScaledRateFn<F> {
+    fn rate(&self, t: f64) -> f64 {
+        self.inner.rate(t) * self.factor
+    }
+
+    fn cum_rate(&self, t: f64) -> f64 {
+        self.inner.cum_rate(t) * self.factor
+    }
+
+    /// A non-positive `factor` means no events are ever reached.
+    fn inverse_cum_rate(&self, events: f64) -> Option<f64> {
+        if self.factor <= 0.0 {
+            return (events <= 0.0).then_some(0.0);
+        }
+        self.inner.inverse_cum_rate(events / self.factor)
+    }
+
+    fn max_cum_rate(&self) -> f64 {
+        if self.factor <= 0.0 {
+            return 0.0;
+        }
+        self.inner.max_cum_rate() * self.factor
+    }
+}
+
 impl<T: ?Sized + InvertibleRate> InvertibleRate for TransformedInvertibleRateFn<'_, T> {
     fn rate(&self, t: f64) -> f64 {
         self.base.rate(t + self.elapsed) * self.scale
@@ -83,7 +121,7 @@ impl<T: ?Sized + InvertibleRate> InvertibleRate for TransformedInvertibleRateFn<
 mod test {
     use ixa::assert_almost_eq;
 
-    use super::{InvertibleRate, TransformedInvertibleRateFn};
+    use super::{InvertibleRate, ScaledRateFn, TransformedInvertibleRateFn};
     use crate::rate::{ConstantRateFn, EmpiricalRateFn};
 
     // A flat empirical curve of height 2.0 on [0, 5] (rate 0 outside that range) — a
@@ -172,6 +210,19 @@ mod test {
         let curve = flat_capped();
         let zero = TransformedInvertibleRateFn::new(&curve, 0.0, 1.0);
         assert_eq!(zero.inverse_cum_rate(0.5), None);
+        assert_eq!(zero.max_cum_rate(), 0.0);
+    }
+
+    #[test]
+    fn scaled_multiplies_the_rate_and_divides_the_inverse() {
+        let rate_fn = flat_capped();
+        let f = ScaledRateFn::new(TransformedInvertibleRateFn::new(&rate_fn, 2.0, 3.0), 3.0);
+        assert_almost_eq!(f.rate(0.0), 12.0, 0.0);
+        assert_almost_eq!(f.cum_rate(1.0), 12.0, 0.0);
+        assert_eq!(f.inverse_cum_rate(12.0), Some(1.0));
+        assert_eq!(f.max_cum_rate(), 24.0);
+        let zero = ScaledRateFn::new(TransformedInvertibleRateFn::new(&rate_fn, 2.0, 3.0), 0.0);
+        assert_eq!(zero.inverse_cum_rate(1.0), None);
         assert_eq!(zero.max_cum_rate(), 0.0);
     }
 }

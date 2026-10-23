@@ -1,8 +1,28 @@
-use crate::rate::InvertibleRate;
+use crate::rate::{InvertibleRate, ScaledRateFn};
 use ixa::prelude::*;
 use rand_distr::Exp;
 
 define_rng!(TransmissionRng);
+
+/// An infector's infectiousness over time, as the transmission loop sees it.
+pub trait Infectiousness<E: Entity>: ixa::ContextBase {
+    /// Majorizing infectiousness of `person`, indexed by time from now.
+    fn majorizing_infectiousness_rate_fn(&self, person: EntityId<E>) -> impl InvertibleRate;
+
+    /// Current infectiousness, bounded by the majorizing rate at time zero.
+    /// `None` signals that it is zero and will continue to be zero.
+    fn infectiousness_rate(&self, person: EntityId<E>) -> Option<f64>;
+}
+
+/// An infector's contact rate, as the transmission loop sees it.
+pub trait ContactStructure<E: Entity>: ixa::ContextBase {
+    /// A constant upper bound on `person`'s contact rate for the run.
+    fn majorizing_contact_rate(&self, person: EntityId<E>) -> f64;
+
+    /// Current contact rate, bounded by the majorizing contact rate.
+    /// `None` signals that it is zero and will continue to be zero.
+    fn contact_rate(&self, person: EntityId<E>) -> Option<f64>;
+}
 
 /// Infection loop transmission dynamics.
 ///
@@ -18,19 +38,30 @@ define_rng!(TransmissionRng);
 /// 1. Draw attempt proposal times based on majorizing transmission attempt rates.
 /// 2. Thin proposed attempts to attempts.
 /// 3. Attempts become transmissions based on the potential infectee's susceptibility.
-pub trait Transmission<E>: ixa::ContextBase + ixa::ContextRandomExt
+pub trait Transmission<E>: Infectiousness<E> + ContactStructure<E> + ixa::ContextRandomExt
 where
     E: Entity,
 {
     /// Majorizing rate for transmission attempts from `infector`, indexed by
-    /// time from now (`t = 0` is the current simulation time).
-    fn majorizing_transmission_attempt_rate_fn(&self, infector: EntityId<E>)
-        -> impl InvertibleRate;
+    /// time from now (`t = 0` is the current simulation time): the majorizing
+    /// infectiousness scaled by the majorizing contact rate.
+    fn majorizing_transmission_attempt_rate_fn(
+        &self,
+        infector: EntityId<E>,
+    ) -> impl InvertibleRate {
+        ScaledRateFn::new(
+            self.majorizing_infectiousness_rate_fn(infector),
+            self.majorizing_contact_rate(infector),
+        )
+    }
 
-    /// Transmission attempt rate, bounded at all times by the majorizing attempt rate.
-    /// `None` signals that the rate is zero and will continue to be zero,
-    /// i.e., that the infection loop for this infector should break.
-    fn transmission_attempt_rate(&self, person: EntityId<E>) -> Option<f64>;
+    /// Transmission attempt rate, bounded at all times by the majorizing attempt
+    /// rate: current infectiousness times current contact rate. `None` signals
+    /// that the rate is zero and will continue to be zero, i.e., that the
+    /// infection loop for this infector should break.
+    fn transmission_attempt_rate(&self, person: EntityId<E>) -> Option<f64> {
+        Some(self.infectiousness_rate(person)? * self.contact_rate(person)?)
+    }
 
     /// Given a transmission attempt from `infector`, who is the candidate infectee?
     /// `None` breaks the loop.
