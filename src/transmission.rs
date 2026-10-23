@@ -112,7 +112,7 @@ where
         Context: Transmission<E>,
     {
         // A `None` attempt rate means infectiousness has ended for good: do not
-        // reschedule, so this is the infector's last proposal.
+        // reschedule, so this is the infector's last proposal for this infection
         if let Some(rate) = self.transmission_attempt_rate(infector) {
             // The scheduler evaluated the bound at `delay + (now - t_inf)` and the
             // handler evaluates the rate at `(now + delay) - t_inf`: the same
