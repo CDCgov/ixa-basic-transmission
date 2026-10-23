@@ -161,7 +161,7 @@ mod test {
     #[test]
     fn zero_scale_transform_is_unreachable() {
         // A zero contact bound (a size-1 household) must not invert to t = inf.
-        let rate_fn = ConstantRateFn::new(1.0);
+        let rate_fn = ConstantRateFn::new(1.0, 5.0);
         let zero = TransformedInvertibleRateFn::new(&rate_fn, 0.0, 0.0);
         assert_eq!(zero.inverse_cum_rate(1.0), None);
         assert_eq!(zero.inverse_cum_rate(0.0), Some(0.0));

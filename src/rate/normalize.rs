@@ -163,7 +163,7 @@ mod tests {
         // rescale. The struct must be byte-identical after normalize.
         let mut r = InfectionRate::Constant {
             value: 0.5,
-            duration: 6.0,
+            exp_mean_duration: 6.0,
         };
         let before = r.clone();
         normalize_to_r0(&mut r);

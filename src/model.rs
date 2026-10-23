@@ -7,8 +7,8 @@ use crate::modifiers::ModifierExt;
 use crate::parameters::Parameters;
 use crate::person::{InfectionStatus, InfectionTime, Person, PersonId};
 use crate::rate::{
-    build_empirical_library, empirical_support_end, AssignedRate, ConstantRateFn, EmpiricalRateFn,
-    InfectionRate, InvertibleRate, InvertibleRateFn, RateStorage, TransformedInvertibleRateFn,
+    build_empirical_library, AssignedRate, ConstantRateFn, EmpiricalRateFn, InfectionRate,
+    InvertibleRate, InvertibleRateFn, RateStorage, TransformedInvertibleRateFn,
 };
 use crate::settings::SettingsExt;
 use crate::stats::ModelStats;
@@ -17,7 +17,6 @@ use crate::transmission::Transmission;
 define_global_property!(Params, Parameters);
 
 define_rng!(InfectionRng);
-define_rng!(RecoveryRng);
 define_rng!(RateAssignmentRng);
 
 define_data_plugin!(ModelStatsPlugin, ModelStats, |context| {
@@ -48,29 +47,17 @@ pub trait Infectiousness: ixa::ContextBase {
 /// time since infection, not clock time.
 fn base_infectiousness_rate_fn(context: &Context, person: PersonId) -> &InvertibleRateFn {
     match &context.get_params().infection_rate {
-        InfectionRate::Constant { value, .. } => {
-            let value = *value;
-            &context
-                .get_data(RateStoragePlugin)
-                .single_or_build(|| {
-                    (
-                        InvertibleRateFn::Constant(ConstantRateFn::new(value)),
-                        f64::INFINITY,
-                    )
-                })
-                .0
-        }
+        // Assigned per person at infection (see `Infection::assign_rate`).
+        InfectionRate::Constant { .. } => context
+            .get_data(RateStoragePlugin)
+            .assigned_fn(person)
+            .expect("no rate fn assigned to person; infect via `infect_person`"),
         InfectionRate::Empirical { points, scale } => {
             let points = points.clone();
             let scale = *scale;
-            &context
-                .get_data(RateStoragePlugin)
-                .single_or_build(|| {
-                    let er = EmpiricalRateFn::new(points, scale);
-                    let recovery = er.recovery_time();
-                    (InvertibleRateFn::Empirical(er), recovery)
-                })
-                .0
+            context.get_data(RateStoragePlugin).single_or_build(|| {
+                InvertibleRateFn::Empirical(EmpiricalRateFn::new(points, scale))
+            })
         }
         InfectionRate::Library { .. } => {
             let idx = context
@@ -162,9 +149,14 @@ trait Infection {
     fn infected_people(&self) -> usize;
     fn infect_person(&mut self, p: PersonId, t: Option<f64>);
     fn recover_person(&mut self, p: PersonId);
-    /// Schedule `p`'s recovery and return the realized infectious-period
-    /// duration (`Exp` sample for `Constant`, the max-cumulative reach time for
-    /// empirical curves) so the caller can place a facemask within that window.
+    /// Assign `p` their own infectiousness rate function when they are
+    /// infected, drawing from `RateAssignmentRng`.
+    /// Redrawn on each infection, so a reinfected person gets a fresh draw.
+    fn assign_rate(&mut self, p: PersonId);
+    /// Schedule `p`'s recovery and return the assigned infectious-period
+    /// duration (the per-person `Exp` draw for `Constant`, the max-cumulative
+    /// reach time for empirical curves) so the caller can place a facemask
+    /// within that window.
     fn schedule_recovery(&mut self, p: PersonId) -> f64;
     fn setup(&mut self);
 }
@@ -187,6 +179,7 @@ impl Infection for Context {
         // PropertyChangeEvent subscriber can read it on the same person.
         let now = self.get_current_time();
         self.set_property(p, InfectionTime(now));
+        self.assign_rate(p);
         // setting the person to "Infectious" triggers the transmission loop via a subscription
         self.set_property(p, InfectionStatus::Infectious);
         // TO DO: Consider dropping this, and instead using `now`
@@ -199,33 +192,47 @@ impl Infection for Context {
         self.set_property(p, InfectionStatus::Recovered);
         self.get_data_mut(ModelStatsPlugin).record_recovery();
     }
-    // TO DO: Figure out how to fold this into the (majorizing?) rate function
-    fn schedule_recovery(&mut self, p: PersonId) -> f64 {
-        // For empirical curves, recovery is deterministic at the time integrated
-        // infectiousness is exhausted (the max-cumulative reach time). For
-        // `Constant`, recovery follows `Exp(1/duration)` (the `duration` field
-        // is the mean).
-        let t_inf = self.get_property::<_, InfectionTime>(p).0;
-        let recovery_dt = match self.get_params().infection_rate {
-            // Recovery is the homogeneous-Poisson `Exp(1/duration)` clock; the rate
-            // itself is unbounded in time.
-            InfectionRate::Constant { duration, .. } => {
-                self.sample_distr(RecoveryRng, Exp::new(1.0 / duration).unwrap())
+    fn assign_rate(&mut self, p: PersonId) {
+        match &self.get_params().infection_rate {
+            InfectionRate::Constant {
+                value,
+                exp_mean_duration,
+            } => {
+                let (value, mean) = (*value, *exp_mean_duration);
+                let dt = self.sample_distr(RateAssignmentRng, Exp::new(1.0 / mean).unwrap());
+                self.get_data_mut(RateStoragePlugin).set_assigned_fn(
+                    p,
+                    InvertibleRateFn::Constant(ConstantRateFn::new(value, dt)),
+                );
             }
-            // Deterministic recovery when integrated infectiousness is exhausted —
-            // the earliest τ at which the cumulative reaches its max.
-            InfectionRate::Empirical { ref points, .. } => empirical_support_end(points),
-            InfectionRate::Library { .. } => {
-                let idx = self
-                    .get_property::<_, AssignedRate>(p)
-                    .0
-                    .expect("AssignedRate is None in Library mode");
-                self.get_data(RateStoragePlugin).recovery_time(idx)
+            InfectionRate::Library { rates, scale } => {
+                // The shared curves are built once, on the first infection.
+                if self.get_data(RateStoragePlugin).library_len() == 0 {
+                    let rate_fns = build_empirical_library(rates, *scale);
+                    self.get_data_mut(RateStoragePlugin).set_library(rate_fns);
+                }
+                let n = self.get_data(RateStoragePlugin).library_len();
+                if n > 0 {
+                    // Uniform random assignment: each person draws independently.
+                    let idx: usize = self.sample_range(RateAssignmentRng, 0..n);
+                    self.set_property(p, AssignedRate(Some(idx)));
+                }
             }
-            // Lowered to `Empirical` at `run`/`setup_only` entry; never seen here.
+            // One shared curve, built lazily by `RateStorage::single_or_build`.
+            InfectionRate::Empirical { .. } => {}
             InfectionRate::Parametric { .. } => {
                 unreachable!("Parametric is materialized to Empirical before setup")
             }
+        }
+    }
+    fn schedule_recovery(&mut self, p: PersonId) -> f64 {
+        // Recovery is when the person's rate function exhausts its integrated
+        // infectiousness: the drawn period for a constant rate, the earliest τ
+        // at which the cumulative peaks for an empirical curve.
+        let t_inf = self.get_property::<_, InfectionTime>(p).0;
+        let recovery_dt = match base_infectiousness_rate_fn(self, p) {
+            InvertibleRateFn::Constant(c) => c.duration(),
+            InvertibleRateFn::Empirical(e) => e.duration(),
         };
         let recovery_time = t_inf + recovery_dt;
         self.add_plan(recovery_time, move |context| {
@@ -273,29 +280,8 @@ impl Infection for Context {
         let params = self.get_params().clone();
         crate::modifiers::register_all(self, &params);
 
-        // For `Library` mode, build one boxed `EmpiricalRate` per curve (plus
-        // its recovery time) and install them in the storage plugin. Each
-        // person is assigned an index into this vector. (The single-curve
-        // `Empirical` / `Constant` variants are built lazily on first access by
-        // `RateStorage::single_or_build`.)
-        let library_size: usize =
-            if let InfectionRate::Library { rates, scale } = &self.get_params().infection_rate {
-                let (rate_fns, recovery_times) = build_empirical_library(rates, *scale);
-                let n = rate_fns.len();
-                self.get_data_mut(RateStoragePlugin)
-                    .set_library(rate_fns, recovery_times);
-                n
-            } else {
-                0
-            };
-
         for _ in 0..population {
-            let p = self.add_entity(Person).unwrap();
-            if library_size > 0 {
-                // Uniform random assignment: each person draws independently.
-                let idx: usize = self.sample_range(RateAssignmentRng, 0..library_size);
-                self.set_property(p, AssignedRate(Some(idx)));
-            }
+            self.add_entity(Person).unwrap();
         }
 
         // Optional settings-based contact structure. No-op when
@@ -460,7 +446,7 @@ mod tests {
                 infection_rate: InfectionRate::Constant {
                     value: infection_rate,
                     // Suppress recovery of the index case during the window.
-                    duration: 1e6,
+                    exp_mean_duration: 1e6,
                 },
                 population: 2,
                 initial_infections: 1,
@@ -602,7 +588,7 @@ mod tests {
         let params = Parameters {
             infection_rate: InfectionRate::Constant {
                 value: 0.0,
-                duration: infectious_period,
+                exp_mean_duration: infectious_period,
             },
             population,
             initial_infections: population,
@@ -655,7 +641,7 @@ mod tests {
         let params = Parameters {
             infection_rate: InfectionRate::Constant {
                 value: 0.0,
-                duration: 3.0,
+                exp_mean_duration: 3.0,
             },
             population,
             initial_infections,
@@ -695,7 +681,7 @@ mod tests {
             let params = Parameters {
                 infection_rate: InfectionRate::Constant {
                     value: infection_rate,
-                    duration: infectious_period,
+                    exp_mean_duration: infectious_period,
                 },
                 population,
                 initial_infections: 1,
@@ -735,7 +721,7 @@ mod tests {
             let params = Parameters {
                 infection_rate: InfectionRate::Constant {
                     value: 0.0,
-                    duration: 1e6,
+                    exp_mean_duration: 1e6,
                 },
                 population,
                 initial_infections,
@@ -970,9 +956,9 @@ mod tests {
     }
 
     #[test]
-    fn library_assigns_a_rate_to_each_person() {
-        // After setup, every Person should carry a Some(_) AssignedRate
-        // whose value points into the library.
+    fn library_assigns_a_rate_to_each_infected_person() {
+        // Assignment happens at infection: after seeding, exactly the initially
+        // infected carry a Some(_) AssignedRate pointing into the library.
         let library = vec![vec![[0.0, 0.5], [3.0, 0.5]], vec![[0.0, 1.5], [3.0, 1.5]]];
         let params = Parameters {
             infection_rate: InfectionRate::Library {
@@ -980,7 +966,7 @@ mod tests {
                 scale: 1.0,
             },
             population: 50,
-            initial_infections: 0,
+            initial_infections: 20,
             seed: 7,
             max_time: 0.0,
             settings: vec![],
@@ -994,7 +980,7 @@ mod tests {
             .map(|p| ctx.get_property::<_, AssignedRate>(p))
             .filter(|a| a.0.is_some())
             .count();
-        assert_eq!(assigned_count, 50);
+        assert_eq!(assigned_count, 20);
     }
 
     #[test]
@@ -1082,7 +1068,7 @@ mod tests {
             let params = Parameters {
                 infection_rate: InfectionRate::Constant {
                     value: base_rate,
-                    duration: 1e6, // suppress recovery in the window
+                    exp_mean_duration: 1e6, // suppress recovery in the window
                 },
                 population,
                 initial_infections: 1,
@@ -1107,6 +1093,48 @@ mod tests {
         }
         let observed = total / num_sims as f64;
         assert_almost_eq!(observed, expected_cases, 0.03);
+    }
+
+    #[test]
+    fn constant_rate_transmission_stops_at_recovery() {
+        // Regression: with an unbounded constant hazard the loop never ended,
+        // so a recovered person kept infecting until shutdown and every run
+        // saturated. R0 = 0.5 * 3 = 1.5 gives a final size well below 1.
+        let stats = run(Parameters {
+            population: 2000,
+            initial_infections: 5,
+            seed: 1,
+            max_time: 100.0,
+            ..Default::default()
+        });
+        let attack_rate = stats.cum_incidence() as f64 / 2000.0;
+        assert!(
+            (0.3..0.8).contains(&attack_rate),
+            "attack rate {attack_rate} outside the R0 = 1.5 range"
+        );
+    }
+
+    #[test]
+    fn constant_infectious_period_is_assigned_per_person() {
+        let mut ctx = Context::new();
+        ctx.set_global_property_value(Params, Parameters::default())
+            .unwrap();
+        ctx.init_random(1);
+        let a = ctx.add_entity(Person).unwrap();
+        let b = ctx.add_entity(Person).unwrap();
+        ctx.infect_person(a, None);
+        ctx.infect_person(b, None);
+        let period = |p| match base_infectiousness_rate_fn(&ctx, p) {
+            InvertibleRateFn::Constant(c) => c.duration(),
+            InvertibleRateFn::Empirical(_) => unreachable!(),
+        };
+        let (dt_a, dt_b) = (period(a), period(b));
+        assert!(dt_a > 0.0 && dt_b > 0.0);
+        assert_ne!(dt_a, dt_b, "each infected person draws their own period");
+        // The stored rate function is truncated at exactly that period.
+        let fn_b = base_infectiousness_rate_fn(&ctx, b);
+        assert_eq!(fn_b.max_cum_rate(), 0.5 * dt_b);
+        assert_eq!(fn_b.inverse_cum_rate(0.5 * dt_b + 1e-9), None);
     }
 
     #[test]
@@ -1145,7 +1173,7 @@ mod tests {
         let base = Parameters {
             infection_rate: InfectionRate::Constant {
                 value: 0.5,
-                duration: 3.0,
+                exp_mean_duration: 3.0,
             },
             population: 2000,
             initial_infections: 5,
@@ -1175,7 +1203,7 @@ mod tests {
         let base = Parameters {
             infection_rate: InfectionRate::Constant {
                 value: 0.5,
-                duration: 3.0,
+                exp_mean_duration: 3.0,
             },
             population: 2000,
             initial_infections: 5,
@@ -1205,7 +1233,7 @@ mod tests {
         let base = Parameters {
             infection_rate: InfectionRate::Constant {
                 value: 0.5,
-                duration: 3.0,
+                exp_mean_duration: 3.0,
             },
             population: 5000,
             initial_infections: 10,
@@ -1304,7 +1332,7 @@ mod tests {
         let base = Parameters {
             infection_rate: InfectionRate::Constant {
                 value: 0.5,
-                duration: 3.0,
+                exp_mean_duration: 3.0,
             },
             population: 2000,
             initial_infections: 5,
@@ -1336,7 +1364,7 @@ mod tests {
         let base = Parameters {
             infection_rate: InfectionRate::Constant {
                 value: 0.5,
-                duration: 3.0,
+                exp_mean_duration: 3.0,
             },
             population: 2000,
             initial_infections: 5,
@@ -1367,7 +1395,7 @@ mod tests {
         let base = Parameters {
             infection_rate: InfectionRate::Constant {
                 value: 0.5,
-                duration: 3.0,
+                exp_mean_duration: 3.0,
             },
             population: 5000,
             initial_infections: 10,
@@ -1465,7 +1493,7 @@ mod tests {
         let base = Parameters {
             infection_rate: InfectionRate::Constant {
                 value: 0.5,
-                duration: 3.0,
+                exp_mean_duration: 3.0,
             },
             population: 5000,
             initial_infections: 10,
@@ -1544,7 +1572,7 @@ mod tests {
         Parameters {
             infection_rate: InfectionRate::Constant {
                 value: 0.5,
-                duration: 3.0,
+                exp_mean_duration: 3.0,
             },
             population: 5000,
             initial_infections: 10,
