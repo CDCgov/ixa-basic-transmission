@@ -37,9 +37,7 @@ function argmax(values: ArrayLike<number>): number {
 }
 
 function fmtCount(v: number | undefined): string {
-  return v != null && Number.isFinite(v)
-    ? Math.round(v).toLocaleString()
-    : "—";
+  return v != null && Number.isFinite(v) ? Math.round(v).toLocaleString() : "—";
 }
 
 export interface Chart {

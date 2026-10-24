@@ -12,9 +12,7 @@ test.describe("Rate preview", () => {
     await expect(preview.locator("svg")).toBeVisible();
   });
 
-  test("re-renders with dots when switching to Empirical", async ({
-    page,
-  }) => {
+  test("re-renders with dots when switching to Empirical", async ({ page }) => {
     await page.goto("/");
     await page.getByRole("combobox", { name: "Infectiousness" }).click();
     await page.getByRole("option", { name: "Empirical", exact: true }).click();

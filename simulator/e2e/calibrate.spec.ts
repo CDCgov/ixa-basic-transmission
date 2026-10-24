@@ -44,9 +44,7 @@ test.describe("Calibration page", () => {
     await page.goto("/calibrate");
 
     // Nav link present + page heading visible.
-    await expect(
-      page.getByRole("link", { name: "Calibrate" }),
-    ).toBeVisible();
+    await expect(page.getByRole("link", { name: "Calibrate" })).toBeVisible();
     await expect(
       page.getByRole("heading", { name: "Calibration", exact: true }),
     ).toBeVisible();
@@ -94,8 +92,18 @@ test.describe("Calibration page", () => {
     // At least one cell with the prior label (the implicit stage 0) and
     // at least one perturbation stage. Both labels appear twice (table
     // row + per-stage heading); .first() is fine for a presence check.
-    await expect(page.getByText(/Prior \(∞\)/).filter({ visible: true }).first()).toBeVisible();
-    await expect(page.getByText(/Stage 4/).filter({ visible: true }).first()).toBeVisible();
+    await expect(
+      page
+        .getByText(/Prior \(∞\)/)
+        .filter({ visible: true })
+        .first(),
+    ).toBeVisible();
+    await expect(
+      page
+        .getByText(/Stage 4/)
+        .filter({ visible: true })
+        .first(),
+    ).toBeVisible();
 
     // URL gained `?runId=…`.
     await expect(page).toHaveURL(/runId=[0-9a-f]+/);
@@ -104,7 +112,12 @@ test.describe("Calibration page", () => {
     // Reload via the deep link → same run restored from IndexedDB.
     await page.goto(url);
     await expect(page.getByText(/Complete/)).toBeVisible({ timeout: 30_000 });
-    await expect(page.getByText(/Stage 4/).filter({ visible: true }).first()).toBeVisible();
+    await expect(
+      page
+        .getByText(/Stage 4/)
+        .filter({ visible: true })
+        .first(),
+    ).toBeVisible();
   });
 
   test("refresh mid-run offers Resume (not a dead Pause) and continues", async ({
@@ -179,7 +192,9 @@ test.describe("Calibration page", () => {
     await expect(
       page.getByRole("button", { name: "Generate from parameters" }),
     ).toHaveCount(0);
-    await expect(page.getByLabel("Cumulative cases for row 1", { exact: true })).toHaveCount(0);
+    await expect(
+      page.getByLabel("Cumulative cases for row 1", { exact: true }),
+    ).toHaveCount(0);
     // The scale choice is frozen too: the combobox is replaced by a
     // read-only readout so it can't be switched mid-run.
     await expect(
@@ -216,32 +231,60 @@ test.describe("Calibration page", () => {
     await addRow.click();
     await addRow.click();
 
-    await page.getByLabel("Cumulative cases for row 1", { exact: true }).fill("5");
-    await page.getByLabel("Cumulative cases for row 2", { exact: true }).fill("8");
-    await page.getByLabel("Cumulative cases for row 3", { exact: true }).fill("3");
+    await page
+      .getByLabel("Cumulative cases for row 1", { exact: true })
+      .fill("5");
+    await page
+      .getByLabel("Cumulative cases for row 2", { exact: true })
+      .fill("8");
+    await page
+      .getByLabel("Cumulative cases for row 3", { exact: true })
+      .fill("3");
 
     // Days are editable (gaps allowed). Push row 1 to day 9 — out of
     // order — then blur to commit, which auto-sorts the table by day so
     // the rows become (2, 8), (3, 3), (9, 5).
     await page.getByLabel("Day for row 1", { exact: true }).fill("9");
-    await page.getByLabel("Cumulative cases for row 3", { exact: true }).click();
+    await page
+      .getByLabel("Cumulative cases for row 3", { exact: true })
+      .click();
 
-    await expect(page.getByLabel("Day for row 1", { exact: true })).toHaveValue("2");
-    await expect(page.getByLabel("Cumulative cases for row 1", { exact: true })).toHaveValue("8");
-    await expect(page.getByLabel("Day for row 2", { exact: true })).toHaveValue("3");
-    await expect(page.getByLabel("Cumulative cases for row 2", { exact: true })).toHaveValue("3");
-    await expect(page.getByLabel("Day for row 3", { exact: true })).toHaveValue("9");
-    await expect(page.getByLabel("Cumulative cases for row 3", { exact: true })).toHaveValue("5");
+    await expect(page.getByLabel("Day for row 1", { exact: true })).toHaveValue(
+      "2",
+    );
+    await expect(
+      page.getByLabel("Cumulative cases for row 1", { exact: true }),
+    ).toHaveValue("8");
+    await expect(page.getByLabel("Day for row 2", { exact: true })).toHaveValue(
+      "3",
+    );
+    await expect(
+      page.getByLabel("Cumulative cases for row 2", { exact: true }),
+    ).toHaveValue("3");
+    await expect(page.getByLabel("Day for row 3", { exact: true })).toHaveValue(
+      "9",
+    );
+    await expect(
+      page.getByLabel("Cumulative cases for row 3", { exact: true }),
+    ).toHaveValue("5");
 
     // Removing the middle row drops it and leaves days 2 and 9.
     await page.getByRole("button", { name: "Remove row 2" }).click();
-    await expect(page.getByLabel("Day for row 1", { exact: true })).toHaveValue("2");
-    await expect(page.getByLabel("Day for row 2", { exact: true })).toHaveValue("9");
-    await expect(page.getByLabel("Day for row 3", { exact: true })).toHaveCount(0);
+    await expect(page.getByLabel("Day for row 1", { exact: true })).toHaveValue(
+      "2",
+    );
+    await expect(page.getByLabel("Day for row 2", { exact: true })).toHaveValue(
+      "9",
+    );
+    await expect(page.getByLabel("Day for row 3", { exact: true })).toHaveCount(
+      0,
+    );
 
     // Clear empties the table back to a blank slate.
     await page.getByRole("button", { name: "Clear" }).click();
-    await expect(page.getByLabel("Day for row 1", { exact: true })).toHaveCount(0);
+    await expect(page.getByLabel("Day for row 1", { exact: true })).toHaveCount(
+      0,
+    );
     await expect(page.getByRole("button", { name: "Clear" })).toBeDisabled();
   });
 

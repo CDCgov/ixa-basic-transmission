@@ -89,8 +89,8 @@ const empiricalRecoveryAt = computed(() => empiricalDuration(props.modelValue));
 const rateScale = computed<number>({
   get: () =>
     props.modelValue.type === "empirical" ||
-      props.modelValue.type === "library" ||
-      props.modelValue.type === "parametric"
+    props.modelValue.type === "library" ||
+    props.modelValue.type === "parametric"
       ? props.modelValue.scale
       : 1,
   set: (s) => {
@@ -191,7 +191,10 @@ function setRateType(next: string) {
   }
   if (next === "library") {
     page.value = 0;
-    emit("update:modelValue", withRateType(props.modelValue, "library", defaultLibrary));
+    emit(
+      "update:modelValue",
+      withRateType(props.modelValue, "library", defaultLibrary),
+    );
     return;
   }
   emit("update:modelValue", withRateType(props.modelValue, next));
@@ -248,9 +251,7 @@ function restoreDefaultLibrary() {
   uploadError.value = null;
   emit("update:modelValue", {
     type: "library",
-    rates: defaultLibrary.map((c) =>
-      c.map((p) => [...p] as [number, number]),
-    ),
+    rates: defaultLibrary.map((c) => c.map((p) => [...p] as [number, number])),
     scale: DEFAULT_R0_SCALE,
   });
 }
@@ -449,32 +450,76 @@ function formatRate(v: unknown): string {
 </script>
 
 <template>
-  <SelectBox label="Infectiousness" :options="rateTypeOptions" :model-value="modelValue.type"
-    @update:model-value="setRateType" />
+  <SelectBox
+    label="Infectiousness"
+    :options="rateTypeOptions"
+    :model-value="modelValue.type"
+    @update:model-value="setRateType"
+  />
   <template v-if="modelValue.type === 'constant'">
-    <NumberInput v-model="constantValue" label="Infection rate" slider :live="live" :min="0.05" :max="4" :step="0.05" />
-    <NumberInput v-model="constantDuration" label="Infectious period" slider :live="live" :min="1" :max="14"
-      :step="0.5" />
+    <NumberInput
+      v-model="constantValue"
+      label="Infection rate"
+      slider
+      :live="live"
+      :min="0.05"
+      :max="4"
+      :step="0.05"
+    />
+    <NumberInput
+      v-model="constantDuration"
+      label="Infectious period"
+      slider
+      :live="live"
+      :min="1"
+      :max="14"
+      :step="0.5"
+    />
   </template>
   <template v-else-if="modelValue.type === 'empirical'">
     <p class="schedule-hint">
-      Empirical curve, recovery at τ = {{ empiricalRecoveryAt }}.
-      Points define the shape; the model rescales them at runtime so
-      Scale is the expected R₀ under random mixing.
+      Empirical curve, recovery at τ = {{ empiricalRecoveryAt }}. Points define
+      the shape; the model rescales them at runtime so Scale is the expected R₀
+      under random mixing.
     </p>
-    <NumberInput v-model="rateScale" label="Scale (R₀)" slider :live="live" :min="0" :max="6" :step="0.1" />
+    <NumberInput
+      v-model="rateScale"
+      label="Scale (R₀)"
+      slider
+      :live="live"
+      :min="0"
+      :max="6"
+      :step="0.1"
+    />
     <div class="points-editor">
       <div class="points-header">
         <span>τ (time since infected)</span>
         <span>rate</span>
         <span></span>
       </div>
-      <div v-for="(point, i) in empiricalPoints" :key="`${point[0]}-${point[1]}-${i}`" class="points-row">
-        <NumberInput :model-value="point[0]" :min="0" :step="0.5"
-          @update:model-value="(v: number) => updatePoint(i, 0, v)" />
-        <NumberInput :model-value="point[1]" :min="0" :step="0.1"
-          @update:model-value="(v: number) => updatePoint(i, 1, v)" />
-        <Button variant="secondary" :disabled="empiricalPoints.length <= 2" @click="removePoint(i)">×</Button>
+      <div
+        v-for="(point, i) in empiricalPoints"
+        :key="`${point[0]}-${point[1]}-${i}`"
+        class="points-row"
+      >
+        <NumberInput
+          :model-value="point[0]"
+          :min="0"
+          :step="0.5"
+          @update:model-value="(v: number) => updatePoint(i, 0, v)"
+        />
+        <NumberInput
+          :model-value="point[1]"
+          :min="0"
+          :step="0.1"
+          @update:model-value="(v: number) => updatePoint(i, 1, v)"
+        />
+        <Button
+          variant="secondary"
+          :disabled="empiricalPoints.length <= 2"
+          @click="removePoint(i)"
+          >×</Button
+        >
       </div>
       <Button variant="secondary" @click="addPoint">Add point</Button>
     </div>
@@ -484,31 +529,79 @@ function formatRate(v: unknown): string {
       Infectiousness shape from a named distribution, auto-truncated at its
       99.9% mass point. Scale is the expected R₀ under random mixing.
     </p>
-    <SelectBox label="Distribution" :options="distTypeOptions" :model-value="parametricDist.dist"
-      @update:model-value="setDistType" />
-    <NumberInput v-for="field in distParamFields" :key="field.key" :model-value="field.value" :label="field.label"
-      :step="field.step" @update:model-value="(v: number) => setDistParam(field.key, v)" />
-    <NumberInput v-model="rateScale" label="Scale (R₀)" slider :live="live" :min="0" :max="6" :step="0.1" />
+    <SelectBox
+      label="Distribution"
+      :options="distTypeOptions"
+      :model-value="parametricDist.dist"
+      @update:model-value="setDistType"
+    />
+    <NumberInput
+      v-for="field in distParamFields"
+      :key="field.key"
+      :model-value="field.value"
+      :label="field.label"
+      :step="field.step"
+      @update:model-value="(v: number) => setDistParam(field.key, v)"
+    />
+    <NumberInput
+      v-model="rateScale"
+      label="Scale (R₀)"
+      slider
+      :live="live"
+      :min="0"
+      :max="6"
+      :step="0.1"
+    />
   </template>
   <template v-else-if="modelValue.type === 'library'">
     <p class="schedule-hint">
-      Library of {{ libraryCount }} per-person curves. Each person draws
-      one uniformly at setup. The model rescales the library at runtime
-      so Scale is the expected R₀ under random mixing.
+      Library of {{ libraryCount }} per-person curves. Each person draws one
+      uniformly at setup. The model rescales the library at runtime so Scale is
+      the expected R₀ under random mixing.
     </p>
-    <NumberInput v-model="rateScale" label="Scale (R₀)" slider :live="live" :min="0" :max="6" :step="0.1" />
+    <NumberInput
+      v-model="rateScale"
+      label="Scale (R₀)"
+      slider
+      :live="live"
+      :min="0"
+      :max="6"
+      :step="0.1"
+    />
     <div class="library-actions">
       <Button variant="secondary" @click="triggerUpload">Upload CSV</Button>
-      <Button variant="secondary" @click="restoreDefaultLibrary">Restore default</Button>
-      <input ref="fileInput" type="file" accept=".csv,text/csv" class="library-file-input" @change="onFile" />
+      <Button variant="secondary" @click="restoreDefaultLibrary"
+        >Restore default</Button
+      >
+      <input
+        ref="fileInput"
+        type="file"
+        accept=".csv,text/csv"
+        class="library-file-input"
+        @change="onFile"
+      />
     </div>
     <p v-if="uploadError" class="library-error">{{ uploadError }}</p>
-    <SelectBox v-if="libraryCount" label="View" :options="libraryViewOptions" :model-value="libraryView"
-      @update:model-value="(v) => (libraryView = v as LibraryView)" />
+    <SelectBox
+      v-if="libraryCount"
+      label="View"
+      :options="libraryViewOptions"
+      :model-value="libraryView"
+      @update:model-value="(v) => (libraryView = v as LibraryView)"
+    />
     <div v-if="libraryCount && libraryView === 'mean'" class="library-overlay">
-      <LineChart :series="overlaySeries" :height="160" :y-min="0" :y-max="libraryYMax" :menu="false"
-        x-label="τ (days since infected)" y-label="rate" :axis-label-style="{ fontSize: 10 }"
-        :tick-label-style="{ fontSize: 10 }" tooltip-trigger="hover">
+      <LineChart
+        :series="overlaySeries"
+        :height="160"
+        :y-min="0"
+        :y-max="libraryYMax"
+        :menu="false"
+        x-label="τ (days since infected)"
+        y-label="rate"
+        :axis-label-style="{ fontSize: 10 }"
+        :tick-label-style="{ fontSize: 10 }"
+        tooltip-trigger="hover"
+      >
         <template #tooltip="{ xLabel, values }">
           <div class="curve-tooltip">
             <div v-if="xLabel != null" class="curve-tooltip-label">
@@ -524,10 +617,22 @@ function formatRate(v: unknown): string {
     </div>
     <template v-if="libraryCount && libraryView === 'grid'">
       <div class="library-grid" @vue:mounted="watchSize">
-        <div v-for="(curve, i) in pagedCurves" :key="pageStart + i" class="library-cell">
+        <div
+          v-for="(curve, i) in pagedCurves"
+          :key="pageStart + i"
+          class="library-cell"
+        >
           <div class="library-cell-label">#{{ pageStart + i + 1 }}</div>
-          <LineChart :series="curveSeries(curve)" :height="100" :y-min="0" :y-max="libraryYMax" :menu="false"
-            :axis-label-style="{ fontSize: 9 }" :tick-label-style="{ fontSize: 9 }" tooltip-trigger="hover">
+          <LineChart
+            :series="curveSeries(curve)"
+            :height="100"
+            :y-min="0"
+            :y-max="libraryYMax"
+            :menu="false"
+            :axis-label-style="{ fontSize: 9 }"
+            :tick-label-style="{ fontSize: 9 }"
+            tooltip-trigger="hover"
+          >
             <template #tooltip="{ xLabel, values }">
               <div class="curve-tooltip">
                 <div v-if="xLabel != null" class="curve-tooltip-label">
@@ -543,9 +648,18 @@ function formatRate(v: unknown): string {
         </div>
       </div>
       <div v-if="pageCount > 1" class="library-pager">
-        <Button variant="secondary" :disabled="page === 0" @click="prevPage">‹ Prev</Button>
-        <span class="library-page-info">Page {{ page + 1 }} / {{ pageCount }}</span>
-        <Button variant="secondary" :disabled="page >= pageCount - 1" @click="nextPage">Next ›</Button>
+        <Button variant="secondary" :disabled="page === 0" @click="prevPage"
+          >‹ Prev</Button
+        >
+        <span class="library-page-info"
+          >Page {{ page + 1 }} / {{ pageCount }}</span
+        >
+        <Button
+          variant="secondary"
+          :disabled="page >= pageCount - 1"
+          @click="nextPage"
+          >Next ›</Button
+        >
       </div>
     </template>
   </template>
@@ -554,8 +668,17 @@ function formatRate(v: unknown): string {
     <span class="rate-r0-value">{{ formatR0(r0RandomMixing) }}</span>
   </div>
   <div v-if="modelValue.type !== 'library'" class="rate-preview">
-    <LineChart :series="previewSeries" :height="120" :y-min="0" :menu="false" x-label="τ (days since infected)"
-      y-label="rate" :axis-label-style="{ fontSize: 10 }" :tick-label-style="{ fontSize: 10 }" tooltip-trigger="hover">
+    <LineChart
+      :series="previewSeries"
+      :height="120"
+      :y-min="0"
+      :menu="false"
+      x-label="τ (days since infected)"
+      y-label="rate"
+      :axis-label-style="{ fontSize: 10 }"
+      :tick-label-style="{ fontSize: 10 }"
+      tooltip-trigger="hover"
+    >
       <template #tooltip="{ xLabel, values }">
         <div class="curve-tooltip">
           <div v-if="xLabel != null" class="curve-tooltip-label">

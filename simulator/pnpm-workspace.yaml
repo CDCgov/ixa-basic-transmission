@@ -1,6 +1,6 @@
 minimumReleaseAgeExclude:
   - cfasim-*
-  - '@cfasim-ui/*'
+  - "@cfasim-ui/*"
 
 onlyBuiltDependencies:
   - vue-demi

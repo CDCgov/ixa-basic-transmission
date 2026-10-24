@@ -128,7 +128,9 @@ test.describe("Rate explorer tab", () => {
     await page.getByRole("button", { name: "Simulate 100×" }).click();
     const sim = page.locator(".explorer-sim");
     await expect(
-      sim.getByRole("heading", { name: "Distribution of simulated event times" }),
+      sim.getByRole("heading", {
+        name: "Distribution of simulated event times",
+      }),
     ).toBeVisible();
     await expect(sim).toContainText("event time");
     await expect(sim.locator("svg")).toBeVisible();
@@ -195,7 +197,9 @@ test.describe("Rate explorer tab", () => {
     await draw.click();
     await expect(page.locator(".timeline-svg .sim-dot")).toHaveCount(0);
     await expect(page.locator(".explorer-sim")).toBeVisible();
-    await expect(page.locator(".timeline-title")).not.toContainText("This round");
+    await expect(page.locator(".timeline-title")).not.toContainText(
+      "This round",
+    );
   });
 
   test("constant rate offers a Generalized toggle that swaps the view", async ({
@@ -210,9 +214,7 @@ test.describe("Rate explorer tab", () => {
     await expect(toggle).toBeVisible();
     await expect(toggle).not.toBeChecked();
     await page.getByRole("button", { name: "Draw next" }).click();
-    await expect(
-      page.getByRole("columnheader", { name: /Δτ/ }),
-    ).toBeVisible();
+    await expect(page.getByRole("columnheader", { name: /Δτ/ })).toBeVisible();
 
     // Toggle on → general inverse-CDF view: c(t) chart + the Exp(1) column.
     await toggle.click();
@@ -232,7 +234,9 @@ test.describe("Rate explorer tab", () => {
     await page.getByRole("button", { name: "Explore", exact: true }).click();
 
     const toggle = page.getByRole("switch", { name: "Generalized" });
-    const title = page.getByRole("heading", { name: "Intrinsic Infectiousness" });
+    const title = page.getByRole("heading", {
+      name: "Intrinsic Infectiousness",
+    });
     const subtitle = page.locator(".explorer-subtitle");
     await expect(toggle).toBeVisible();
 
@@ -254,9 +258,9 @@ test.describe("Rate explorer tab", () => {
     await page.getByRole("combobox", { name: "Infectiousness" }).click();
     await page.getByRole("option", { name: "Parametric", exact: true }).click();
     await page.getByRole("button", { name: "Explore", exact: true }).click();
-    await expect(
-      page.getByRole("switch", { name: "Generalized" }),
-    ).toHaveCount(0);
+    await expect(page.getByRole("switch", { name: "Generalized" })).toHaveCount(
+      0,
+    );
   });
 
   test("explorer reflects the selected rate type", async ({ page }) => {

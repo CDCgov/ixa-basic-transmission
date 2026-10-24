@@ -113,21 +113,40 @@ function pct(fraction: number): string {
     <div class="modifiers-header">
       <h3>Modifiers</h3>
       <p class="muted">
-        Interventions that modify infectiousness: by impacting transmission (facemask, antiviral)
-        or their contacts (isolation). Active modifiers compose.
+        Interventions that modify infectiousness: by impacting transmission
+        (facemask, antiviral) or their contacts (isolation). Active modifiers
+        compose.
       </p>
     </div>
 
     <!-- Facemask -->
     <div class="modifier-card">
-      <Toggle :model-value="!!modifiers.facemask" label="Facemask"
-        hint="Masks donned at a random time during infectiousness." @update:model-value="toggleFacemask" />
+      <Toggle
+        :model-value="!!modifiers.facemask"
+        label="Facemask"
+        hint="Masks donned at a random time during infectiousness."
+        @update:model-value="toggleFacemask"
+      />
       <template v-if="modifiers.facemask">
         <div class="modifier-row">
-          <NumberInput :model-value="modifiers.facemask.coverage" percent label="Coverage" :min="0" :max="1"
-            :live="live" @update:model-value="(v: number) => setFacemask('coverage', v)" />
-          <NumberInput :model-value="modifiers.facemask.effectiveness" percent label="Effectiveness" :min="0" :max="1"
-            :live="live" @update:model-value="(v: number) => setFacemask('effectiveness', v)" />
+          <NumberInput
+            :model-value="modifiers.facemask.coverage"
+            percent
+            label="Coverage"
+            :min="0"
+            :max="1"
+            :live="live"
+            @update:model-value="(v: number) => setFacemask('coverage', v)"
+          />
+          <NumberInput
+            :model-value="modifiers.facemask.effectiveness"
+            percent
+            label="Effectiveness"
+            :min="0"
+            :max="1"
+            :live="live"
+            @update:model-value="(v: number) => setFacemask('effectiveness', v)"
+          />
         </div>
         <p class="effect">
           Masked people transmit at
@@ -139,55 +158,114 @@ function pct(fraction: number): string {
 
     <!-- Antiviral -->
     <div class="modifier-card">
-      <Toggle :model-value="!!modifiers.antiviral" label="Antiviral treatment"
-        hint="Treatment starts a fixed delay after infection." @update:model-value="toggleAntiviral" />
+      <Toggle
+        :model-value="!!modifiers.antiviral"
+        label="Antiviral treatment"
+        hint="Treatment starts a fixed delay after infection."
+        @update:model-value="toggleAntiviral"
+      />
       <template v-if="modifiers.antiviral">
         <div class="modifier-row">
-          <NumberInput :model-value="modifiers.antiviral.coverage" percent label="Coverage" :min="0" :max="1"
-            :live="live" @update:model-value="(v: number) => setAntiviral('coverage', v)" />
-          <NumberInput :model-value="modifiers.antiviral.efficacy" percent label="Efficacy" :min="0" :max="1"
-            :live="live" @update:model-value="(v: number) => setAntiviral('efficacy', v)" />
+          <NumberInput
+            :model-value="modifiers.antiviral.coverage"
+            percent
+            label="Coverage"
+            :min="0"
+            :max="1"
+            :live="live"
+            @update:model-value="(v: number) => setAntiviral('coverage', v)"
+          />
+          <NumberInput
+            :model-value="modifiers.antiviral.efficacy"
+            percent
+            label="Efficacy"
+            :min="0"
+            :max="1"
+            :live="live"
+            @update:model-value="(v: number) => setAntiviral('efficacy', v)"
+          />
         </div>
         <div class="modifier-row">
-          <NumberInput :model-value="modifiers.antiviral.delay" label="Treatment delay" :min="0" :step="0.5"
-            :live="live" @update:model-value="(v: number) => setAntiviral('delay', v)" />
+          <NumberInput
+            :model-value="modifiers.antiviral.delay"
+            label="Treatment delay"
+            :min="0"
+            :step="0.5"
+            :live="live"
+            @update:model-value="(v: number) => setAntiviral('delay', v)"
+          />
         </div>
         <p class="effect">
           Treated people transmit at
           <strong>{{ pct(modifiers.antiviral.efficacy) }}</strong>
-          of baseline, starting {{ modifiers.antiviral.delay }} days after infection.
+          of baseline, starting {{ modifiers.antiviral.delay }} days after
+          infection.
         </p>
       </template>
     </div>
 
     <!-- Isolation (restricts contacts to one setting) -->
     <div class="modifier-card">
-      <Toggle :model-value="!!modifiers.isolation" label="Isolation"
-        hint="Confine contacts to one setting (e.g. household) after infection." :disabled="settingNames.length === 0"
-        @update:model-value="toggleIsolation" />
+      <Toggle
+        :model-value="!!modifiers.isolation"
+        label="Isolation"
+        hint="Confine contacts to one setting (e.g. household) after infection."
+        :disabled="settingNames.length === 0"
+        @update:model-value="toggleIsolation"
+      />
       <p v-if="settingNames.length === 0" class="muted">
         Add a setting above to enable isolation
       </p>
       <template v-if="modifiers.isolation">
         <div class="modifier-row">
-          <NumberInput :model-value="modifiers.isolation.coverage" percent label="Coverage" :min="0" :max="1"
-            :live="live" @update:model-value="(v: number) => setIsolation({ coverage: v })" />
-          <SelectBox label="Restrict to" :options="settingOptions" :model-value="modifiers.isolation.restrictTo"
-            @update:model-value="(v: string) => setIsolation({ restrictTo: v })" />
+          <NumberInput
+            :model-value="modifiers.isolation.coverage"
+            percent
+            label="Coverage"
+            :min="0"
+            :max="1"
+            :live="live"
+            @update:model-value="(v: number) => setIsolation({ coverage: v })"
+          />
+          <SelectBox
+            label="Restrict to"
+            :options="settingOptions"
+            :model-value="modifiers.isolation.restrictTo"
+            @update:model-value="(v: string) => setIsolation({ restrictTo: v })"
+          />
         </div>
         <div class="modifier-row">
-          <NumberInput :model-value="modifiers.isolation.delay" label="Isolation delay" :min="0" :step="0.5"
-            :live="live" @update:model-value="(v: number) => setIsolation({ delay: v })" />
+          <NumberInput
+            :model-value="modifiers.isolation.delay"
+            label="Isolation delay"
+            :min="0"
+            :step="0.5"
+            :live="live"
+            @update:model-value="(v: number) => setIsolation({ delay: v })"
+          />
         </div>
-        <Toggle :model-value="modifiers.isolation.duration !== null" label="Ends after a window"
-          @update:model-value="toggleIsolationDuration" />
+        <Toggle
+          :model-value="modifiers.isolation.duration !== null"
+          label="Ends after a window"
+          @update:model-value="toggleIsolationDuration"
+        />
         <div v-if="modifiers.isolation.duration !== null" class="modifier-row">
-          <NumberInput :model-value="modifiers.isolation.duration" label="Isolation duration" :min="0" :step="0.5"
-            :live="live" @update:model-value="(v: number) => setIsolation({ duration: v })" />
+          <NumberInput
+            :model-value="modifiers.isolation.duration"
+            label="Isolation duration"
+            :min="0"
+            :step="0.5"
+            :live="live"
+            @update:model-value="(v: number) => setIsolation({ duration: v })"
+          />
         </div>
         <p class="effect">
-          Isolated people contact only their <strong>{{ modifiers.isolation.restrictTo }}</strong>{{
-            modifiers.isolation.duration !== null ? ` for ${modifiers.isolation.duration} days` : ""
+          Isolated people contact only their
+          <strong>{{ modifiers.isolation.restrictTo }}</strong
+          >{{
+            modifiers.isolation.duration !== null
+              ? ` for ${modifiers.isolation.duration} days`
+              : ""
           }}, starting {{ modifiers.isolation.delay }} days after infection.
         </p>
       </template>
@@ -234,7 +312,7 @@ function pct(fraction: number): string {
   gap: 0.5em;
 }
 
-.modifier-row>* {
+.modifier-row > * {
   flex: 1 1 0;
 }
 

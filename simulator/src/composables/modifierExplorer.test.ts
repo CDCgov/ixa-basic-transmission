@@ -70,10 +70,9 @@ describe("modifiedRateCurve", () => {
     expect(modifiedRateCurve(base, { activatesAt: 9, factor: 0.5 }).total).toBe(
       base.total,
     );
-    expect(modifiedRateCurve(base, { activatesAt: 0, factor: 0.5 }).total).toBeCloseTo(
-      base.total / 2,
-      12,
-    );
+    expect(
+      modifiedRateCurve(base, { activatesAt: 0, factor: 0.5 }).total,
+    ).toBeCloseTo(base.total / 2, 12);
   });
 });
 
@@ -104,7 +103,13 @@ describe("a modifier that raises the rate (f > 1)", () => {
     ]);
     expect(attempts.map((a) => a.outcome)).toEqual(["cancelled", "event"]);
     expect(attempts[1].tau).toBeCloseTo(2.5, 12);
-    const runs = simulateReschedulingRuns(base, mod, spec, 4000, mulberry32(10));
+    const runs = simulateReschedulingRuns(
+      base,
+      mod,
+      spec,
+      4000,
+      mulberry32(10),
+    );
     const mean = runs.reduce((a, r) => a + r.events.length, 0) / runs.length;
     expect(mean).toBeCloseTo(5, 0);
   });
@@ -156,7 +161,11 @@ describe("reschedulingAttempts", () => {
       1.5, // τ = 2.5 ≥ t_m → cancelled
       0.5, // from t_m on f·r: Λ_mod(2) + 0.5 → τ = 2 + 0.5/0.5 = 3
     ]);
-    expect(attempts.map((a) => a.outcome)).toEqual(["event", "cancelled", "event"]);
+    expect(attempts.map((a) => a.outcome)).toEqual([
+      "event",
+      "cancelled",
+      "event",
+    ]);
     expect(attempts[1].onModified).toBe(false);
     expect(attempts[1].tau).toBeCloseTo(2.5, 12);
     expect(attempts[2].onModified).toBe(true);
@@ -183,9 +192,12 @@ describe("reschedulingAttempts", () => {
 
   it("never cancels when the modifier is inert", () => {
     const inert = { activatesAt: 9, factor: 0.5 };
-    const attempts = reschedulingAttempts(base, modifiedRateCurve(base, inert), inert, [
-      3.5, 1,
-    ]);
+    const attempts = reschedulingAttempts(
+      base,
+      modifiedRateCurve(base, inert),
+      inert,
+      [3.5, 1],
+    );
     expect(attempts.map((a) => a.outcome)).toEqual(["event", "recovered"]);
   });
 });
@@ -197,7 +209,13 @@ describe("the two methods sample the same process", () => {
     const mod = modifiedRateCurve(base, spec);
     const runs = 4000;
     const thin = simulateThinningRuns(base, spec, runs, mulberry32(1));
-    const resched = simulateReschedulingRuns(base, mod, spec, runs, mulberry32(2));
+    const resched = simulateReschedulingRuns(
+      base,
+      mod,
+      spec,
+      runs,
+      mulberry32(2),
+    );
     const thinMean = thin.reduce((a, r) => a + r.accepted.length, 0) / runs;
     const reschedMean = resched.reduce((a, r) => a + r.events.length, 0) / runs;
     // Poisson counts with mean ≈ 1.6 → sd of the mean over 4000 runs ≈ 0.02.
@@ -211,9 +229,12 @@ describe("the two methods sample the same process", () => {
     const spec = { activatesAt: 2, factor: 0.25 };
     const mod = modifiedRateCurve(base, spec);
     const runs = 4000;
-    const thinTimes = simulateThinningRuns(base, spec, runs, mulberry32(3)).flatMap(
-      (r) => r.accepted,
-    );
+    const thinTimes = simulateThinningRuns(
+      base,
+      spec,
+      runs,
+      mulberry32(3),
+    ).flatMap((r) => r.accepted);
     const reschedTimes = simulateReschedulingRuns(
       base,
       mod,
@@ -222,7 +243,8 @@ describe("the two methods sample the same process", () => {
       mulberry32(4),
     ).flatMap((r) => r.events);
     // Expected events per run: 2 before t_m, 0.25·2 = 0.5 after → 20% after.
-    const afterShare = (ts: number[]) => ts.filter((t) => t >= 2).length / ts.length;
+    const afterShare = (ts: number[]) =>
+      ts.filter((t) => t >= 2).length / ts.length;
     expect(afterShare(thinTimes)).toBeCloseTo(0.2, 1);
     expect(afterShare(reschedTimes)).toBeCloseTo(0.2, 1);
   });
@@ -242,11 +264,18 @@ describe("the two methods sample the same process", () => {
     const acceptRate = after.reduce((a, b) => a + b, 0) / after.length;
     expect(acceptRate).toBeCloseTo(0.25, 1);
 
-    const resched = simulateReschedulingRuns(base, mod, spec, 500, mulberry32(7));
+    const resched = simulateReschedulingRuns(
+      base,
+      mod,
+      spec,
+      500,
+      mulberry32(7),
+    );
     expect(resched.every((r) => r.cancelled <= 1)).toBe(true);
     // A run cancels iff a forecast was pending past t_m: P(no event on r(t)
     // reaching past 4 before 2) is small but nonzero, so most runs cancel.
-    const share = resched.filter((r) => r.cancelled === 1).length / resched.length;
+    const share =
+      resched.filter((r) => r.cancelled === 1).length / resched.length;
     expect(share).toBeGreaterThan(0.8);
     const one = simulateRescheduling(base, mod, spec, mulberry32(8));
     expect(one.events.every((t) => t >= 0 && t <= 4)).toBe(true);

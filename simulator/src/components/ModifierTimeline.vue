@@ -56,39 +56,101 @@ function fmt(v: number): string {
 
 <template>
   <div ref="el" class="mtl-wrap">
-    <svg :width="width" :height="HEIGHT" class="mtl-svg" role="img"
-      aria-label="Infection event timeline">
-      <line :x1="tx(0)" :y1="AXIS_Y" :x2="tx(duration)" :y2="AXIS_Y" stroke="var(--color-border)"
-        stroke-width="2" />
-      <text :x="tx(0)" :y="AXIS_Y + 22" text-anchor="start" class="mtl-label">0</text>
-      <text :x="tx(duration)" :y="AXIS_Y + 22" text-anchor="end" class="mtl-label">
+    <svg
+      :width="width"
+      :height="HEIGHT"
+      class="mtl-svg"
+      role="img"
+      aria-label="Infection event timeline"
+    >
+      <line
+        :x1="tx(0)"
+        :y1="AXIS_Y"
+        :x2="tx(duration)"
+        :y2="AXIS_Y"
+        stroke="var(--color-border)"
+        stroke-width="2"
+      />
+      <text :x="tx(0)" :y="AXIS_Y + 22" text-anchor="start" class="mtl-label">
+        0
+      </text>
+      <text
+        :x="tx(duration)"
+        :y="AXIS_Y + 22"
+        text-anchor="end"
+        class="mtl-label"
+      >
         {{ fmt(duration) }}
       </text>
 
       <template v-if="modifierOn">
-        <line :x1="tx(activatesAt)" :y1="AXIS_Y - 14" :x2="tx(activatesAt)" :y2="AXIS_Y + 10"
-          class="mtl-activation" stroke-width="1.5" stroke-dasharray="3 2" />
-        <text :x="tx(activatesAt)" :y="AXIS_Y - 17" text-anchor="middle" class="mtl-label mtl-activation-label">
+        <line
+          :x1="tx(activatesAt)"
+          :y1="AXIS_Y - 14"
+          :x2="tx(activatesAt)"
+          :y2="AXIS_Y + 10"
+          class="mtl-activation"
+          stroke-width="1.5"
+          stroke-dasharray="3 2"
+        />
+        <text
+          :x="tx(activatesAt)"
+          :y="AXIS_Y - 17"
+          text-anchor="middle"
+          class="mtl-label mtl-activation-label"
+        >
           modifier on
         </text>
       </template>
 
       <template v-if="simMode">
-        <circle v-for="(dot, i) in simDots" :key="i" :cx="dot.x" :cy="dot.y" r="3.5" class="mtl-sim-dot"
-          :style="{ fill: color }" />
+        <circle
+          v-for="(dot, i) in simDots"
+          :key="i"
+          :cx="dot.x"
+          :cy="dot.y"
+          r="3.5"
+          class="mtl-sim-dot"
+          :style="{ fill: color }"
+        />
       </template>
       <template v-else>
-        <circle v-for="(t, i) in discarded" :key="'d' + i" :cx="tx(t)" :cy="AXIS_Y" r="5" class="mtl-discarded">
+        <circle
+          v-for="(t, i) in discarded"
+          :key="'d' + i"
+          :cx="tx(t)"
+          :cy="AXIS_Y"
+          r="5"
+          class="mtl-discarded"
+        >
           <title>{{ discardedLabel }} at t = {{ fmt(t) }}</title>
         </circle>
-        <circle v-for="(t, i) in events" :key="'e' + i" :cx="tx(t)" :cy="AXIS_Y" r="5" :fill="color"
-          class="mtl-event">
+        <circle
+          v-for="(t, i) in events"
+          :key="'e' + i"
+          :cx="tx(t)"
+          :cy="AXIS_Y"
+          r="5"
+          :fill="color"
+          class="mtl-event"
+        >
           <title>infection at t = {{ fmt(t) }}</title>
         </circle>
         <template v-if="recovered">
-          <line :x1="tx(duration)" :y1="AXIS_Y - 9" :x2="tx(duration)" :y2="AXIS_Y + 9" stroke="#dc2626"
-            stroke-width="2" />
-          <text :x="tx(duration)" :y="AXIS_Y - 12" text-anchor="end" class="mtl-label mtl-recovered">
+          <line
+            :x1="tx(duration)"
+            :y1="AXIS_Y - 9"
+            :x2="tx(duration)"
+            :y2="AXIS_Y + 9"
+            stroke="#dc2626"
+            stroke-width="2"
+          />
+          <text
+            :x="tx(duration)"
+            :y="AXIS_Y - 12"
+            text-anchor="end"
+            class="mtl-label mtl-recovered"
+          >
             recovered
           </text>
         </template>

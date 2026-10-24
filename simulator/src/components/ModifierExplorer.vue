@@ -79,11 +79,17 @@ const thinRejected = computed(() =>
     .map((a) => a.tau as number),
 );
 const thinExhausted = computed(
-  () => thinAttempts.value[thinAttempts.value.length - 1]?.outcome === "recovered",
+  () =>
+    thinAttempts.value[thinAttempts.value.length - 1]?.outcome === "recovered",
 );
 
 const reschedAttempts = computed(() =>
-  reschedulingAttempts(curve.value, modified.value, spec.value, reschedDraws.value),
+  reschedulingAttempts(
+    curve.value,
+    modified.value,
+    spec.value,
+    reschedDraws.value,
+  ),
 );
 const reschedEvents = computed(() =>
   reschedAttempts.value
@@ -97,7 +103,8 @@ const reschedCancelled = computed(() =>
 );
 const reschedExhausted = computed(
   () =>
-    reschedAttempts.value[reschedAttempts.value.length - 1]?.outcome === "recovered",
+    reschedAttempts.value[reschedAttempts.value.length - 1]?.outcome ===
+    "recovered",
 );
 
 // Pooled across every round.
@@ -126,7 +133,10 @@ function drawNext() {
   }
   if (thinningOk.value) {
     const base = thinExhausted.value ? [] : thinDraws.value;
-    const next = [...base, { e: expFromUniform(Math.random()), u: Math.random() }];
+    const next = [
+      ...base,
+      { e: expFromUniform(Math.random()), u: Math.random() },
+    ];
     const attempts = thinningAttempts(curve.value, spec.value, next);
     const last = attempts[attempts.length - 1];
     thinDraws.value = next;
@@ -147,7 +157,12 @@ function drawNext() {
     let attempts;
     do {
       next = [...next, expFromUniform(Math.random())];
-      attempts = reschedulingAttempts(curve.value, modified.value, spec.value, next);
+      attempts = reschedulingAttempts(
+        curve.value,
+        modified.value,
+        spec.value,
+        next,
+      );
       const last = attempts[attempts.length - 1];
       const s = reschedStats.value;
       if (last.outcome === "event") {
@@ -181,7 +196,8 @@ function simulateMany() {
   thinStats.value = {
     times: [...ts.times, ...thinRuns.flatMap((r) => r.accepted)],
     counts: [...ts.counts, ...thinRuns.map((r) => r.accepted.length)],
-    discarded: ts.discarded + thinRuns.reduce((a, r) => a + r.rejected.length, 0),
+    discarded:
+      ts.discarded + thinRuns.reduce((a, r) => a + r.rejected.length, 0),
   };
   const rs = reschedStats.value;
   reschedStats.value = {
@@ -208,10 +224,15 @@ function reset() {
 const hasSamples = computed(() => {
   const t = thinStats.value;
   const r = reschedStats.value;
-  return t.times.length + r.times.length + t.counts.length + r.counts.length > 0;
+  return (
+    t.times.length + r.times.length + t.counts.length + r.counts.length > 0
+  );
 });
 const canReset = computed(
-  () => thinDraws.value.length > 0 || reschedDraws.value.length > 0 || hasSamples.value,
+  () =>
+    thinDraws.value.length > 0 ||
+    reschedDraws.value.length > 0 ||
+    hasSamples.value,
 );
 
 watch([curve, spec], reset);
@@ -300,7 +321,9 @@ const thinSeries = computed(() => {
     s.push({
       ...dotsOnly(PURPLE),
       x: thinEvents.value,
-      data: thinEvents.value.map((t) => modifiedRateAt(curve.value, spec.value, t)),
+      data: thinEvents.value.map((t) =>
+        modifiedRateAt(curve.value, spec.value, t),
+      ),
       legend: "accepted",
     });
   }
@@ -374,7 +397,9 @@ const reschedSeries = computed(() => {
     s.push({
       ...dotsOnly(TEAL),
       x: reschedEvents.value,
-      data: reschedEvents.value.map((t) => modifiedRateAt(curve.value, spec.value, t)),
+      data: reschedEvents.value.map((t) =>
+        modifiedRateAt(curve.value, spec.value, t),
+      ),
       legend: "event",
     });
   }
@@ -391,7 +416,10 @@ const reschedAnnotations = computed(() => {
       {
         x,
         y: rateAtTime(curve.value, x),
-        text: a.tau === null ? "no forecast on r(t): drawn at tₘ" : "cancelled at tₘ, redrawn",
+        text:
+          a.tau === null
+            ? "no forecast on r(t): drawn at tₘ"
+            : "cancelled at tₘ, redrawn",
         offset: { x: right ? 10 : -10, y: 18 },
         align: (right ? "left" : "right") as "left" | "right",
         color: GRAY,
@@ -430,14 +458,28 @@ const distBins = computed(() => {
   return histogramBins(n, 8, MAX_BINS);
 });
 const thinHist = computed(() =>
-  eventTimeHistogram(thinStats.value.times, curve.value.duration, distBins.value),
+  eventTimeHistogram(
+    thinStats.value.times,
+    curve.value.duration,
+    distBins.value,
+  ),
 );
 const reschedHist = computed(() =>
-  eventTimeHistogram(reschedStats.value.times, curve.value.duration, distBins.value),
+  eventTimeHistogram(
+    reschedStats.value.times,
+    curve.value.duration,
+    distBins.value,
+  ),
 );
 const distSeries = computed(() => [
   ...(thinningOk.value
-    ? [{ data: thinHist.value.percentages, color: PURPLE, legend: "Rejection sampling" }]
+    ? [
+        {
+          data: thinHist.value.percentages,
+          color: PURPLE,
+          legend: "Rejection sampling",
+        },
+      ]
     : []),
   { data: reschedHist.value.percentages, color: TEAL, legend: "Rescheduling" },
 ]);
@@ -495,7 +537,10 @@ const reschedTimelineSim = computed(() =>
   mode.value === "sim" ? (simRound.value?.resched ?? []) : null,
 );
 const timelinesVisible = computed(
-  () => mode.value === "sim" || thinDraws.value.length > 0 || reschedDraws.value.length > 0,
+  () =>
+    mode.value === "sim" ||
+    thinDraws.value.length > 0 ||
+    reschedDraws.value.length > 0,
 );
 </script>
 
@@ -505,86 +550,150 @@ const timelinesVisible = computed(
       <h2>Transmission modifiers</h2>
       <p class="mexp-subtitle">{{ desc.title }}</p>
       <p class="mexp-hint">
-        A modifier switches on partway through an infection and scales the person's intrinsic rate r(t) by a
-        factor <strong>f</strong> from then on. Below 1 it reduces infectiousness (an antiviral: 1 − efficacy after
-        its delay; a facemask: 1 − effectiveness once donned); above 1 it raises it. The model already forecast that person's next attempt on the
-        unmodified r(t), so we need to reconcile the pending forecast with the new rate. There are two ways to do this: rejection sampling and rescheduling.
+        A modifier switches on partway through an infection and scales the
+        person's intrinsic rate r(t) by a factor <strong>f</strong> from then
+        on. Below 1 it reduces infectiousness (an antiviral: 1 − efficacy after
+        its delay; a facemask: 1 − effectiveness once donned); above 1 it raises
+        it. The model already forecast that person's next attempt on the
+        unmodified r(t), so we need to reconcile the pending forecast with the
+        new rate. There are two ways to do this: rejection sampling and
+        rescheduling.
       </p>
       <div class="mexp-controls">
-        <NumberInput v-model="activatesAt" label="Activates at (day)" :min="0" :max="curve.duration" :step="0.1"
-          slider live />
-        <NumberInput v-model="factor" label="Infectiousness multiplier f" :min="0" :max="2" :step="0.05" slider live
-          hint="r(t) is multiplied by f once the modifier is on: 1 − effectiveness (facemask) or 1 − efficacy (antiviral) for a reduction; above 1 for a modifier that raises infectiousness." />
+        <NumberInput
+          v-model="activatesAt"
+          label="Activates at (day)"
+          :min="0"
+          :max="curve.duration"
+          :step="0.1"
+          slider
+          live
+        />
+        <NumberInput
+          v-model="factor"
+          label="Infectiousness multiplier f"
+          :min="0"
+          :max="2"
+          :step="0.05"
+          slider
+          live
+          hint="r(t) is multiplied by f once the modifier is on: 1 − effectiveness (facemask) or 1 − efficacy (antiviral) for a reduction; above 1 for a modifier that raises infectiousness."
+        />
       </div>
       <p v-if="!active" class="mexp-note">
-        The modifier is inert for this rate: it never activates, or leaves the rate unchanged.
+        The modifier is inert for this rate: it never activates, or leaves the
+        rate unchanged.
       </p>
       <div class="mexp-buttons">
         <Button :disabled="!hasArea" @click="drawNext">Draw next</Button>
-        <Button variant="secondary" :disabled="!hasArea" @click="simulateMany">Simulate {{ SIM_RUNS }}×</Button>
-        <Button variant="secondary" :disabled="!canReset" @click="reset">Reset</Button>
+        <Button variant="secondary" :disabled="!hasArea" @click="simulateMany"
+          >Simulate {{ SIM_RUNS }}×</Button
+        >
+        <Button variant="secondary" :disabled="!canReset" @click="reset"
+          >Reset</Button
+        >
       </div>
     </header>
 
     <div class="mexp-grid">
       <!-- Rejection sampling -->
-      <div class="mexp-panel mexp-panel-thin" :class="{ 'mexp-panel-off': !thinningOk }">
+      <div
+        class="mexp-panel mexp-panel-thin"
+        :class="{ 'mexp-panel-off': !thinningOk }"
+      >
         <h3>Rejection sampling</h3>
         <p v-if="!thinningOk" class="mexp-note mexp-off-note">
-          Not available when the modifier raises the rate (f = {{ fmt(factor) }} &gt; 1): the unmodified r(t) is
-          no longer an upper bound, so current ÷ forecast would exceed 1 and there is nothing to reject. Only
-          rescheduling can be used.
+          Not available when the modifier raises the rate (f =
+          {{ fmt(factor) }} &gt; 1): the unmodified r(t) is no longer an upper
+          bound, so current ÷ forecast would exceed 1 and there is nothing to
+          reject. Only rescheduling can be used.
         </p>
         <div class="mexp-panel-body">
-        <p class="mexp-hint">
-          Every attempt is forecast on the unmodified <span class="c-blue">r(t)</span>, an upper bound on the
-          true rate. When the attempt time arrives, accept it with probability <strong>current ÷ forecast</strong>.
-          Before the modifier every attempt is accepted; after, it is f·r(τ) ÷ r(τ) = <strong>f</strong>. A rejected attempt is discarded but still used
-          to calculate the next attempt time.
-        </p>
-        <LineChart legend-toggle :series="thinSeries" :areas="thinAreas" :annotations="thinAnnotations" :chart-padding="{ top: 16 }"
-          :height="230" :y-min="0" :menu="false" :tick-label-style="axisTextStyle" :axis-label-style="axisTextStyle"
-          :legend-style="axisTextStyle" x-label="t (days since infected)" y-label="rate" tooltip-trigger="hover">
-          <template #tooltip="{ xLabel, values }">
-            <div class="mexp-tooltip">
-              <div v-if="xLabel != null">Day {{ fmtTau(xLabel) }}</div>
-              <div>r(t) = {{ fmtTau(values[0]?.value) }}</div>
-            </div>
-          </template>
-        </LineChart>
-        <ModifierTimeline v-show="timelinesVisible" :duration="curve.duration" :activates-at="spec.activatesAt"
-          :events="thinEvents" :discarded="thinRejected" :sim-times="thinTimelineSim" :recovered="thinExhausted"
-          :color="PURPLE" discarded-label="rejected attempt" class="mexp-timeline mexp-timeline-thin" />
-        <table v-if="mode === 'draw' && thinAttempts.length" class="mexp-table">
-          <thead>
-            <tr>
-              <th>e ~ Exp(1)</th>
-              <th>
-                τ
-                <Hint text="Forecast attempt time on the unmodified r(t): invert its cumulative rate at the running total of the e's." />
-              </th>
-              <th>
-                p
-                <Hint text="Acceptance probability = current ÷ forecast rate at τ: 1 before the modifier is on, f after." />
-              </th>
-              <th>u ~ U(0,1)</th>
-              <th>outcome</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="(a, i) in thinAttempts" :key="i">
-              <td class="num">{{ fmt(a.e) }}</td>
-              <td class="num">{{ a.tau === null ? "—" : fmt(a.tau) }}</td>
-              <td class="num">{{ a.tau === null ? "—" : fmt(a.pAccept) }}</td>
-              <td class="num">{{ a.u === null ? "—" : fmt(a.u) }}</td>
-              <td>
-                <span v-if="a.outcome === 'accepted'" class="c-purple">accepted</span>
-                <span v-else-if="a.outcome === 'rejected'" class="c-gray">rejected</span>
-                <span v-else class="muted">recovered</span>
-              </td>
-            </tr>
-          </tbody>
-        </table>
+          <p class="mexp-hint">
+            Every attempt is forecast on the unmodified
+            <span class="c-blue">r(t)</span>, an upper bound on the true rate.
+            When the attempt time arrives, accept it with probability
+            <strong>current ÷ forecast</strong>. Before the modifier every
+            attempt is accepted; after, it is f·r(τ) ÷ r(τ) =
+            <strong>f</strong>. A rejected attempt is discarded but still used
+            to calculate the next attempt time.
+          </p>
+          <LineChart
+            legend-toggle
+            :series="thinSeries"
+            :areas="thinAreas"
+            :annotations="thinAnnotations"
+            :chart-padding="{ top: 16 }"
+            :height="230"
+            :y-min="0"
+            :menu="false"
+            :tick-label-style="axisTextStyle"
+            :axis-label-style="axisTextStyle"
+            :legend-style="axisTextStyle"
+            x-label="t (days since infected)"
+            y-label="rate"
+            tooltip-trigger="hover"
+          >
+            <template #tooltip="{ xLabel, values }">
+              <div class="mexp-tooltip">
+                <div v-if="xLabel != null">Day {{ fmtTau(xLabel) }}</div>
+                <div>r(t) = {{ fmtTau(values[0]?.value) }}</div>
+              </div>
+            </template>
+          </LineChart>
+          <ModifierTimeline
+            v-show="timelinesVisible"
+            :duration="curve.duration"
+            :activates-at="spec.activatesAt"
+            :events="thinEvents"
+            :discarded="thinRejected"
+            :sim-times="thinTimelineSim"
+            :recovered="thinExhausted"
+            :color="PURPLE"
+            discarded-label="rejected attempt"
+            class="mexp-timeline mexp-timeline-thin"
+          />
+          <table
+            v-if="mode === 'draw' && thinAttempts.length"
+            class="mexp-table"
+          >
+            <thead>
+              <tr>
+                <th>e ~ Exp(1)</th>
+                <th>
+                  τ
+                  <Hint
+                    text="Forecast attempt time on the unmodified r(t): invert its cumulative rate at the running total of the e's."
+                  />
+                </th>
+                <th>
+                  p
+                  <Hint
+                    text="Acceptance probability = current ÷ forecast rate at τ: 1 before the modifier is on, f after."
+                  />
+                </th>
+                <th>u ~ U(0,1)</th>
+                <th>outcome</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="(a, i) in thinAttempts" :key="i">
+                <td class="num">{{ fmt(a.e) }}</td>
+                <td class="num">{{ a.tau === null ? "—" : fmt(a.tau) }}</td>
+                <td class="num">{{ a.tau === null ? "—" : fmt(a.pAccept) }}</td>
+                <td class="num">{{ a.u === null ? "—" : fmt(a.u) }}</td>
+                <td>
+                  <span v-if="a.outcome === 'accepted'" class="c-purple"
+                    >accepted</span
+                  >
+                  <span v-else-if="a.outcome === 'rejected'" class="c-gray"
+                    >rejected</span
+                  >
+                  <span v-else class="muted">recovered</span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
         </div>
       </div>
 
@@ -592,14 +701,28 @@ const timelinesVisible = computed(
       <div class="mexp-panel mexp-panel-resched">
         <h3>Rescheduling</h3>
         <p class="mexp-hint">
-          Every attempt is forecast on the <span class="c-teal">current</span> rate. The moment the modifier
-          switches on at <strong>tₘ</strong>, a new event is scheduled
-          from tₘ on <strong>f·r(t)</strong>. The original event must be <strong>cancelled</strong>.
+          Every attempt is forecast on the
+          <span class="c-teal">current</span> rate. The moment the modifier
+          switches on at <strong>tₘ</strong>, a new event is scheduled from tₘ
+          on <strong>f·r(t)</strong>. The original event must be
+          <strong>cancelled</strong>.
         </p>
-        <LineChart legend-toggle :series="reschedSeries" :areas="reschedAreas" :annotations="reschedAnnotations"
-          :chart-padding="{ top: 16 }" :height="230" :y-min="0" :menu="false" :tick-label-style="axisTextStyle"
-          :axis-label-style="axisTextStyle" :legend-style="axisTextStyle" x-label="t (days since infected)"
-          y-label="rate" tooltip-trigger="hover">
+        <LineChart
+          legend-toggle
+          :series="reschedSeries"
+          :areas="reschedAreas"
+          :annotations="reschedAnnotations"
+          :chart-padding="{ top: 16 }"
+          :height="230"
+          :y-min="0"
+          :menu="false"
+          :tick-label-style="axisTextStyle"
+          :axis-label-style="axisTextStyle"
+          :legend-style="axisTextStyle"
+          x-label="t (days since infected)"
+          y-label="rate"
+          tooltip-trigger="hover"
+        >
           <template #tooltip="{ xLabel, values }">
             <div class="mexp-tooltip">
               <div v-if="xLabel != null">Day {{ fmtTau(xLabel) }}</div>
@@ -607,21 +730,36 @@ const timelinesVisible = computed(
             </div>
           </template>
         </LineChart>
-        <ModifierTimeline v-show="timelinesVisible" :duration="curve.duration" :activates-at="spec.activatesAt"
-          :events="reschedEvents" :discarded="reschedCancelled" :sim-times="reschedTimelineSim"
-          :recovered="reschedExhausted" :color="TEAL" discarded-label="cancelled forecast"
-          class="mexp-timeline mexp-timeline-resched" />
-        <table v-if="mode === 'draw' && reschedAttempts.length" class="mexp-table">
+        <ModifierTimeline
+          v-show="timelinesVisible"
+          :duration="curve.duration"
+          :activates-at="spec.activatesAt"
+          :events="reschedEvents"
+          :discarded="reschedCancelled"
+          :sim-times="reschedTimelineSim"
+          :recovered="reschedExhausted"
+          :color="TEAL"
+          discarded-label="cancelled forecast"
+          class="mexp-timeline mexp-timeline-resched"
+        />
+        <table
+          v-if="mode === 'draw' && reschedAttempts.length"
+          class="mexp-table"
+        >
           <thead>
             <tr>
               <th>e ~ Exp(1)</th>
               <th>
                 on
-                <Hint text="Which rate the forecast is inverted on: r(t) before the modifier, f·r(t) after." />
+                <Hint
+                  text="Which rate the forecast is inverted on: r(t) before the modifier, f·r(t) after."
+                />
               </th>
               <th>
                 from
-                <Hint text="Where the forecast starts: the previous event, or tₘ for the redraw made when the modifier activates." />
+                <Hint
+                  text="Where the forecast starts: the previous event, or tₘ for the redraw made when the modifier activates."
+                />
               </th>
               <th>τ</th>
               <th>outcome</th>
@@ -635,8 +773,12 @@ const timelinesVisible = computed(
               <td class="num">{{ a.tau === null ? "—" : fmt(a.tau) }}</td>
               <td>
                 <span v-if="a.outcome === 'event'" class="c-teal">event</span>
-                <span v-else-if="a.outcome === 'cancelled'" class="c-gray">cancelled at tₘ</span>
-                <span v-else-if="a.outcome === 'none'" class="c-gray">no forecast on r(t)</span>
+                <span v-else-if="a.outcome === 'cancelled'" class="c-gray"
+                  >cancelled at tₘ</span
+                >
+                <span v-else-if="a.outcome === 'none'" class="c-gray"
+                  >no forecast on r(t)</span
+                >
                 <span v-else class="muted">recovered</span>
                 <span v-if="a.rescheduled" class="muted"> · drawn at tₘ</span>
               </td>
@@ -646,28 +788,52 @@ const timelinesVisible = computed(
       </div>
     </div>
 
-    <p v-if="!hasSamples && !thinDraws.length && !reschedDraws.length" class="mexp-hint mexp-empty">
-      No samples yet. Press <strong>Draw next</strong> to forecast one attempt{{ thinningOk ? " under each method" : "" }}, or
-      <strong>Simulate {{ SIM_RUNS }}×</strong> to build the distribution{{ thinningOk ? "s" : "" }} at once.
+    <p
+      v-if="!hasSamples && !thinDraws.length && !reschedDraws.length"
+      class="mexp-hint mexp-empty"
+    >
+      No samples yet. Press <strong>Draw next</strong> to forecast one attempt{{
+        thinningOk ? " under each method" : ""
+      }}, or <strong>Simulate {{ SIM_RUNS }}×</strong> to build the
+      distribution{{ thinningOk ? "s" : "" }} at once.
     </p>
 
     <div class="mexp-equiv">
       <h3>Distribution of simulated event times</h3>
       <p class="mexp-hint">
-        Event times pooled across every round, binned over the infectious period{{ thinningOk ? ", for each method. Both approach" : ". They approach" }}
-        the modified rate <strong>f·r(t)</strong>; expected infections per individual = the shaded area
-        <strong>{{ fmt(modified.total) }}</strong>.
+        Event times pooled across every round, binned over the infectious
+        period{{
+          thinningOk ? ", for each method. Both approach" : ". They approach"
+        }}
+        the modified rate <strong>f·r(t)</strong>; expected infections per
+        individual = the shaded area <strong>{{ fmt(modified.total) }}</strong
+        >.
       </p>
       <template v-if="hasSamples">
-        <BarChart legend-toggle :categories="reschedHist.categories" :series="distSeries" :summary-lines="distOverlay" :height="220"
-          :menu="false" x-label="t (days since infected)" y-label="% of that method's events"
-          :tick-label-style="axisTextStyle" :axis-label-style="axisTextStyle" :legend-style="axisTextStyle"
-          value-tick-format="%.0f%%" :category-format="distLabel">
+        <BarChart
+          legend-toggle
+          :categories="reschedHist.categories"
+          :series="distSeries"
+          :summary-lines="distOverlay"
+          :height="220"
+          :menu="false"
+          x-label="t (days since infected)"
+          y-label="% of that method's events"
+          :tick-label-style="axisTextStyle"
+          :axis-label-style="axisTextStyle"
+          :legend-style="axisTextStyle"
+          value-tick-format="%.0f%%"
+          :category-format="distLabel"
+        >
           <template #tooltip="{ category, values }">
             <div class="mexp-tooltip">
               <div>t ≈ {{ category }}</div>
-              <div v-if="thinningOk" class="c-purple">rejection sampling: {{ fmtTau(values[0]?.value) }}%</div>
-              <div class="c-teal">rescheduling: {{ fmtTau(values[thinningOk ? 1 : 0]?.value) }}%</div>
+              <div v-if="thinningOk" class="c-purple">
+                rejection sampling: {{ fmtTau(values[0]?.value) }}%
+              </div>
+              <div class="c-teal">
+                rescheduling: {{ fmtTau(values[thinningOk ? 1 : 0]?.value) }}%
+              </div>
             </div>
           </template>
         </BarChart>
@@ -679,7 +845,9 @@ const timelinesVisible = computed(
               <th>Events</th>
               <th>
                 Observed R₀
-                <Hint :text="`Mean events per completed individual; expected ${fmt(modified.total)}.`" />
+                <Hint
+                  :text="`Mean events per completed individual; expected ${fmt(modified.total)}.`"
+                />
               </th>
               <th>Discarded forecasts</th>
               <th>Per individual</th>
@@ -687,11 +855,16 @@ const timelinesVisible = computed(
           </thead>
           <tbody>
             <tr v-for="row in summaryRows" :key="row.method">
-              <td><span class="swatch" :style="{ background: row.color }" /> {{ row.method }}</td>
+              <td>
+                <span class="swatch" :style="{ background: row.color }" />
+                {{ row.method }}
+              </td>
               <td class="num">{{ row.stats.counts.length }}</td>
               <td class="num">{{ row.stats.times.length }}</td>
               <td class="num">{{ fmt(observedR0(row.stats)) }}</td>
-              <td class="num">{{ row.stats.discarded }} {{ row.discardedLabel }}</td>
+              <td class="num">
+                {{ row.stats.discarded }} {{ row.discardedLabel }}
+              </td>
               <td class="num">{{ fmt(perIndividual(row.stats)) }}</td>
             </tr>
           </tbody>

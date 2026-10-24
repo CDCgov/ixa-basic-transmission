@@ -403,7 +403,9 @@ const axisTextStyle = { fontSize: 13 };
     aria-label="View"
     hide-label
     class="main-tabs"
-    @update:model-value="(v) => typeof v === 'string' && setMainTab(v as MainTab)"
+    @update:model-value="
+      (v) => typeof v === 'string' && setMainTab(v as MainTab)
+    "
   />
   <template v-if="mainTab === 'simulate'">
     <p v-if="error" class="error">{{ error }}</p>
@@ -444,7 +446,10 @@ const axisTextStyle = { fontSize: 13 };
       :menu="false"
     />
   </template>
-  <RateExplorer v-else-if="mainTab === 'explore'" :model-value="params.infectionRate" />
+  <RateExplorer
+    v-else-if="mainTab === 'explore'"
+    :model-value="params.infectionRate"
+  />
   <ModifierExplorer v-else :model-value="params.infectionRate" />
 </template>
 

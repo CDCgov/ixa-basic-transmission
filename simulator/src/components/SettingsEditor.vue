@@ -1,6 +1,11 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { NumberInput, TextInput, Button, SelectBox } from "cfasim-ui/components";
+import {
+  NumberInput,
+  TextInput,
+  Button,
+  SelectBox,
+} from "cfasim-ui/components";
 import type { SelectOption } from "cfasim-ui/components";
 import { BarChart } from "cfasim-ui/charts";
 import settingsLibrary from "virtual:settingsLibrary";
@@ -138,20 +143,13 @@ function sizeChartData(s: SettingType) {
         Global random mixing. Add a setting to use density-scaled contact
         groups.
       </p>
-      <p
-        v-else-if="Math.abs(proportionTotal - 1) > 0.01"
-        class="warn"
-      >
-        Itinerary proportions sum to {{ proportionTotal.toFixed(3) }} (the
-        model rate-weights them internally, but a sum of 1 is conventional).
+      <p v-else-if="Math.abs(proportionTotal - 1) > 0.01" class="warn">
+        Itinerary proportions sum to {{ proportionTotal.toFixed(3) }} (the model
+        rate-weights them internally, but a sum of 1 is conventional).
       </p>
     </div>
 
-    <div
-      v-for="(s, i) in settings"
-      :key="i"
-      class="setting-card"
-    >
+    <div v-for="(s, i) in settings" :key="i" class="setting-card">
       <button
         type="button"
         class="icon-button card-remove"
@@ -198,9 +196,7 @@ function sizeChartData(s: SettingType) {
         >
           Σ P(size) = {{ sizesProbabilitySum(s).toFixed(3) }}
         </span>
-        <Button variant="secondary" @click="normalize(i)">
-          Normalize
-        </Button>
+        <Button variant="secondary" @click="normalize(i)"> Normalize </Button>
       </div>
 
       <BarChart
@@ -217,11 +213,7 @@ function sizeChartData(s: SettingType) {
           <span>Probability</span>
           <span></span>
         </div>
-        <div
-          v-for="(p, j) in s.sizes"
-          :key="j"
-          class="size-table-row"
-        >
+        <div v-for="(p, j) in s.sizes" :key="j" class="size-table-row">
           <NumberInput
             :model-value="p[0]"
             :min="1"

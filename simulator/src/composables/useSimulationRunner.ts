@@ -70,16 +70,8 @@ function assembleOutputs(acc: Accumulator): Record<string, ModelOutput> {
     ...acc.trajectories.map((_, i) => f64Col(`cumulative_infections_${i}`)),
     f64Col("cumulative_infections_median"),
   ];
-  const seriesBuffers: TypedColumn[] = [
-    acc.time,
-    ...acc.trajectories,
-    median,
-  ];
-  const series = new ModelOutput(
-    acc.time.length,
-    seriesColumns,
-    seriesBuffers,
-  );
+  const seriesBuffers: TypedColumn[] = [acc.time, ...acc.trajectories, median];
+  const series = new ModelOutput(acc.time.length, seriesColumns, seriesBuffers);
 
   const summaryColumns: ColumnDescriptor[] = [
     f64Col("attack_rate_observed_median"),

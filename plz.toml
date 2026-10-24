@@ -76,6 +76,18 @@ depends = ["ui.setup"]
 run = "vitest run"
 git_hook = "pre-push"
 
+# Check frontend formatting (Prettier)
+[taskgroup.ui.format-check]
+depends = ["ui.setup"]
+run = "prettier --check ."
+fail_hook = { suggest_command = "plz ui format" }
+git_hook = "pre-commit"
+
+# Format frontend code (Prettier)
+[taskgroup.ui.format]
+depends = ["ui.setup"]
+run = "prettier --write ."
+
 # End-to-end browser tests (Playwright). Spins up its own vite dev server.
 [taskgroup.ui.e2e]
 depends = ["ui.setup"]

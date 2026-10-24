@@ -24,11 +24,13 @@ const r0Hi = computed({
 });
 const iiLo = computed({
   get: () => props.modelValue.initialInfectionsLo,
-  set: (v: number) => patch({ initialInfectionsLo: Math.max(0, Math.round(v)) }),
+  set: (v: number) =>
+    patch({ initialInfectionsLo: Math.max(0, Math.round(v)) }),
 });
 const iiHi = computed({
   get: () => props.modelValue.initialInfectionsHi,
-  set: (v: number) => patch({ initialInfectionsHi: Math.max(0, Math.round(v)) }),
+  set: (v: number) =>
+    patch({ initialInfectionsHi: Math.max(0, Math.round(v)) }),
 });
 </script>
 

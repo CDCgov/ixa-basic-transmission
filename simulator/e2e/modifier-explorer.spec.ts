@@ -25,7 +25,10 @@ test.describe("Modifier explorer tab", () => {
     await expect(page.locator(".mexp-timeline-thin")).toBeHidden();
     await expect(page.locator(".mexp-summary")).toHaveCount(0);
 
-    await page.locator(".mexp").getByRole("button", { name: "Draw next" }).click();
+    await page
+      .locator(".mexp")
+      .getByRole("button", { name: "Draw next" })
+      .click();
     await expect(
       page.locator(".mexp-panel-thin .mexp-table tbody tr"),
     ).toHaveCount(1);
@@ -59,9 +62,13 @@ test.describe("Modifier explorer tab", () => {
     await expect(rows.nth(1)).toContainText("cancelled forecasts");
     // Default rate 0.5 × 3, on at day 1, f = 0.5: area 0.5 + 0.5 = 1.
     await expect(
-      page.getByRole("heading", { name: "Distribution of simulated event times" }),
+      page.getByRole("heading", {
+        name: "Distribution of simulated event times",
+      }),
     ).toBeVisible();
-    await expect(page.locator(".mexp-equiv")).toContainText(/shaded area 1(?!\.\d)/);
+    await expect(page.locator(".mexp-equiv")).toContainText(
+      /shaded area 1(?!\.\d)/,
+    );
     await expect(page.locator(".mexp-equiv svg").first()).toBeVisible();
 
     await expect(
@@ -72,7 +79,10 @@ test.describe("Modifier explorer tab", () => {
     ).toBeVisible();
 
     // Drawing after a round keeps the pooled distribution.
-    await page.locator(".mexp").getByRole("button", { name: "Draw next" }).click();
+    await page
+      .locator(".mexp")
+      .getByRole("button", { name: "Draw next" })
+      .click();
     await expect(page.locator(".mtl-sim-dot")).toHaveCount(0);
     await expect(summary).toBeVisible();
   });
@@ -94,7 +104,10 @@ test.describe("Modifier explorer tab", () => {
       "Only rescheduling can be used",
     );
 
-    await page.locator(".mexp").getByRole("button", { name: "Draw next" }).click();
+    await page
+      .locator(".mexp")
+      .getByRole("button", { name: "Draw next" })
+      .click();
     await expect(thin.locator(".mexp-table")).toHaveCount(0);
     await expect(
       page.locator(".mexp-panel-resched .mexp-table tbody tr"),

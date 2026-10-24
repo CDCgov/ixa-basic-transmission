@@ -201,7 +201,8 @@ export function expectedR0(
   for (const s of settings) {
     for (const [n, q] of s.sizes) {
       if (n <= 1) continue;
-      const perTargetRate = attempts * s.proportion * Math.pow(n - 1, s.alpha - 1);
+      const perTargetRate =
+        attempts * s.proportion * Math.pow(n - 1, s.alpha - 1);
       r0 += q * (n - 1) * (1 - Math.exp(-perTargetRate));
     }
   }
@@ -246,9 +247,7 @@ export function withRateType(
     const rates =
       defaultLibrary && defaultLibrary.length
         ? defaultLibrary.map((c) => c.map((p) => [...p] as [number, number]))
-        : [
-            DEFAULT_EMPIRICAL_POINTS.map((p) => [...p]) as [number, number][],
-          ];
+        : [DEFAULT_EMPIRICAL_POINTS.map((p) => [...p]) as [number, number][]];
     return { type: "library", rates, scale: DEFAULT_R0_SCALE };
   }
   return {
@@ -294,7 +293,10 @@ export function withPointAdded(rate: InfectionRate): InfectionRate {
 
 /// Remove the point at index `i`. No-op if it would leave fewer than 2
 /// points (a segment needs both endpoints).
-export function withPointRemoved(rate: InfectionRate, i: number): InfectionRate {
+export function withPointRemoved(
+  rate: InfectionRate,
+  i: number,
+): InfectionRate {
   if (rate.type !== "empirical") return rate;
   if (rate.points.length <= 2) return rate;
   const points = rate.points

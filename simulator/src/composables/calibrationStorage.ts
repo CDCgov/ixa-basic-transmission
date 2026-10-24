@@ -181,15 +181,10 @@ export async function saveBatch(
   await tx.done;
 }
 
-export async function loadRun(
-  runId: string,
-): Promise<
-  | {
-      run: StoredRun;
-      particlesByStage: Particle[][];
-    }
-  | null
-> {
+export async function loadRun(runId: string): Promise<{
+  run: StoredRun;
+  particlesByStage: Particle[][];
+} | null> {
   const d = await db();
   const run = (await d.get(RUNS_STORE, runId)) as StoredRun | undefined;
   if (!run) return null;
@@ -303,10 +298,7 @@ export async function updateConfig(
 
 export async function deleteRun(runId: string): Promise<void> {
   const d = await db();
-  const tx = d.transaction(
-    [RUNS_STORE, PARTICLES_STORE],
-    "readwrite",
-  );
+  const tx = d.transaction([RUNS_STORE, PARTICLES_STORE], "readwrite");
   tx.objectStore(RUNS_STORE).delete(runId);
   const particles = tx.objectStore(PARTICLES_STORE);
   const keys = await particles.index("by_run").getAllKeys(runId);

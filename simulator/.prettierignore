@@ -1,0 +1,5 @@
+dist/
+public/wasm/
+test-results/
+playwright-report/
+pnpm-lock.yaml

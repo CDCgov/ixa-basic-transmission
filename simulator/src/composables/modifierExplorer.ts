@@ -51,7 +51,12 @@ export function modifiedRateCurve(
   spec: ModifierSpec,
 ): RateCurve {
   if (!modifierActive(base, spec)) {
-    return { ...base, x: [...base.x], lambda: [...base.lambda], cum: [...base.cum] };
+    return {
+      ...base,
+      x: [...base.x],
+      lambda: [...base.lambda],
+      cum: [...base.cum],
+    };
   }
   const tm = spec.activatesAt;
   const x: number[] = [];
@@ -215,7 +220,10 @@ interface RescheduleState {
   rescheduled: boolean;
 }
 
-function initialRescheduleState(curve: RateCurve, spec: ModifierSpec): RescheduleState {
+function initialRescheduleState(
+  curve: RateCurve,
+  spec: ModifierSpec,
+): RescheduleState {
   return {
     onModified: modifierActive(curve, spec) && spec.activatesAt <= 0,
     from: 0,
@@ -233,7 +241,13 @@ function reschedulingStep(
 ): { attempt: RescheduleAttempt; next: RescheduleState } {
   const used = state.onModified ? modified : curve;
   const tau = inverseCumulativeRate(used, cumulativeRate(used, state.from) + e);
-  const base = { e, onModified: state.onModified, from: state.from, tau, rescheduled: state.rescheduled };
+  const base = {
+    e,
+    onModified: state.onModified,
+    from: state.from,
+    tau,
+    rescheduled: state.rescheduled,
+  };
   const crossesActivation = tau === null || tau >= spec.activatesAt;
   if (modifierActive(curve, spec) && !state.onModified && crossesActivation) {
     return {
@@ -241,7 +255,8 @@ function reschedulingStep(
       next: { onModified: true, from: spec.activatesAt, rescheduled: true },
     };
   }
-  if (tau === null) return { attempt: { ...base, outcome: "recovered" }, next: state };
+  if (tau === null)
+    return { attempt: { ...base, outcome: "recovered" }, next: state };
   return {
     attempt: { ...base, outcome: "event" },
     next: { onModified: state.onModified, from: tau, rescheduled: false },

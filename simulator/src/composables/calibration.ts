@@ -17,7 +17,11 @@ import type { SettingType } from "./settings";
 ///   - `Parametric` → `scale = r0` (lowered to a unit-area curve at runtime)
 export function withR0(rate: InfectionRate, r0: number): InfectionRate {
   if (rate.type === "constant") {
-    return { type: "constant", value: r0 / rate.duration, duration: rate.duration };
+    return {
+      type: "constant",
+      value: r0 / rate.duration,
+      duration: rate.duration,
+    };
   }
   if (rate.type === "empirical") {
     return { ...rate, scale: r0 };
@@ -224,9 +228,7 @@ export function parseTargetCsv(text: string): number[] {
   if (lines.length === 0) return [];
   // Skip header if the first row has non-numeric cells.
   const firstCells = lines[0].split(",");
-  const hasHeader = firstCells.some(
-    (c) => !Number.isFinite(Number(c.trim())),
-  );
+  const hasHeader = firstCells.some((c) => !Number.isFinite(Number(c.trim())));
   const dataLines = hasHeader ? lines.slice(1) : lines;
   return dataLines.map((line, i) => {
     const cells = line.split(",");
@@ -235,7 +237,9 @@ export function parseTargetCsv(text: string): number[] {
     const raw = cells[cells.length - 1].trim();
     const v = Number(raw);
     if (!Number.isFinite(v) || v < 0) {
-      throw new Error(`Invalid incidence at row ${i + (hasHeader ? 2 : 1)}: "${raw}"`);
+      throw new Error(
+        `Invalid incidence at row ${i + (hasHeader ? 2 : 1)}: "${raw}"`,
+      );
     }
     return Math.round(v);
   });

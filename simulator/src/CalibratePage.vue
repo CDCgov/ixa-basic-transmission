@@ -58,8 +58,7 @@ const defaults = {
   varianceFactor: seed.varianceFactor ?? 2.0,
   probKeepSeed: seed.probKeepSeed ?? 0.0,
   distanceMetric: (seed.distanceMetric ?? "cumulative") as
-    | "cumulative"
-    | "daily",
+    "cumulative" | "daily",
   // Manual entry by default — the user can populate the table from a
   // model run or a CSV via the buttons next to the editor. `targetMode`
   // is provenance only (what last filled the table); it no longer drives
@@ -522,9 +521,7 @@ async function startRun() {
     // out-of-range rows so the user fixes them rather than silently
     // losing those observations.
     const maxDay = Math.floor(params.maxTime);
-    const offending = targetRows.value.find(
-      (r) => r.day < 1 || r.day > maxDay,
-    );
+    const offending = targetRows.value.find((r) => r.day < 1 || r.day > maxDay);
     if (offending) {
       errorMessage.value = `Day ${offending.day} is outside 1…${maxDay} (max time). Adjust the day or increase max time.`;
       return;
@@ -815,8 +812,12 @@ const stageOverlays = computed<{
     if (stages[s] && stages[s].length) present.push(s);
   }
   const n = present.length;
-  const { r0Lo, r0Hi, initialInfectionsLo: iiLo, initialInfectionsHi: iiHi } =
-    params.priors;
+  const {
+    r0Lo,
+    r0Hi,
+    initialInfectionsLo: iiLo,
+    initialInfectionsHi: iiHi,
+  } = params.priors;
   const iiRange = Math.max(1, iiHi - iiLo + 1);
 
   const r0Series: OverlaySeries[] = [];
@@ -887,7 +888,9 @@ const statusLabel = computed(() => {
   const c = runner.config.value;
   const have = runner.particlesByStage.value[stage]?.length ?? 0;
   const target = c?.nParticles ?? params.nParticles;
-  const totalStages = c ? c.stages.length + 1 : parseStages(params.stagesText).length + 1;
+  const totalStages = c
+    ? c.stages.length + 1
+    : parseStages(params.stagesText).length + 1;
   const stageLabel = stage === 0 ? "0 (prior)" : String(stage);
   return `${s === "paused" ? "Paused" : "Running"} — stage ${stageLabel}/${totalStages - 1} — ${have}/${target} particles`;
 });
@@ -972,22 +975,48 @@ const observedGapSections = computed(() => {
           No saved runs yet. Configure below and click Start.
         </p>
         <ul v-else class="run-list__items">
-          <li v-for="r in savedRuns" :key="r.id" class="run-list__item"
-            :class="{ 'run-list__item--active': r.id === selectedRunId }">
-            <form v-if="editingRunId === r.id" class="run-list__edit-form" @submit.prevent="commitEdit">
-              <input v-model="editingName" class="run-list__edit-input"
-                :class="{ 'run-list__edit-input--invalid': editingInvalid }" :aria-label="`Rename ${r.name}`"
-                :title="editingInvalid ? 'Name cannot be empty' : undefined" autofocus
-                @keydown.escape.prevent="cancelEdit" @input="editingInvalid = false" @blur="commitEdit" />
+          <li
+            v-for="r in savedRuns"
+            :key="r.id"
+            class="run-list__item"
+            :class="{ 'run-list__item--active': r.id === selectedRunId }"
+          >
+            <form
+              v-if="editingRunId === r.id"
+              class="run-list__edit-form"
+              @submit.prevent="commitEdit"
+            >
+              <input
+                v-model="editingName"
+                class="run-list__edit-input"
+                :class="{ 'run-list__edit-input--invalid': editingInvalid }"
+                :aria-label="`Rename ${r.name}`"
+                :title="editingInvalid ? 'Name cannot be empty' : undefined"
+                autofocus
+                @keydown.escape.prevent="cancelEdit"
+                @input="editingInvalid = false"
+                @blur="commitEdit"
+              />
             </form>
-            <button v-else type="button" class="run-list__select"
-              :title="`${r.name} · ${liveStatus(r)} (double-click to rename)`" @click="onSelectRun(r.id)"
-              @dblclick="startEditing(r)">
+            <button
+              v-else
+              type="button"
+              class="run-list__select"
+              :title="`${r.name} · ${liveStatus(r)} (double-click to rename)`"
+              @click="onSelectRun(r.id)"
+              @dblclick="startEditing(r)"
+            >
               <span class="run-list__name">{{ r.name }}</span>
               <span class="run-list__status">{{ liveStatus(r) }}</span>
             </button>
-            <button v-if="editingRunId !== r.id" type="button" class="run-list__delete" :title="`Delete ${r.name}`"
-              :aria-label="`Delete ${r.name}`" @click="requestDelete(r)">
+            <button
+              v-if="editingRunId !== r.id"
+              type="button"
+              class="run-list__delete"
+              :title="`Delete ${r.name}`"
+              :aria-label="`Delete ${r.name}`"
+              @click="requestDelete(r)"
+            >
               ×
             </button>
           </li>
@@ -1003,10 +1032,21 @@ const observedGapSections = computed(() => {
       <section class="cal-section">
         <h3>Model</h3>
         <RateEditor v-model="params.infectionRate" />
-        <NumberInput v-model="params.population" label="Population" :min="100" />
-        <NumberInput v-model="params.initialInfections" label="Initial infections (truth, used in synthetic mode)"
-          :min="1" />
-        <NumberInput v-model="params.maxTime" label="Max time (days)" :min="1" />
+        <NumberInput
+          v-model="params.population"
+          label="Population"
+          :min="100"
+        />
+        <NumberInput
+          v-model="params.initialInfections"
+          label="Initial infections (truth, used in synthetic mode)"
+          :min="1"
+        />
+        <NumberInput
+          v-model="params.maxTime"
+          label="Max time (days)"
+          :min="1"
+        />
         <SettingsEditor v-model="params.settings" />
       </section>
 
@@ -1017,23 +1057,47 @@ const observedGapSections = computed(() => {
 
       <section class="cal-section">
         <h3>Calibration controls</h3>
-        <NumberInput v-model="params.nParticles" label="Particles per stage" :min="10" />
+        <NumberInput
+          v-model="params.nParticles"
+          label="Particles per stage"
+          :min="10"
+        />
         <NumberInput v-model="params.batchSize" label="Batch size" :min="1" />
         <NumberInput v-model="params.seed" label="Seed" :min="0" />
-        <NumberInput v-model="params.varianceFactor"
-          label="Kernel variance factor (kernel SD = √(factor × Var); 2.0 recommended)" :min="0.01" :step="0.1" />
-        <NumberInput v-model="params.probKeepSeed" label="Seed-keep probability (0 = always fresh)" :min="0" :max="1"
-          :step="0.01" />
-        <TextInput v-model="params.stagesText" label="Error schedule (comma-separated, 0 < r < 1)" />
+        <NumberInput
+          v-model="params.varianceFactor"
+          label="Kernel variance factor (kernel SD = √(factor × Var); 2.0 recommended)"
+          :min="0.01"
+          :step="0.1"
+        />
+        <NumberInput
+          v-model="params.probKeepSeed"
+          label="Seed-keep probability (0 = always fresh)"
+          :min="0"
+          :max="1"
+          :step="0.01"
+        />
+        <TextInput
+          v-model="params.stagesText"
+          label="Error schedule (comma-separated, 0 < r < 1)"
+        />
       </section>
     </fieldset>
 
     <div class="sidebar-controls">
       <Button v-if="canStart" @click="startRun">Start</Button>
-      <Button v-else-if="runner.status.value === 'running'" variant="secondary" @click="pauseRun">
+      <Button
+        v-else-if="runner.status.value === 'running'"
+        variant="secondary"
+        @click="pauseRun"
+      >
         Pause
       </Button>
-      <Button v-else-if="runner.status.value === 'paused'" variant="secondary" @click="resumeRun">
+      <Button
+        v-else-if="runner.status.value === 'paused'"
+        variant="secondary"
+        @click="resumeRun"
+      >
         Resume
       </Button>
       <!-- Hidden while a selected run is idle (Start is the action there);
@@ -1053,8 +1117,8 @@ const observedGapSections = computed(() => {
     <h3 class="confirm-dialog__title">Delete run?</h3>
     <p class="confirm-dialog__body">
       <template v-if="pendingDelete">
-        “{{ pendingDelete.name }}” — {{ liveStatus(pendingDelete) }}.
-        This can't be undone.
+        “{{ pendingDelete.name }}” — {{ liveStatus(pendingDelete) }}. This can't
+        be undone.
       </template>
     </p>
     <div class="confirm-dialog__actions">
@@ -1067,8 +1131,8 @@ const observedGapSections = computed(() => {
   <p>
     Calibrates the transmission model to an observed incidence series via
     ABC-SMC. Pick priors, set an error schedule, then watch the posterior
-    tighten across stages. Runs persist in your browser, so even if you
-    close the tab, you can resume later.
+    tighten across stages. Runs persist in your browser, so even if you close
+    the tab, you can resume later.
   </p>
   <p v-if="errorMessage" class="error">{{ errorMessage }}</p>
   <p class="status">{{ statusLabel }}</p>
@@ -1076,20 +1140,25 @@ const observedGapSections = computed(() => {
   <section class="cal-metric">
     <h2>Distance metric</h2>
     <p class="cal-metric__desc">
-      Fit is scored with a <strong>gap-aware L1 distance</strong> — the sum
-      of absolute differences between the target and the model output,
-      taken only on the days the target actually contains (gaps are
-      skipped, not counted as zero). Choose whether that comparison happens
-      on the cumulative or daily scale; the target table and the model
-      output are both expressed that way.
+      Fit is scored with a <strong>gap-aware L1 distance</strong> — the sum of
+      absolute differences between the target and the model output, taken only
+      on the days the target actually contains (gaps are skipped, not counted as
+      zero). Choose whether that comparison happens on the cumulative or daily
+      scale; the target table and the model output are both expressed that way.
     </p>
     <!-- The scale is part of the run's frozen config: switching it would
          reinterpret a started run's stored target. Once locked, show the
          chosen scale read-only instead of the (reka-ui) combobox, which a
          disabled fieldset can't actually disable. -->
-    <SelectBox v-if="!paramsLocked" label="Express target data as" :options="metricOptions"
+    <SelectBox
+      v-if="!paramsLocked"
+      label="Express target data as"
+      :options="metricOptions"
       :model-value="params.distanceMetric"
-      @update:model-value="(v) => setParam('distanceMetric', String(v) as 'cumulative' | 'daily')" />
+      @update:model-value="
+        (v) => setParam('distanceMetric', String(v) as 'cumulative' | 'daily')
+      "
+    />
     <p v-else class="cal-metric__locked">
       Scale: <strong>{{ metricLabel }}</strong>
       <span class="cal-hint">(locked for this run)</span>
@@ -1100,22 +1169,43 @@ const observedGapSections = computed(() => {
     <h2>Target data</h2>
 
     <div v-if="targetRows.length" class="cal-target__plot">
-      <LineChart :series="observedSeries" :area-sections="observedGapSections" :height="180" x-label="Day"
-        :y-label="valueLabel" :menu="false" tooltip-trigger="hover" />
+      <LineChart
+        :series="observedSeries"
+        :area-sections="observedGapSections"
+        :height="180"
+        x-label="Day"
+        :y-label="valueLabel"
+        :menu="false"
+        tooltip-trigger="hover"
+      />
     </div>
 
     <div v-if="!paramsLocked" class="obs-editor">
       <div class="obs-editor__actions">
-        <Button variant="secondary" :disabled="generating" @click="generateFromParameters">
+        <Button
+          variant="secondary"
+          :disabled="generating"
+          @click="generateFromParameters"
+        >
           {{ generating ? "Generating…" : "Generate from parameters" }}
         </Button>
         <Button variant="secondary" @click="triggerCsvUpload">
           Upload CSV
         </Button>
-        <Button variant="secondary" :disabled="!targetRows.length" @click="clearData">
+        <Button
+          variant="secondary"
+          :disabled="!targetRows.length"
+          @click="clearData"
+        >
           Clear
         </Button>
-        <input ref="csvInput" type="file" accept=".csv,text/csv" class="obs-editor__file" @change="onUploadCsv" />
+        <input
+          ref="csvInput"
+          type="file"
+          accept=".csv,text/csv"
+          class="obs-editor__file"
+          @change="onUploadCsv"
+        />
       </div>
       <fieldset class="cal-fieldset obs-editor__body">
         <div ref="sheetScroll" class="obs-sheet-scroll">
@@ -1130,17 +1220,47 @@ const observedGapSections = computed(() => {
             <tbody>
               <tr v-for="(row, i) in targetRows" :key="i">
                 <td>
-                  <input type="number" min="1" step="1" class="obs-cell" :aria-label="`Day for row ${i + 1}`"
-                    :value="row.day" @input="(e) => setRowDay(i, Number((e.target as HTMLInputElement).value))"
-                    @change="sortRowsByDay" />
+                  <input
+                    type="number"
+                    min="1"
+                    step="1"
+                    class="obs-cell"
+                    :aria-label="`Day for row ${i + 1}`"
+                    :value="row.day"
+                    @input="
+                      (e) =>
+                        setRowDay(
+                          i,
+                          Number((e.target as HTMLInputElement).value),
+                        )
+                    "
+                    @change="sortRowsByDay"
+                  />
                 </td>
                 <td>
-                  <input type="number" min="0" step="1" class="obs-cell" :aria-label="`${valueLabel} for row ${i + 1}`"
-                    :value="row.value" @input="(e) => setRowValue(i, Number((e.target as HTMLInputElement).value))" />
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    class="obs-cell"
+                    :aria-label="`${valueLabel} for row ${i + 1}`"
+                    :value="row.value"
+                    @input="
+                      (e) =>
+                        setRowValue(
+                          i,
+                          Number((e.target as HTMLInputElement).value),
+                        )
+                    "
+                  />
                 </td>
                 <td class="obs-sheet__rm">
-                  <button type="button" class="obs-rm" :aria-label="`Remove row ${i + 1}`"
-                    @click="removeObservedRow(i)">
+                  <button
+                    type="button"
+                    class="obs-rm"
+                    :aria-label="`Remove row ${i + 1}`"
+                    @click="removeObservedRow(i)"
+                  >
                     ×
                   </button>
                 </td>
@@ -1159,19 +1279,36 @@ const observedGapSections = computed(() => {
   <section v-if="stageTraces.length" class="overlay-section">
     <h2>Posterior across stages</h2>
     <p class="overlay-desc">
-      Every stage's posterior overlaid on one axis (prior lightest → final
-      stage darkest)
+      Every stage's posterior overlaid on one axis (prior lightest → final stage
+      darkest)
     </p>
     <div class="overlay-grid">
       <div class="overlay-cell">
         <p class="trace-label">R₀ — KDE per stage</p>
-        <LineChart legend-toggle :series="stageOverlays.r0Series" :areas="stageOverlays.r0Areas" :height="240" x-label="R₀"
-          y-label="density" :menu="false" tooltip-trigger="hover" tooltip-value-format="%.3f" />
+        <LineChart
+          legend-toggle
+          :series="stageOverlays.r0Series"
+          :areas="stageOverlays.r0Areas"
+          :height="240"
+          x-label="R₀"
+          y-label="density"
+          :menu="false"
+          tooltip-trigger="hover"
+          tooltip-value-format="%.3f"
+        />
       </div>
       <div class="overlay-cell">
         <p class="trace-label">Initial infections — posterior per stage</p>
-        <BarChart legend-toggle :categories="stageOverlays.iiCategories" :series="stageOverlays.iiSeries" layout="overlay"
-          :height="240" :menu="false" tooltip-trigger="hover" tooltip-value-format="%.4f" />
+        <BarChart
+          legend-toggle
+          :categories="stageOverlays.iiCategories"
+          :series="stageOverlays.iiSeries"
+          layout="overlay"
+          :height="240"
+          :menu="false"
+          tooltip-trigger="hover"
+          tooltip-value-format="%.4f"
+        />
       </div>
     </div>
   </section>
@@ -1199,52 +1336,77 @@ const observedGapSections = computed(() => {
         <h4>{{ trace.stageLabel }} (n={{ trace.n }})</h4>
         <div v-if="trace.trajectorySeries.length" class="trace-trajectory">
           <p class="trace-label">Trajectories (observed overlaid in teal)</p>
-          <LineChart :series="trace.trajectorySeries" :height="160" x-label="Day" :y-label="valueLabel" :menu="false" />
+          <LineChart
+            :series="trace.trajectorySeries"
+            :height="160"
+            x-label="Day"
+            :y-label="valueLabel"
+            :menu="false"
+          />
         </div>
         <div class="trace-row">
           <div class="trace-mini">
             <p class="trace-label">R₀ (prior · posterior · KDE)</p>
-            <BarChart legend-toggle :categories="trace.r0Bins.categories" :series="[
-              {
-                data: trace.r0Bins.prior,
-                color: '#94a3b8',
-                blendMode: 'multiply',
-                legend: 'Prior',
-              },
-              {
-                data: trace.r0Bins.posterior,
-                color: '#2563eb',
-                blendMode: 'multiply',
-                legend: 'Posterior',
-              },
-            ]" layout="overlay" :summary-lines="[
-              {
-                x: trace.r0KdeOverlay.x,
-                data: trace.r0KdeOverlay.data,
-                color: '#dc2626',
-                strokeWidth: 2,
-                dots: false,
-              },
-            ]" :height="180" :menu="false" tooltip-trigger="hover" tooltip-value-format="%.4f" />
+            <BarChart
+              legend-toggle
+              :categories="trace.r0Bins.categories"
+              :series="[
+                {
+                  data: trace.r0Bins.prior,
+                  color: '#94a3b8',
+                  blendMode: 'multiply',
+                  legend: 'Prior',
+                },
+                {
+                  data: trace.r0Bins.posterior,
+                  color: '#2563eb',
+                  blendMode: 'multiply',
+                  legend: 'Posterior',
+                },
+              ]"
+              layout="overlay"
+              :summary-lines="[
+                {
+                  x: trace.r0KdeOverlay.x,
+                  data: trace.r0KdeOverlay.data,
+                  color: '#dc2626',
+                  strokeWidth: 2,
+                  dots: false,
+                },
+              ]"
+              :height="180"
+              :menu="false"
+              tooltip-trigger="hover"
+              tooltip-value-format="%.4f"
+            />
           </div>
           <div class="trace-mini">
             <!-- Initial-infections is discrete + frozen by the
                  perturbation kernel, so no KDE overlay. -->
             <p class="trace-label">Initial infections (prior · posterior)</p>
-            <BarChart legend-toggle :categories="trace.iiBins.categories" :series="[
-              {
-                data: trace.iiBins.prior,
-                color: '#94a3b8',
-                blendMode: 'multiply',
-                legend: 'Prior',
-              },
-              {
-                data: trace.iiBins.posterior,
-                color: '#2563eb',
-                blendMode: 'multiply',
-                legend: 'Posterior',
-              },
-            ]" layout="overlay" :height="180" :menu="false" tooltip-trigger="hover" tooltip-value-format="%.4f" />
+            <BarChart
+              legend-toggle
+              :categories="trace.iiBins.categories"
+              :series="[
+                {
+                  data: trace.iiBins.prior,
+                  color: '#94a3b8',
+                  blendMode: 'multiply',
+                  legend: 'Prior',
+                },
+                {
+                  data: trace.iiBins.posterior,
+                  color: '#2563eb',
+                  blendMode: 'multiply',
+                  legend: 'Posterior',
+                },
+              ]"
+              layout="overlay"
+              :height="180"
+              :menu="false"
+              tooltip-trigger="hover"
+              tooltip-value-format="%.4f"
+            />
           </div>
         </div>
       </div>

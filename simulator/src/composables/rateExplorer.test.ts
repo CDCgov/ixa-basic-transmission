@@ -234,7 +234,11 @@ describe("rateExplorer", () => {
     expect(lognormal.d).toContain("Lognormal");
     expect(lognormal.d).toContain("truncated");
 
-    const constant = rateFunctionDefs({ type: "constant", value: 0.5, duration: 3 });
+    const constant = rateFunctionDefs({
+      type: "constant",
+      value: 0.5,
+      duration: 3,
+    });
     expect(constant.r).toContain("r(t) = 0.5");
     expect(constant.d).toContain("c / 0.5");
   });
@@ -374,7 +378,9 @@ describe("rateExplorer event-time histogram", () => {
     const h = eventTimeHistogram(times, c.duration, 4); // bins over [0,8], width 2
     // The peak is at τ=4 (boundary of bins 1 and 2); both interior bins should
     // hold more than the first bin (which starts at λ=0).
-    expect(h.counts[1] + h.counts[2]).toBeGreaterThan(h.counts[0] + h.counts[3]);
+    expect(h.counts[1] + h.counts[2]).toBeGreaterThan(
+      h.counts[0] + h.counts[3],
+    );
   });
 });
 
@@ -405,7 +411,9 @@ describe("histogram helpers", () => {
   });
 
   it("labels keep roughly five ticks", () => {
-    const labels = Array.from({ length: 20 }, (_, i) => sparseBinLabel(`${i}`, i, 20));
+    const labels = Array.from({ length: 20 }, (_, i) =>
+      sparseBinLabel(`${i}`, i, 20),
+    );
     expect(labels.filter(Boolean)).toEqual(["0", "4", "8", "12", "16"]);
   });
 });

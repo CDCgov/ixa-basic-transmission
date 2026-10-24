@@ -29,17 +29,13 @@ test.describe("Simulator smoke", () => {
 
     // Both charts mount with y-axis labels we set in `Page.vue`.
     await expect(page.getByText("Cumulative infections")).toBeVisible();
-    await expect(
-      page.getByText("Incidence", { exact: true }),
-    ).toBeVisible();
+    await expect(page.getByText("Incidence", { exact: true })).toBeVisible();
 
     // Summary table shows the two metrics. The R₀ for the Baseline preset
     // is value × duration = 0.5 × 3 = 1.50.
     await expect(page.getByText("R₀ (expected)")).toBeVisible();
     await expect(page.getByText("1.50").first()).toBeVisible();
-    await expect(
-      page.getByText("Attack rate (observed median)"),
-    ).toBeVisible();
+    await expect(page.getByText("Attack rate (observed median)")).toBeVisible();
     // Attack rate is stochastic but rendered as a percentage.
     await expect(page.getByText(/\d+\.\d%/)).toBeVisible();
   });
@@ -75,9 +71,9 @@ test.describe("Simulator smoke", () => {
     await page.goto("/?population=500&initialInfections=2");
     const preset = page.getByRole("combobox", { name: "Preset" });
     await expect(preset).toHaveText(/Tiny town/);
-    await expect(
-      page.getByRole("textbox", { name: "Population" }),
-    ).toHaveValue("500");
+    await expect(page.getByRole("textbox", { name: "Population" })).toHaveValue(
+      "500",
+    );
   });
 
   test("infectionRate round-trips through the URL across variants", async ({
@@ -125,9 +121,7 @@ test.describe("Simulator smoke", () => {
 
     // Editor swaps in. ParamEditor renders a Format select + Import /
     // Export / Apply buttons.
-    await expect(
-      page.getByRole("combobox", { name: "Format" }),
-    ).toBeVisible();
+    await expect(page.getByRole("combobox", { name: "Format" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Apply" })).toBeVisible();
 
     // The CodeMirror editor is a single role="textbox" inside the
@@ -172,9 +166,7 @@ test.describe("Simulator smoke", () => {
     // the editor renders an inline readout next to the preview chart.
     // Baseline preset: value = 0.5, duration = 3 → R₀ = 1.50.
     await page.goto("/");
-    const readout = page
-      .getByText("R₀ (random mixing)")
-      .locator("xpath=..");
+    const readout = page.getByText("R₀ (random mixing)").locator("xpath=..");
     await expect(readout).toContainText("1.50");
 
     // The readout reacts to slider input: bumping value via arrow keys

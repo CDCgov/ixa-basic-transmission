@@ -258,7 +258,9 @@ describe("totalWeight", () => {
   });
 
   it("sums weights", () => {
-    expect(totalWeight([particle(0, 0.5), particle(0, 0.3), particle(0, 0.2)])).toBeCloseTo(1.0);
+    expect(
+      totalWeight([particle(0, 0.5), particle(0, 0.3), particle(0, 0.2)]),
+    ).toBeCloseTo(1.0);
   });
 });
 
@@ -281,7 +283,12 @@ describe("withR0", () => {
   });
 
   it("maps r0 to scale for Library rate (preserves rates)", () => {
-    const rates: [number, number][][] = [[[0, 0], [2, 1]]];
+    const rates: [number, number][][] = [
+      [
+        [0, 0],
+        [2, 1],
+      ],
+    ];
     const rate: InfectionRate = { type: "library", rates, scale: 1 };
     const next = withR0(rate, 4);
     expect(next).toEqual({ type: "library", rates, scale: 4 });
@@ -328,9 +335,15 @@ describe("incidenceToCumulative", () => {
 
 describe("densify", () => {
   it("zero-fills gaps and places values at day-1 indices", () => {
-    expect(densify([{ day: 1, value: 5 }, { day: 3, value: 4 }], 4)).toEqual([
-      5, 0, 4, 0,
-    ]);
+    expect(
+      densify(
+        [
+          { day: 1, value: 5 },
+          { day: 3, value: 4 },
+        ],
+        4,
+      ),
+    ).toEqual([5, 0, 4, 0]);
   });
 
   it("drops out-of-range days and resolves dup days last-write-wins", () => {
@@ -351,7 +364,13 @@ describe("densify", () => {
     // Cumulative scale: the typed totals land at their day index; the gap
     // at day 3 stays 0 (never read by the gap-aware distance).
     expect(
-      densify([{ day: 2, value: 5 }, { day: 4, value: 12 }], 5),
+      densify(
+        [
+          { day: 2, value: 5 },
+          { day: 4, value: 12 },
+        ],
+        5,
+      ),
     ).toEqual([0, 5, 0, 12, 0]);
   });
 });
@@ -390,4 +409,3 @@ describe("defaultConfig", () => {
     expect(defaultConfig().probKeepSeed).toBe(0.0);
   });
 });
-

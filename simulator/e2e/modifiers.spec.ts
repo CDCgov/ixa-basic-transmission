@@ -32,9 +32,7 @@ test.describe("Transmission modifiers", () => {
 
     // Reload from the encoded URL → facemask stays enabled.
     await page.goto(page.url());
-    await expect(
-      page.getByRole("switch", { name: "Facemask" }),
-    ).toBeChecked();
+    await expect(page.getByRole("switch", { name: "Facemask" })).toBeChecked();
     await expect(
       page.getByRole("textbox", { name: "Effectiveness" }),
     ).toBeVisible();
@@ -69,9 +67,9 @@ test.describe("Transmission modifiers", () => {
     await expect(facemask).not.toBeChecked();
     await facemask.click();
     await expect(facemask).toBeChecked();
-    await expect(
-      page.getByRole("textbox", { name: "Coverage" }),
-    ).toHaveValue("80");
+    await expect(page.getByRole("textbox", { name: "Coverage" })).toHaveValue(
+      "80",
+    );
 
     // The restored config round-trips through the debounced URL sync (would
     // throw DataCloneError if the cache re-introduced a reactive Proxy).
@@ -132,9 +130,7 @@ test.describe("Transmission modifiers", () => {
 
     // Reload → isolation stays enabled and targeted at the household setting.
     await page.goto(page.url());
-    await expect(
-      page.getByRole("switch", { name: "Isolation" }),
-    ).toBeChecked();
+    await expect(page.getByRole("switch", { name: "Isolation" })).toBeChecked();
     await expect(
       page.getByRole("combobox", { name: "Restrict to" }),
     ).toHaveText(/household/);

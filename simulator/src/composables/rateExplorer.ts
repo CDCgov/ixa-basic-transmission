@@ -119,7 +119,12 @@ export function effectiveRateCurve(
   } else {
     const n = rate.rates.length;
     const idx = n ? ((libraryIndex % n) + n) % n : 0;
-    const picked: [number, number][] = n ? rate.rates[idx] : [[0, 0], [1, 0]];
+    const picked: [number, number][] = n
+      ? rate.rates[idx]
+      : [
+          [0, 0],
+          [1, 0],
+        ];
     x = picked.map((p) => p[0]);
     rawY = picked.map((p) => p[1]);
     const meanArea = libraryMeanArea(rate.rates);
@@ -189,7 +194,9 @@ export function rateAtTime(curve: RateCurve, t: number): number {
     if (t <= x[i]) {
       const span = x[i] - x[i - 1];
       if (span === 0) return lambda[i];
-      return lambda[i - 1] + ((t - x[i - 1]) / span) * (lambda[i] - lambda[i - 1]);
+      return (
+        lambda[i - 1] + ((t - x[i - 1]) / span) * (lambda[i] - lambda[i - 1])
+      );
     }
   }
   return lambda[lambda.length - 1];
@@ -390,7 +397,11 @@ export function histogramBins(n: number, minBins = 8, maxBins = 60): number {
 }
 
 /** Keep about five category labels regardless of the bin count. */
-export function sparseBinLabel(label: string, index: number, bins: number): string {
+export function sparseBinLabel(
+  label: string,
+  index: number,
+  bins: number,
+): string {
   const step = Math.max(1, Math.ceil(bins / 5));
   return index % step === 0 ? label : "";
 }
@@ -436,14 +447,15 @@ export function rateFunctionDefs(rate: InfectionRate): RateFunctionDefs {
     }
     case "empirical":
       rHere = "R₀ × your anchor-point curve, area-normalized to 1";
-      cHere = "R₀ × the area under that curve up to t, computed by trapezoidal integration";
+      cHere =
+        "R₀ × the area under that curve up to t, computed by trapezoidal integration";
       dHere =
         "t solves c(t) = c on the piecewise-linear rate (inverted numerically)";
       break;
     case "library":
-      rHere =
-        "the curve assigned to this individual from the library";
-      cHere = "the area under the assigned curve up to t, computed by trapezoidal integration";
+      rHere = "the curve assigned to this individual from the library";
+      cHere =
+        "the area under the assigned curve up to t, computed by trapezoidal integration";
       dHere = "t solves c(t) = c on the assigned curve (inverted numerically)";
       break;
   }

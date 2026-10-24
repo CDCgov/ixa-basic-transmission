@@ -110,7 +110,8 @@ export function useCalibration(): CalibrationRunner {
     // lives in memory, so if we're loading from IDB the page was
     // refreshed/reopened and no loop is actually running. Present it as
     // "paused" so the UI offers Resume (and `run()` doesn't no-op on it).
-    status.value = loaded.run.status === "running" ? "paused" : loaded.run.status;
+    status.value =
+      loaded.run.status === "running" ? "paused" : loaded.run.status;
   }
 
   /// Enter the batch loop for the currently-selected run. Idle/paused/
@@ -198,7 +199,10 @@ export function useCalibration(): CalibrationRunner {
   ): Promise<void> {
     // Defensive: a 0 batch would let the outer loop spin forever waiting
     // for particles that never arrive. The wasm side also asserts this.
-    const batchSize = Math.max(1, Math.min(c.batchSize, c.nParticles - haveSoFar));
+    const batchSize = Math.max(
+      1,
+      Math.min(c.batchSize, c.nParticles - haveSoFar),
+    );
     // Stage 0: sample from prior at ∞ (null = ∞ on wasm; JSON.stringify
     // turns Infinity into "null" anyway, so make the convention explicit).
     // Stage 1: rejection-sample from prior at threshold = quantile of

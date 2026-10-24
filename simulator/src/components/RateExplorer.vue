@@ -98,7 +98,9 @@ const events = computed<DemoEvent[]>(() => {
   return out;
 });
 
-const validEvents = computed(() => events.value.filter((ev) => ev.tau !== null));
+const validEvents = computed(() =>
+  events.value.filter((ev) => ev.tau !== null),
+);
 const exhausted = computed(() => {
   const last = events.value[events.value.length - 1];
   return last ? last.tau === null : false;
@@ -190,7 +192,10 @@ function simulateMany() {
   const roundRuns = simulateInfectionRuns(curve.value, SIM_RUNS, Math.random);
   // Every individual this round (including zero-offspring ones) counts toward
   // the observed R₀ — recorded now, before the time-reveal animation.
-  pooledCounts.value = [...pooledCounts.value, ...roundRuns.map((r) => r.length)];
+  pooledCounts.value = [
+    ...pooledCounts.value,
+    ...roundRuns.map((r) => r.length),
+  ];
   const roundTimes = roundRuns.flat();
   if (!roundTimes.length) return;
   const poolBase = pooledTimes.value; // earlier rounds keep accumulating
@@ -243,7 +248,8 @@ watch(
     pooledCounts.value = [];
     mode.value = "draw";
     const sig = rate.type === "library" ? `library:${rate.rates.length}` : null;
-    if (sig && sig !== prevLibrarySig) libraryIndex.value = randomLibraryIndex();
+    if (sig && sig !== prevLibrarySig)
+      libraryIndex.value = randomLibraryIndex();
     prevLibrarySig = sig;
   },
   { immediate: true },
@@ -289,7 +295,13 @@ const rateAreas = computed(() => {
       x.push(t);
       upper.push(rateAtTime(curve.value, t));
     }
-    areas.push({ x, upper, lower: x.map(() => 0), color: PURPLE, opacity: 0.3 });
+    areas.push({
+      x,
+      upper,
+      lower: x.map(() => 0),
+      color: PURPLE,
+      opacity: 0.3,
+    });
   }
   return areas;
 });
@@ -546,7 +558,10 @@ function tx(t: number): number {
 // Draw-mode timeline: one solid dot per infection time of the current
 // individual.
 const dotPositions = computed(() =>
-  validEvents.value.map((ev) => ({ x: tx(ev.tau as number), tau: ev.tau as number })),
+  validEvents.value.map((ev) => ({
+    x: tx(ev.tau as number),
+    tau: ev.tau as number,
+  })),
 );
 // Sim-mode timeline: a dot per event time in the current round, with a
 // deterministic vertical jitter so overlapping times spread into a band — the
@@ -574,21 +589,31 @@ function fmtTau(v: unknown): string {
         <p class="explorer-subtitle">{{ desc.title }}</p>
         <!-- Constant rate only: switch the right panel between the simple
              homogeneous-Poisson view and the general inverse-CDF method. -->
-        <Toggle v-if="isConstant" :model-value="generalized" label="Generalized"
+        <Toggle
+          v-if="isConstant"
+          :model-value="generalized"
+          label="Generalized"
           hint="Show the general inverse-CDF method (Λ⁻¹) instead of drawing each Δτ straight from Exp(rate)."
-          class="explorer-mode-toggle" @update:model-value="(v: boolean) => (generalized = v)" />
+          class="explorer-mode-toggle"
+          @update:model-value="(v: boolean) => (generalized = v)"
+        />
       </div>
       <!-- Library rates assign each person a random curve; everything else is
            shared by all individuals. -->
       <div class="explorer-note">
         <template v-if="isLibrary">
           <p class="explorer-note-text">
-            Each individual is assigned a random curve from the library — showing
-            curve #{{ libraryIndex + 1 }} of {{ libraryCount }} (R₀ ≈ {{ fmt(curve.total) }}).
+            Each individual is assigned a random curve from the library —
+            showing curve #{{ libraryIndex + 1 }} of {{ libraryCount }} (R₀ ≈
+            {{ fmt(curve.total) }}).
           </p>
-          <Button variant="secondary" @click="assignRandomCurve">New random curve</Button>
+          <Button variant="secondary" @click="assignRandomCurve"
+            >New random curve</Button
+          >
         </template>
-        <p v-else class="explorer-note-text">Every individual gets the same rate function.</p>
+        <p v-else class="explorer-note-text">
+          Every individual gets the same rate function.
+        </p>
       </div>
     </header>
 
@@ -600,10 +625,20 @@ function fmtTau(v: unknown): string {
         <!-- The shaded area under r(t) equals R₀; annotate it with the value so
              the chart is self-explanatory. -->
         <div class="rate-chart-wrap">
-          <LineChart :series="rateSeries" :areas="rateAreas" :annotations="rateAnnotations"
-            :chart-padding="{ top: 16 }" :height="240" :y-min="0" :menu="false"
-            :tick-label-style="axisTextStyle" :axis-label-style="axisTextStyle"
-            x-label="t (days since infected)" y-label="r(t)" tooltip-trigger="hover">
+          <LineChart
+            :series="rateSeries"
+            :areas="rateAreas"
+            :annotations="rateAnnotations"
+            :chart-padding="{ top: 16 }"
+            :height="240"
+            :y-min="0"
+            :menu="false"
+            :tick-label-style="axisTextStyle"
+            :axis-label-style="axisTextStyle"
+            x-label="t (days since infected)"
+            y-label="r(t)"
+            tooltip-trigger="hover"
+          >
             <template #tooltip="{ xLabel, values }">
               <div class="explorer-tooltip">
                 <div v-if="xLabel != null">Day {{ fmtTau(xLabel) }}</div>
@@ -611,8 +646,15 @@ function fmtTau(v: unknown): string {
               </div>
             </template>
           </LineChart>
-          <div class="rate-r0-badge" aria-label="Expected R-naught (area under the rate function)">
-            <span class="rate-r0-swatch" :style="{ background: BLUE }" aria-hidden="true" />
+          <div
+            class="rate-r0-badge"
+            aria-label="Expected R-naught (area under the rate function)"
+          >
+            <span
+              class="rate-r0-swatch"
+              :style="{ background: BLUE }"
+              aria-hidden="true"
+            />
             Area = R₀ ≈ <strong>{{ fmt(curve.total) }}</strong>
           </div>
         </div>
@@ -620,15 +662,25 @@ function fmtTau(v: unknown): string {
         <!-- Library only: the whole population of curves with the mean in red,
              so the assigned curve above can be read in context. -->
         <div v-if="isLibrary" class="explorer-overlay">
-          <h4>Library curves <span class="explorer-overlay-mean">(mean)</span></h4>
+          <h4>
+            Library curves <span class="explorer-overlay-mean">(mean)</span>
+          </h4>
           <p class="explorer-hint">
             Every per-person curve in the library, with the population mean in
             <span class="explorer-overlay-mean">red</span>. The bold blue curve
             is the one assigned above.
           </p>
-          <LineChart :series="overlaySeries" :height="180" :y-min="0" :menu="false"
-            :tick-label-style="axisTextStyle" :axis-label-style="axisTextStyle"
-            x-label="t (days since infected)" y-label="r(t)" tooltip-trigger="hover">
+          <LineChart
+            :series="overlaySeries"
+            :height="180"
+            :y-min="0"
+            :menu="false"
+            :tick-label-style="axisTextStyle"
+            :axis-label-style="axisTextStyle"
+            x-label="t (days since infected)"
+            y-label="r(t)"
+            tooltip-trigger="hover"
+          >
             <template #tooltip="{ xLabel, values }">
               <div class="explorer-tooltip">
                 <div v-if="xLabel != null">t = {{ fmtTau(xLabel) }}</div>
@@ -644,15 +696,26 @@ function fmtTau(v: unknown): string {
         <div v-if="hasSamples" class="explorer-sim">
           <h3>Distribution of simulated event times</h3>
           <p class="explorer-hint">
-            {{ timeHistogram.total }} event time{{ timeHistogram.total === 1 ? "" : "s" }}
-            sampled across all rounds, binned over the infectious period. The bars
-            approach the rate curve <span class="explorer-rate-line">r(t)</span> as
-            more are sampled.
+            {{ timeHistogram.total }} event time{{
+              timeHistogram.total === 1 ? "" : "s"
+            }}
+            sampled across all rounds, binned over the infectious period. The
+            bars approach the rate curve
+            <span class="explorer-rate-line">r(t)</span> as more are sampled.
           </p>
-          <BarChart :categories="timeHistogram.categories" :series="distSeries" :summary-lines="distOverlay"
-            :height="200" :menu="false" x-label="t (days since infected)" y-label="% of samples"
-            :tick-label-style="axisTextStyle" :axis-label-style="axisTextStyle"
-            value-tick-format="%.0f%%" :category-format="distLabel">
+          <BarChart
+            :categories="timeHistogram.categories"
+            :series="distSeries"
+            :summary-lines="distOverlay"
+            :height="200"
+            :menu="false"
+            x-label="t (days since infected)"
+            y-label="% of samples"
+            :tick-label-style="axisTextStyle"
+            :axis-label-style="axisTextStyle"
+            value-tick-format="%.0f%%"
+            :category-format="distLabel"
+          >
             <template #tooltip="{ category, values }">
               <div class="explorer-tooltip">
                 <div>t ≈ {{ category }}</div>
@@ -663,11 +726,15 @@ function fmtTau(v: unknown): string {
           <!-- Observed (realized) R₀: the mean offspring count over the
                completed individuals, converging to the expected R₀ (area under
                r(t)) as more are sampled. -->
-          <p v-if="observedR0 !== null" class="explorer-hint explorer-r0-readout">
-            Observed R₀ ≈ <strong>{{ fmt(observedR0) }}</strong> ·
-            expected R₀ = <strong>{{ fmt(curve.total) }}</strong> ·
-            averaged over {{ pooledCounts.length }}
-            individual{{ pooledCounts.length === 1 ? "" : "s" }}
+          <p
+            v-if="observedR0 !== null"
+            class="explorer-hint explorer-r0-readout"
+          >
+            Observed R₀ ≈ <strong>{{ fmt(observedR0) }}</strong> · expected R₀ =
+            <strong>{{ fmt(curve.total) }}</strong> · averaged over
+            {{ pooledCounts.length }} individual{{
+              pooledCounts.length === 1 ? "" : "s"
+            }}
           </p>
         </div>
       </div>
@@ -678,17 +745,30 @@ function fmtTau(v: unknown): string {
         <div class="explorer-controls">
           <h3>{{ simplifiedView ? "Event times" : "Cumulative rate c(t)" }}</h3>
           <div class="explorer-buttons">
-            <Button :disabled="!hasArea || simAnimating" @click="drawNext">Draw next</Button>
-            <Button variant="secondary" :disabled="!hasArea || simAnimating" @click="simulateMany">Simulate 100×</Button>
-            <Button variant="secondary" :disabled="!draws.length && !hasSamples && !pooledCounts.length"
-              @click="reset">Reset</Button>
+            <Button :disabled="!hasArea || simAnimating" @click="drawNext"
+              >Draw next</Button
+            >
+            <Button
+              variant="secondary"
+              :disabled="!hasArea || simAnimating"
+              @click="simulateMany"
+              >Simulate 100×</Button
+            >
+            <Button
+              variant="secondary"
+              :disabled="!draws.length && !hasSamples && !pooledCounts.length"
+              @click="reset"
+              >Reset</Button
+            >
           </div>
         </div>
         <!-- Simplified homogeneous view (constant rate). -->
         <p v-if="simplifiedView" class="explorer-hint">
-          A constant rate is a homogeneous Poisson process: the time Δτ before each event is drawn from
-          <strong>Exp({{ fmt(constantRate) }})</strong> (mean {{ fmt(1 / constantRate) }} days), and τ
-          is the elapsed time since the person was infected.
+          A constant rate is a homogeneous Poisson process: the time Δτ before
+          each event is drawn from
+          <strong>Exp({{ fmt(constantRate) }})</strong> (mean
+          {{ fmt(1 / constantRate) }} days), and τ is the elapsed time since the
+          person was infected.
         </p>
 
         <!-- General inverse-CDF view (used by every time-varying rate). -->
@@ -700,10 +780,19 @@ function fmtTau(v: unknown): string {
                guide back to the y-axis at its cumulative level — the gaps
                between consecutive guides are the Exp(1) draws e. `chart-padding`
                reserves room so the e/Δτ labels aren't clipped at the plot edges. -->
-          <LineChart :series="cumSeries" :annotations="cumAnnotations" :chart-padding="{ top: 18 }" :height="200"
-            :y-min="0" :menu="false" x-label="t (days since infected)"
-            :tick-label-style="axisTextStyle" :axis-label-style="axisTextStyle"
-            y-label="c(t)" tooltip-trigger="hover">
+          <LineChart
+            :series="cumSeries"
+            :annotations="cumAnnotations"
+            :chart-padding="{ top: 18 }"
+            :height="200"
+            :y-min="0"
+            :menu="false"
+            x-label="t (days since infected)"
+            :tick-label-style="axisTextStyle"
+            :axis-label-style="axisTextStyle"
+            y-label="c(t)"
+            tooltip-trigger="hover"
+          >
             <template #tooltip="{ xLabel, values }">
               <div class="explorer-tooltip">
                 <div v-if="xLabel != null">Day {{ fmtTau(xLabel) }}</div>
@@ -721,49 +810,106 @@ function fmtTau(v: unknown): string {
              keeps every round. -->
         <p v-show="timelineVisible" class="timeline-title">
           <template v-if="mode === 'sim'">
-            This round: {{ SIM_RUNS }} individuals · {{ simRound.length }}
-            infection{{ simRound.length === 1 ? "" : "s" }}<span v-if="simAnimating"
-              class="timeline-title-sim"> · simulating…</span>
+            This round: {{ SIM_RUNS }} individuals ·
+            {{ simRound.length }} infection{{ simRound.length === 1 ? "" : "s"
+            }}<span v-if="simAnimating" class="timeline-title-sim">
+              · simulating…</span
+            >
           </template>
           <template v-else>
-            {{ infectionCount }} infection{{ infectionCount === 1 ? "" : "s" }}
-            over {{ fmt(currentTime) }} days<span v-if="exhausted" class="timeline-title-recovered">
-              · recovered</span>
+            {{ infectionCount }} infection{{
+              infectionCount === 1 ? "" : "s"
+            }}
+            over {{ fmt(currentTime) }} days<span
+              v-if="exhausted"
+              class="timeline-title-recovered"
+            >
+              · recovered</span
+            >
           </template>
         </p>
         <div v-show="timelineVisible" ref="timelineEl" class="timeline-wrap">
-          <svg :width="timelineWidth" :height="TIMELINE_H" class="timeline-svg" role="img"
-            aria-label="Infection event timeline">
-            <line :x1="tx(0)" :y1="AXIS_Y" :x2="tx(axisEnd)" :y2="AXIS_Y" stroke="var(--color-border)"
-              stroke-width="2" />
-            <text :x="tx(0)" :y="AXIS_Y + 22" text-anchor="start" class="timeline-label">
+          <svg
+            :width="timelineWidth"
+            :height="TIMELINE_H"
+            class="timeline-svg"
+            role="img"
+            aria-label="Infection event timeline"
+          >
+            <line
+              :x1="tx(0)"
+              :y1="AXIS_Y"
+              :x2="tx(axisEnd)"
+              :y2="AXIS_Y"
+              stroke="var(--color-border)"
+              stroke-width="2"
+            />
+            <text
+              :x="tx(0)"
+              :y="AXIS_Y + 22"
+              text-anchor="start"
+              class="timeline-label"
+            >
               0
             </text>
 
             <!-- Sim round: jittered translucent dots over the full period. -->
             <template v-if="mode === 'sim'">
-              <circle v-for="(dot, i) in simDotPositions" :key="i" :cx="dot.x" :cy="dot.y" r="3.5"
-                class="sim-dot" />
-              <text v-if="curve.duration > 0" :x="tx(curve.duration)" :y="AXIS_Y + 22" text-anchor="end"
-                class="timeline-label">
+              <circle
+                v-for="(dot, i) in simDotPositions"
+                :key="i"
+                :cx="dot.x"
+                :cy="dot.y"
+                r="3.5"
+                class="sim-dot"
+              />
+              <text
+                v-if="curve.duration > 0"
+                :x="tx(curve.duration)"
+                :y="AXIS_Y + 22"
+                text-anchor="end"
+                class="timeline-label"
+              >
                 {{ fmt(curve.duration) }}
               </text>
             </template>
 
             <!-- Draw round: the current individual's solid dots + recovery. -->
             <template v-else>
-              <text v-if="currentTime > 0 && !exhausted" :x="tx(currentTime)" :y="AXIS_Y + 22"
-                text-anchor="middle" class="timeline-label">
+              <text
+                v-if="currentTime > 0 && !exhausted"
+                :x="tx(currentTime)"
+                :y="AXIS_Y + 22"
+                text-anchor="middle"
+                class="timeline-label"
+              >
                 {{ fmt(currentTime) }}
               </text>
-              <circle v-for="(dot, i) in dotPositions" :key="i" :cx="dot.x" :cy="AXIS_Y" r="5" fill="#7c3aed">
+              <circle
+                v-for="(dot, i) in dotPositions"
+                :key="i"
+                :cx="dot.x"
+                :cy="AXIS_Y"
+                r="5"
+                fill="#7c3aed"
+              >
                 <title>infection at t = {{ fmt(dot.tau) }}</title>
               </circle>
               <template v-if="exhausted">
-                <line :x1="tx(curve.duration)" :y1="AXIS_Y - 9" :x2="tx(curve.duration)" :y2="AXIS_Y + 9"
-                  stroke="#dc2626" stroke-width="2" />
-                <text :x="tx(curve.duration)" :y="AXIS_Y + 22" text-anchor="end"
-                  class="timeline-label timeline-recovery">
+                <line
+                  :x1="tx(curve.duration)"
+                  :y1="AXIS_Y - 9"
+                  :x2="tx(curve.duration)"
+                  :y2="AXIS_Y + 9"
+                  stroke="#dc2626"
+                  stroke-width="2"
+                />
+                <text
+                  :x="tx(curve.duration)"
+                  :y="AXIS_Y + 22"
+                  text-anchor="end"
+                  class="timeline-label timeline-recovery"
+                >
                   recovered · {{ fmt(curve.duration) }}
                 </text>
               </template>
@@ -780,7 +926,9 @@ function fmtTau(v: unknown): string {
               <th>Δτ ~ Exp(rate)</th>
               <th>
                 τ = Σ
-                <Hint text="Event time since infection: the running sum of the Δτ's so far (τ = Σ Δτ)." />
+                <Hint
+                  text="Event time since infection: the running sum of the Δτ's so far (τ = Σ Δτ)."
+                />
               </th>
             </tr>
             <tr v-else>
@@ -788,11 +936,14 @@ function fmtTau(v: unknown): string {
               <th>
                 Δτ
                 <Hint
-                  text="Time-scaled inter-event time Δτ = d(c+e) − d(c). Invert the cumulative rate at the new running total c+e, then subtract the previous event time d(c)." />
+                  text="Time-scaled inter-event time Δτ = d(c+e) − d(c). Invert the cumulative rate at the new running total c+e, then subtract the previous event time d(c)."
+                />
               </th>
               <th>
                 τ = Σ
-                <Hint text="Event time since infection: the running sum of the Δτ's so far (τ = Σ Δτ)." />
+                <Hint
+                  text="Event time since infection: the running sum of the Δτ's so far (τ = Σ Δτ)."
+                />
               </th>
             </tr>
           </thead>
@@ -800,7 +951,9 @@ function fmtTau(v: unknown): string {
             <tr v-for="(ev, i) in events" :key="i">
               <td v-if="!simplifiedView" class="num">{{ fmt(ev.delta) }}</td>
               <td class="num">
-                <span v-if="ev.scaledDelta !== null">{{ fmt(ev.scaledDelta) }}</span>
+                <span v-if="ev.scaledDelta !== null">{{
+                  fmt(ev.scaledDelta)
+                }}</span>
                 <span v-else class="recovered">—</span>
               </td>
               <td class="num">
@@ -818,9 +971,12 @@ function fmtTau(v: unknown): string {
           }}
           Press <strong>Draw next</strong> to start a new individual.
         </p>
-        <p v-if="!hasSamples && !events.length" class="explorer-hint explorer-empty">
-          No samples yet — press <strong>Draw next</strong> to sample one time, or
-          <strong>Simulate 100×</strong> to build the distribution quickly.
+        <p
+          v-if="!hasSamples && !events.length"
+          class="explorer-hint explorer-empty"
+        >
+          No samples yet — press <strong>Draw next</strong> to sample one time,
+          or <strong>Simulate 100×</strong> to build the distribution quickly.
         </p>
       </div>
     </div>

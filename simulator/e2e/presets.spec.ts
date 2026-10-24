@@ -6,17 +6,13 @@ import { test, expect } from "@playwright/test";
 //   - applying a preset updates params (URL query string + form fields)
 //   - editing a field afterwards drops the picker back to "Custom"
 test.describe("Parameter presets", () => {
-  test("preset picker lists, applies, and clears on edit", async ({
-    page,
-  }) => {
+  test("preset picker lists, applies, and clears on edit", async ({ page }) => {
     await page.goto("/");
 
     const preset = page.getByRole("combobox", { name: "Preset" });
     await expect(preset).toBeVisible();
     await expect(preset).toHaveText(/Baseline/);
-    await expect(
-      page.getByText(/Default scenario:/),
-    ).toBeVisible();
+    await expect(page.getByText(/Default scenario:/)).toBeVisible();
 
     await preset.click();
     const options = page.getByRole("option");
@@ -128,15 +124,11 @@ test.describe("Parameter presets", () => {
       timeout: 60_000,
     });
     await expect(page.getByText("Cumulative infections")).toBeVisible();
-    await expect(
-      page.getByText("Incidence", { exact: true }),
-    ).toBeVisible();
+    await expect(page.getByText("Incidence", { exact: true })).toBeVisible();
     // Summary table still shows the two standard metrics — R₀ is the
     // mean curve area across the bundled library.
     await expect(page.getByText("R₀ (expected)")).toBeVisible();
-    await expect(
-      page.getByText("Attack rate (observed median)"),
-    ).toBeVisible();
+    await expect(page.getByText("Attack rate (observed median)")).toBeVisible();
   });
 
   test("Library mode rejects malformed CSV with an inline error", async ({
@@ -149,13 +141,11 @@ test.describe("Parameter presets", () => {
 
     // Upload garbage — no numeric columns, no header. Parser must reject.
     const garbage = "this is not a csv\njust some words\n";
-    await page
-      .locator("input[type='file']")
-      .setInputFiles({
-        name: "broken.csv",
-        mimeType: "text/csv",
-        buffer: Buffer.from(garbage),
-      });
+    await page.locator("input[type='file']").setInputFiles({
+      name: "broken.csv",
+      mimeType: "text/csv",
+      buffer: Buffer.from(garbage),
+    });
     // The library should be unchanged (10 curves still showing) and
     // an error message should be visible.
     await expect(
@@ -199,13 +189,11 @@ test.describe("Parameter presets", () => {
 
     // Upload a small CSV → library is swapped (2 curves → 1 page).
     const csv = "id,time,value\n1,0,0.1\n1,1,0.5\n2,0,0.2\n2,2,0.6\n";
-    await page
-      .locator("input[type='file']")
-      .setInputFiles({
-        name: "rates.csv",
-        mimeType: "text/csv",
-        buffer: Buffer.from(csv),
-      });
+    await page.locator("input[type='file']").setInputFiles({
+      name: "rates.csv",
+      mimeType: "text/csv",
+      buffer: Buffer.from(csv),
+    });
     await expect(
       page.getByText(/Library of 2 per-person curves/i),
     ).toBeVisible();

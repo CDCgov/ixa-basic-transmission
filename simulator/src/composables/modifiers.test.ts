@@ -7,7 +7,10 @@ import {
 
 describe("modifiers", () => {
   it("default configs are within the valid Rust ranges", () => {
-    for (const v of [DEFAULT_FACEMASK.coverage, DEFAULT_FACEMASK.effectiveness]) {
+    for (const v of [
+      DEFAULT_FACEMASK.coverage,
+      DEFAULT_FACEMASK.effectiveness,
+    ]) {
       expect(v).toBeGreaterThanOrEqual(0);
       expect(v).toBeLessThanOrEqual(1);
     }
