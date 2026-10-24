@@ -235,8 +235,7 @@ function paramsMatchPreset(preset: (typeof presets)[number]): boolean {
     // e.g. older presets predate the `settings` field but should still
     // match the defaults when nothing else differs.
     const target = preset.parameters[key] ?? defaults[key];
-    if (!deepEqual((params as Record<string, unknown>)[key], target))
-      return false;
+    if (!deepEqual(params[key], target)) return false;
   }
   return true;
 }
@@ -249,7 +248,7 @@ const selectedPresetDescription = computed<string | undefined>(
   () => presets.find((p) => p.id === selectedPresetId.value)?.description,
 );
 
-function applyPreset(id: string) {
+function applyPreset(id?: string) {
   const preset = presets.find((p) => p.id === id);
   if (!preset) return;
   for (const key of Object.keys(defaults) as (keyof Params)[]) {
@@ -258,12 +257,7 @@ function applyPreset(id: string) {
     // it's applied (otherwise stale values from the previous preset
     // could leak in and the picker would jump to "Custom").
     const v = preset.parameters[key] ?? defaults[key];
-    if (v === null) {
-      // Nullable params (facemask/antiviral): a preset omitting them, or
-      // setting them null, disables the modifier — set explicitly so a
-      // stale value from the previous preset can't leak through.
-      setParam(key, null as Params[typeof key]);
-    } else if (typeof v === "number") {
+    if (typeof v === "number") {
       if (Number.isFinite(v)) setParam(key, v as Params[typeof key]);
     } else if (typeof v === "object") {
       // Clone so subsequent edits don't mutate the preset / defaults.
@@ -287,11 +281,10 @@ function applyParamUpdate(next: ParamEditorValue) {
   for (const key of Object.keys(defaults) as (keyof Params)[]) {
     if (!(key in next)) continue;
     const raw = next[key];
-    if (raw === null) {
-      // Only nullable params (default `null`) accept null = disabled;
-      // ignore a stray null on a non-nullable field.
-      if (defaults[key] === null) setParam(key, null as Params[typeof key]);
-    } else if (typeof defaults[key] === "number") {
+    // No top-level param is nullable (modifiers are disabled inside the
+    // grouped `modifiers` object), so a stray null is ignored.
+    if (raw === null) continue;
+    if (typeof defaults[key] === "number") {
       const n = Number(raw);
       if (Number.isFinite(n)) setParam(key, n as Params[typeof key]);
     } else if (typeof raw === "object") {
@@ -343,7 +336,7 @@ const axisTextStyle = { fontSize: 13 };
       </p>
       <div class="sidebar-controls">
         <Toggle v-model="useEditor" label="Edit as code" />
-        <Button variant="secondary" @click="reset">Reset</Button>
+        <Button variant="secondary" @click="reset()">Reset</Button>
       </div>
     </div>
     <!-- Snapshot params so the editor sees a fresh object reference each

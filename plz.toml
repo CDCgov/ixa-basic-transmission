@@ -76,6 +76,12 @@ depends = ["ui.setup"]
 run = "vitest run"
 git_hook = "pre-push"
 
+# Typecheck frontend code (vue-tsc)
+[taskgroup.ui.typecheck]
+depends = ["ui.setup"]
+run = "vue-tsc --noEmit"
+git_hook = "pre-commit"
+
 # Check frontend formatting (Prettier)
 [taskgroup.ui.format-check]
 depends = ["ui.setup"]

@@ -595,7 +595,9 @@ function fmtTau(v: unknown): string {
           label="Generalized"
           hint="Show the general inverse-CDF method (Λ⁻¹) instead of drawing each Δτ straight from Exp(rate)."
           class="explorer-mode-toggle"
-          @update:model-value="(v: boolean) => (generalized = v)"
+          @update:model-value="
+            (v?: boolean) => v !== undefined && (generalized = v)
+          "
         />
       </div>
       <!-- Library rates assign each person a random curve; everything else is

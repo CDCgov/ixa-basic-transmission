@@ -104,7 +104,7 @@ const selectedLibraryId = computed<string>(() => {
   return match?.id ?? "";
 });
 
-function applyLibrary(id: string) {
+function applyLibrary(id?: string) {
   const entry = settingsLibrary.find((p) => p.id === id);
   if (!entry) return;
   // Deep-clone so user edits to `settings` don't mutate the bundled preset.
@@ -162,7 +162,7 @@ function sizeChartData(s: SettingType) {
         <TextInput
           :model-value="s.name"
           label="Name"
-          @update:model-value="(v: string) => setName(i, v)"
+          @update:model-value="(v?: string) => v !== undefined && setName(i, v)"
         />
       </div>
       <div class="setting-row">
@@ -173,7 +173,9 @@ function sizeChartData(s: SettingType) {
           :max="1"
           :step="0.05"
           :live="live"
-          @update:model-value="(v: number) => setAlpha(i, v)"
+          @update:model-value="
+            (v?: number) => v !== undefined && setAlpha(i, v)
+          "
         />
         <NumberInput
           :model-value="s.proportion"
@@ -181,7 +183,9 @@ function sizeChartData(s: SettingType) {
           :min="0"
           :step="0.05"
           :live="live"
-          @update:model-value="(v: number) => setProportion(i, v)"
+          @update:model-value="
+            (v?: number) => v !== undefined && setProportion(i, v)
+          "
         />
       </div>
       <div class="setting-row size-summary">
@@ -220,7 +224,9 @@ function sizeChartData(s: SettingType) {
             :step="1"
             :live="live"
             label=""
-            @update:model-value="(v: number) => updateSize(i, j, 0, v)"
+            @update:model-value="
+              (v?: number) => v !== undefined && updateSize(i, j, 0, v)
+            "
           />
           <NumberInput
             :model-value="p[1]"
@@ -228,7 +234,9 @@ function sizeChartData(s: SettingType) {
             :step="0.01"
             :live="live"
             label=""
-            @update:model-value="(v: number) => updateSize(i, j, 1, v)"
+            @update:model-value="
+              (v?: number) => v !== undefined && updateSize(i, j, 1, v)
+            "
           />
           <button
             type="button"

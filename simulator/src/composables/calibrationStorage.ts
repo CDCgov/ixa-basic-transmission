@@ -259,16 +259,14 @@ export async function setStatus(
     await tx.done;
     return;
   }
+  const { errorMessage, ...rest } = plain(patch);
   const updated: StoredRun = {
     ...existing,
-    ...plain(patch),
+    ...rest,
     updatedAt: Date.now(),
   };
-  if ("errorMessage" in patch) {
-    // Explicit clear when caller passed null. Otherwise plain(patch)
-    // already set the field to the string.
-    if (patch.errorMessage === null) updated.errorMessage = undefined;
-  }
+  // A null clears the stored message; an absent key keeps it.
+  if ("errorMessage" in patch) updated.errorMessage = errorMessage ?? undefined;
   await tx.store.put(updated);
   await tx.done;
 }

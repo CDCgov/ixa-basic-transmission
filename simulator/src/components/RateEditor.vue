@@ -130,8 +130,8 @@ const distParamFields = computed<
   ];
 });
 
-function setDistType(next: string) {
-  if (props.modelValue.type !== "parametric") return;
+function setDistType(next?: string) {
+  if (props.modelValue.type !== "parametric" || next === undefined) return;
   const key = next as ParametricDist["dist"];
   if (!(key in DIST_DEFAULTS)) return;
   emit("update:modelValue", {
@@ -180,7 +180,7 @@ function nextPage() {
   }
 }
 
-function setRateType(next: string) {
+function setRateType(next?: string) {
   if (
     next !== "constant" &&
     next !== "empirical" &&
@@ -506,13 +506,17 @@ function formatRate(v: unknown): string {
           :model-value="point[0]"
           :min="0"
           :step="0.5"
-          @update:model-value="(v: number) => updatePoint(i, 0, v)"
+          @update:model-value="
+            (v?: number) => v !== undefined && updatePoint(i, 0, v)
+          "
         />
         <NumberInput
           :model-value="point[1]"
           :min="0"
           :step="0.1"
-          @update:model-value="(v: number) => updatePoint(i, 1, v)"
+          @update:model-value="
+            (v?: number) => v !== undefined && updatePoint(i, 1, v)
+          "
         />
         <Button
           variant="secondary"
@@ -541,7 +545,9 @@ function formatRate(v: unknown): string {
       :model-value="field.value"
       :label="field.label"
       :step="field.step"
-      @update:model-value="(v: number) => setDistParam(field.key, v)"
+      @update:model-value="
+        (v?: number) => v !== undefined && setDistParam(field.key, v)
+      "
     />
     <NumberInput
       v-model="rateScale"

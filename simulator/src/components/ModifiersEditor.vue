@@ -43,7 +43,7 @@ const cachedIsolation = shallowRef<Isolation | null>(null);
 // Toggling on restores the cached config (or seeds a fresh default the first
 // time); toggling off caches the current config then disables the modifier
 // (null → the Rust side reads `None`).
-function toggleFacemask(on: boolean) {
+function toggleFacemask(on?: boolean) {
   if (!on) {
     cachedFacemask.value = props.modifiers.facemask
       ? { ...props.modifiers.facemask }
@@ -58,7 +58,7 @@ function setFacemask(key: keyof Facemask, value: number) {
   setModifiers({ facemask: { ...props.modifiers.facemask, [key]: value } });
 }
 
-function toggleAntiviral(on: boolean) {
+function toggleAntiviral(on?: boolean) {
   if (!on) {
     cachedAntiviral.value = props.modifiers.antiviral
       ? { ...props.modifiers.antiviral }
@@ -77,7 +77,7 @@ function setAntiviral(key: keyof Antiviral, value: number) {
 
 // Enabling restores the cached config (or seeds defaults), falling back to the
 // first configured setting if the cached restrictTo no longer exists.
-function toggleIsolation(on: boolean) {
+function toggleIsolation(on?: boolean) {
   if (!on) {
     cachedIsolation.value = props.modifiers.isolation
       ? { ...props.modifiers.isolation }
@@ -95,7 +95,7 @@ function setIsolation(patch: Partial<Isolation>) {
   if (!props.modifiers.isolation) return;
   setModifiers({ isolation: { ...props.modifiers.isolation, ...patch } });
 }
-function toggleIsolationDuration(on: boolean) {
+function toggleIsolationDuration(on?: boolean) {
   setIsolation({ duration: on ? DEFAULT_ISOLATION_DURATION : null });
 }
 
@@ -136,7 +136,9 @@ function pct(fraction: number): string {
             :min="0"
             :max="1"
             :live="live"
-            @update:model-value="(v: number) => setFacemask('coverage', v)"
+            @update:model-value="
+              (v?: number) => v !== undefined && setFacemask('coverage', v)
+            "
           />
           <NumberInput
             :model-value="modifiers.facemask.effectiveness"
@@ -145,7 +147,9 @@ function pct(fraction: number): string {
             :min="0"
             :max="1"
             :live="live"
-            @update:model-value="(v: number) => setFacemask('effectiveness', v)"
+            @update:model-value="
+              (v?: number) => v !== undefined && setFacemask('effectiveness', v)
+            "
           />
         </div>
         <p class="effect">
@@ -173,7 +177,9 @@ function pct(fraction: number): string {
             :min="0"
             :max="1"
             :live="live"
-            @update:model-value="(v: number) => setAntiviral('coverage', v)"
+            @update:model-value="
+              (v?: number) => v !== undefined && setAntiviral('coverage', v)
+            "
           />
           <NumberInput
             :model-value="modifiers.antiviral.efficacy"
@@ -182,7 +188,9 @@ function pct(fraction: number): string {
             :min="0"
             :max="1"
             :live="live"
-            @update:model-value="(v: number) => setAntiviral('efficacy', v)"
+            @update:model-value="
+              (v?: number) => v !== undefined && setAntiviral('efficacy', v)
+            "
           />
         </div>
         <div class="modifier-row">
@@ -192,7 +200,9 @@ function pct(fraction: number): string {
             :min="0"
             :step="0.5"
             :live="live"
-            @update:model-value="(v: number) => setAntiviral('delay', v)"
+            @update:model-value="
+              (v?: number) => v !== undefined && setAntiviral('delay', v)
+            "
           />
         </div>
         <p class="effect">
@@ -225,13 +235,17 @@ function pct(fraction: number): string {
             :min="0"
             :max="1"
             :live="live"
-            @update:model-value="(v: number) => setIsolation({ coverage: v })"
+            @update:model-value="
+              (v?: number) => v !== undefined && setIsolation({ coverage: v })
+            "
           />
           <SelectBox
             label="Restrict to"
             :options="settingOptions"
             :model-value="modifiers.isolation.restrictTo"
-            @update:model-value="(v: string) => setIsolation({ restrictTo: v })"
+            @update:model-value="
+              (v?: string) => v !== undefined && setIsolation({ restrictTo: v })
+            "
           />
         </div>
         <div class="modifier-row">
@@ -241,7 +255,9 @@ function pct(fraction: number): string {
             :min="0"
             :step="0.5"
             :live="live"
-            @update:model-value="(v: number) => setIsolation({ delay: v })"
+            @update:model-value="
+              (v?: number) => v !== undefined && setIsolation({ delay: v })
+            "
           />
         </div>
         <Toggle
@@ -256,7 +272,9 @@ function pct(fraction: number): string {
             :min="0"
             :step="0.5"
             :live="live"
-            @update:model-value="(v: number) => setIsolation({ duration: v })"
+            @update:model-value="
+              (v?: number) => v !== undefined && setIsolation({ duration: v })
+            "
           />
         </div>
         <p class="effect">
