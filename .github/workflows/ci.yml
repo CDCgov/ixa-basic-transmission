@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-plz
+      - uses: ./.github/actions/setup-rust
+      - uses: actions/cache@v6
+        with:
+          path: target/debug
+          key: rust-${{ runner.os }}-host-${{ hashFiles('Cargo.lock', 'Cargo.toml') }}
+          restore-keys: rust-${{ runner.os }}-host-
+      - run: plz lint
+      - run: plz test
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-plz
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: simulator/package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version: lts/*
+          cache: pnpm
+          cache-dependency-path: simulator/pnpm-lock.yaml
+      - run: plz ui format-check
+      - run: plz ui typecheck
+      - run: plz ui unit
+
+  # Vite's cfasimWasm plugin runs wasm-pack in its config hook, so e2e needs
+  # the Rust toolchain too.
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-plz
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: simulator/package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version: lts/*
+          cache: pnpm
+          cache-dependency-path: simulator/pnpm-lock.yaml
+      - uses: ./.github/actions/setup-rust
+      - run: plz ui setup
+      - run: pnpm exec playwright install --with-deps chromium
+        working-directory: simulator
+      - run: plz ui e2e
