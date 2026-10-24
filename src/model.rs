@@ -47,11 +47,10 @@ fn base_infectiousness_rate_fn(context: &Context, person: PersonId) -> &Invertib
             .get_data(RateStoragePlugin)
             .assigned_fn(person)
             .expect("no rate fn assigned to person; infect via `infect_person`"),
+        // Clone inside the closure so the points are only copied on first build.
         InfectionRate::Empirical { points, scale } => {
-            let points = points.clone();
-            let scale = *scale;
             context.get_data(RateStoragePlugin).single_or_build(|| {
-                InvertibleRateFn::Empirical(EmpiricalRateFn::new(points, scale))
+                InvertibleRateFn::Empirical(EmpiricalRateFn::new(points.clone(), *scale))
             })
         }
         InfectionRate::Library { .. } => {
