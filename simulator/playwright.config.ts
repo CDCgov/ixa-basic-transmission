@@ -5,17 +5,19 @@ import { defineConfig } from "@playwright/test";
 // generous timeout; subsequent tests reuse the cached module.
 export default defineConfig({
   testDir: "./e2e",
-  fullyParallel: false,
-  workers: 1,
+  fullyParallel: true,
+  workers: process.env.CI ? 2 : undefined,
   reporter: process.env.CI ? "github" : "list",
   use: {
-    baseURL: "http://localhost:5173",
+    baseURL: `http://localhost:${process.env.E2E_PORT}`,
     trace: "retain-on-failure",
   },
   webServer: {
-    command: "pnpm exec vite --port 5173 --strictPort",
-    url: "http://localhost:5173",
-    reuseExistingServer: !process.env.CI,
+    command: "pnpm exec vite --port 0",
+    stdout: "pipe",
+    env: { ...process.env, NO_COLOR: "1" } as Record<string, string>,
+    wait: { stdout: /localhost:(?<e2e_port>\d+)/ },
+    reuseExistingServer: false,
     timeout: 120_000,
   },
   projects: [{ name: "chromium", use: { browserName: "chromium" } }],
