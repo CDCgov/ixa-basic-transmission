@@ -1165,12 +1165,12 @@ const observedGapSections = computed(() => {
     <div class="overlay-grid">
       <div class="overlay-cell">
         <p class="trace-label">R₀ — KDE per stage</p>
-        <LineChart :series="stageOverlays.r0Series" :areas="stageOverlays.r0Areas" :height="240" x-label="R₀"
+        <LineChart legend-toggle :series="stageOverlays.r0Series" :areas="stageOverlays.r0Areas" :height="240" x-label="R₀"
           y-label="density" :menu="false" tooltip-trigger="hover" tooltip-value-format="%.3f" />
       </div>
       <div class="overlay-cell">
         <p class="trace-label">Initial infections — posterior per stage</p>
-        <BarChart :categories="stageOverlays.iiCategories" :series="stageOverlays.iiSeries" layout="overlay"
+        <BarChart legend-toggle :categories="stageOverlays.iiCategories" :series="stageOverlays.iiSeries" layout="overlay"
           :height="240" :menu="false" tooltip-trigger="hover" tooltip-value-format="%.4f" />
       </div>
     </div>
@@ -1204,7 +1204,7 @@ const observedGapSections = computed(() => {
         <div class="trace-row">
           <div class="trace-mini">
             <p class="trace-label">R₀ (prior · posterior · KDE)</p>
-            <BarChart :categories="trace.r0Bins.categories" :series="[
+            <BarChart legend-toggle :categories="trace.r0Bins.categories" :series="[
               {
                 data: trace.r0Bins.prior,
                 color: '#94a3b8',
@@ -1231,7 +1231,7 @@ const observedGapSections = computed(() => {
             <!-- Initial-infections is discrete + frozen by the
                  perturbation kernel, so no KDE overlay. -->
             <p class="trace-label">Initial infections (prior · posterior)</p>
-            <BarChart :categories="trace.iiBins.categories" :series="[
+            <BarChart legend-toggle :categories="trace.iiBins.categories" :series="[
               {
                 data: trace.iiBins.prior,
                 color: '#94a3b8',
@@ -1251,15 +1251,6 @@ const observedGapSections = computed(() => {
     </div>
   </section>
 </template>
-
-<!-- Non-scoped: the calibrate page needs more horizontal room than the
-     SidebarLayout's default 1024px MainContent cap. Overrides the
-     cfasim-ui rule (`.MainContent[data-v-*]{max-width:1024px}`). -->
-<style>
-.MainContent {
-  max-width: 1400px !important;
-}
-</style>
 
 <style scoped>
 .sidebar-header {

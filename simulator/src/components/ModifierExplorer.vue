@@ -542,7 +542,7 @@ const timelinesVisible = computed(
           Before the modifier every attempt is accepted; after, it is f·r(τ) ÷ r(τ) = <strong>f</strong>. A rejected attempt is discarded but still used
           to calculate the next attempt time.
         </p>
-        <LineChart :series="thinSeries" :areas="thinAreas" :annotations="thinAnnotations" :chart-padding="{ top: 16 }"
+        <LineChart legend-toggle :series="thinSeries" :areas="thinAreas" :annotations="thinAnnotations" :chart-padding="{ top: 16 }"
           :height="230" :y-min="0" :menu="false" :tick-label-style="axisTextStyle" :axis-label-style="axisTextStyle"
           :legend-style="axisTextStyle" x-label="t (days since infected)" y-label="rate" tooltip-trigger="hover">
           <template #tooltip="{ xLabel, values }">
@@ -596,7 +596,7 @@ const timelinesVisible = computed(
           switches on at <strong>tₘ</strong>, a new event is scheduled
           from tₘ on <strong>f·r(t)</strong>. The original event must be <strong>cancelled</strong>.
         </p>
-        <LineChart :series="reschedSeries" :areas="reschedAreas" :annotations="reschedAnnotations"
+        <LineChart legend-toggle :series="reschedSeries" :areas="reschedAreas" :annotations="reschedAnnotations"
           :chart-padding="{ top: 16 }" :height="230" :y-min="0" :menu="false" :tick-label-style="axisTextStyle"
           :axis-label-style="axisTextStyle" :legend-style="axisTextStyle" x-label="t (days since infected)"
           y-label="rate" tooltip-trigger="hover">
@@ -659,7 +659,7 @@ const timelinesVisible = computed(
         <strong>{{ fmt(modified.total) }}</strong>.
       </p>
       <template v-if="hasSamples">
-        <BarChart :categories="reschedHist.categories" :series="distSeries" :summary-lines="distOverlay" :height="220"
+        <BarChart legend-toggle :categories="reschedHist.categories" :series="distSeries" :summary-lines="distOverlay" :height="220"
           :menu="false" x-label="t (days since infected)" y-label="% of that method's events"
           :tick-label-style="axisTextStyle" :axis-label-style="axisTextStyle" :legend-style="axisTextStyle"
           value-tick-format="%.0f%%" :category-format="distLabel">

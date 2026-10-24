@@ -1,10 +1,17 @@
 <script setup lang="ts">
-import { RouterView, RouterLink } from "vue-router";
+import { computed } from "vue";
+import { RouterView, RouterLink, useRoute } from "vue-router";
 import { SidebarLayout } from "cfasim-ui/components";
+
+const route = useRoute();
+// The calibrate page needs more horizontal room than the default 1024px cap.
+const maxWidth = computed(() =>
+  route.path.startsWith("/calibrate") ? 1400 : undefined,
+);
 </script>
 
 <template>
-  <SidebarLayout>
+  <SidebarLayout :max-width="maxWidth">
     <template #sidebar>
       <div id="model-sidebar" class="model-sidebar"></div>
     </template>

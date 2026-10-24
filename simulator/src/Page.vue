@@ -7,8 +7,13 @@ import {
   Toggle,
   ParamEditor,
   SelectBox,
+  ToggleGroup,
 } from "cfasim-ui/components";
-import type { ParamEditorValue, SelectOption } from "cfasim-ui/components";
+import type {
+  ParamEditorValue,
+  SelectOption,
+  ToggleGroupOption,
+} from "cfasim-ui/components";
 import { LineChart, DataTable } from "cfasim-ui/charts";
 import {
   useUrlParams,
@@ -72,7 +77,7 @@ function setMainTab(tab: MainTab) {
     query: paramsToQuery(params, defaults, urlCodecs),
   });
 }
-const mainTabs: SelectOption[] = [
+const mainTabs: ToggleGroupOption[] = [
   { value: "simulate", label: "Simulate" },
   { value: "explore", label: "Explore" },
   { value: "modifiers", label: "Modifiers" },
@@ -392,26 +397,21 @@ const axisTextStyle = { fontSize: 13 };
     next transmission attempt; contacts are picked from a setting in their
     itinerary, or uniformly from the population when no settings are configured.
   </p>
-  <div class="main-tabs" role="tablist">
-    <button
-      v-for="tab in mainTabs"
-      :key="tab.value"
-      type="button"
-      role="tab"
-      class="main-tab"
-      :class="{ 'main-tab-active': mainTab === tab.value }"
-      :aria-selected="mainTab === tab.value"
-      @click="setMainTab(tab.value as MainTab)"
-    >
-      {{ tab.label }}
-    </button>
-  </div>
+  <ToggleGroup
+    :model-value="mainTab"
+    :options="mainTabs"
+    aria-label="View"
+    hide-label
+    class="main-tabs"
+    @update:model-value="(v) => typeof v === 'string' && setMainTab(v as MainTab)"
+  />
   <template v-if="mainTab === 'simulate'">
     <p v-if="error" class="error">{{ error }}</p>
     <p v-if="statusMessage" class="status">{{ statusMessage }}</p>
     <template v-for="chart in charts" :key="chart.yLabel">
       <LineChart
         v-if="chart.series.length"
+        legend-toggle
         :series="chart.series"
         :annotations="chart.annotations"
         :chart-padding="chart.padding"
@@ -450,29 +450,7 @@ const axisTextStyle = { fontSize: 13 };
 
 <style scoped>
 .main-tabs {
-  display: flex;
-  gap: 0.25rem;
-  border-bottom: 1px solid var(--color-border);
   margin: 0.5em 0 1em;
-}
-.main-tab {
-  appearance: none;
-  background: none;
-  border: none;
-  border-bottom: 2px solid transparent;
-  margin-bottom: -1px;
-  padding: 0.5em 0.75em;
-  font-size: var(--font-size-sm, 0.875rem);
-  color: var(--color-text-secondary);
-  cursor: pointer;
-}
-.main-tab:hover {
-  color: var(--color-text);
-}
-.main-tab-active {
-  color: var(--color-text);
-  border-bottom-color: var(--color-accent, #2563eb);
-  font-weight: 600;
 }
 .sidebar-header {
   display: flex;

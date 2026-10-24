@@ -94,8 +94,8 @@ test.describe("Calibration page", () => {
     // At least one cell with the prior label (the implicit stage 0) and
     // at least one perturbation stage. Both labels appear twice (table
     // row + per-stage heading); .first() is fine for a presence check.
-    await expect(page.getByText(/Prior \(∞\)/).first()).toBeVisible();
-    await expect(page.getByText(/Stage 4/).first()).toBeVisible();
+    await expect(page.getByText(/Prior \(∞\)/).filter({ visible: true }).first()).toBeVisible();
+    await expect(page.getByText(/Stage 4/).filter({ visible: true }).first()).toBeVisible();
 
     // URL gained `?runId=…`.
     await expect(page).toHaveURL(/runId=[0-9a-f]+/);
@@ -104,7 +104,7 @@ test.describe("Calibration page", () => {
     // Reload via the deep link → same run restored from IndexedDB.
     await page.goto(url);
     await expect(page.getByText(/Complete/)).toBeVisible({ timeout: 30_000 });
-    await expect(page.getByText(/Stage 4/).first()).toBeVisible();
+    await expect(page.getByText(/Stage 4/).filter({ visible: true }).first()).toBeVisible();
   });
 
   test("refresh mid-run offers Resume (not a dead Pause) and continues", async ({

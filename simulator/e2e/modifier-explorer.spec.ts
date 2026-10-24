@@ -8,7 +8,7 @@ test.describe("Modifier explorer tab", () => {
     page,
   }) => {
     await page.goto("/");
-    await page.getByRole("tab", { name: "Modifiers", exact: true }).click();
+    await page.getByRole("button", { name: "Modifiers", exact: true }).click();
     await expect(page).toHaveURL(/\/modifiers/);
 
     await expect(
