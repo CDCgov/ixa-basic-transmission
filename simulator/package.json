@@ -15,7 +15,7 @@
     "@vitejs/plugin-vue": "^6.0.5",
     "fake-indexeddb": "^6.2.5",
     "prettier": "^3.9.10",
-    "smol-toml": "^1.6.1",
+    "smol-toml": "^1.9.0",
     "typescript": "^6.0.3",
     "vite": "^8.0.16",
     "vitest": "^4.1.7",
