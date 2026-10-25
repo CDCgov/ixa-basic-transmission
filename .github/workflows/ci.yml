@@ -49,6 +49,7 @@ jobs:
   # the Rust toolchain too.
   e2e:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-plz
@@ -62,6 +63,13 @@ jobs:
           cache-dependency-path: simulator/pnpm-lock.yaml
       - uses: ./.github/actions/setup-rust
       - run: plz ui setup
-      - run: pnpm exec playwright install --with-deps chromium
+      # Tests run headless, so only the headless shell is needed (~60% smaller).
+      - run: pnpm exec playwright install --with-deps --only-shell chromium
         working-directory: simulator
       - run: plz ui e2e
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: playwright-traces
+          path: simulator/test-results/
+          retention-days: 7
