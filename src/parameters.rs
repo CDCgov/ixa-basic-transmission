@@ -1,8 +1,37 @@
+use ixa::prelude::*;
+use ixa::{define_global_property, Context};
 use serde::{Deserialize, Serialize};
 
 use crate::modifiers::Modifiers;
 use crate::rate::InfectionRate;
 use crate::settings::SettingType;
+
+define_global_property!(Params, Parameters);
+
+/// The parameters of the run, set once before setup.
+pub trait ParametersExt {
+    /// # Panics
+    ///
+    /// If they were already set.
+    fn set_params(&mut self, params: Parameters);
+
+    /// # Panics
+    ///
+    /// If they were not set.
+    fn params(&self) -> &Parameters;
+}
+
+impl ParametersExt for Context {
+    fn set_params(&mut self, params: Parameters) {
+        self.set_global_property_value(Params, params)
+            .expect("parameters were already set");
+    }
+
+    fn params(&self) -> &Parameters {
+        self.get_global_property_value(Params)
+            .expect("parameters were not set")
+    }
+}
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
