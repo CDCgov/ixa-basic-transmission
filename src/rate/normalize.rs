@@ -20,37 +20,33 @@ use super::{empirical_cum_rate, empirical_curve_duration, InfectionRate};
 pub fn normalize_to_r0(rate: &mut InfectionRate) {
     match rate {
         InfectionRate::Constant { .. } => {}
-        // `Parametric` is lowered to `Empirical` (`materialize_parametric`)
-        // before this is called in `model::run` / `setup_only`, so it is
-        // already an `Empirical` curve by the time we normalize. Left as a
-        // no-op for the rare standalone call on a still-parametric rate.
+        // `Parametric` has no points until it is lowered to a curve; the
+        // model normalizes the lowered curve (see `ResolvedRate`).
         InfectionRate::Parametric { .. } => {}
         InfectionRate::Empirical { points, .. } => {
-            let area = empirical_cum_rate(points, empirical_curve_duration(points));
-            if !area.is_finite() || area <= 0.0 {
-                return;
-            }
-            for p in points.iter_mut() {
-                p[1] /= area;
-            }
+            normalize_curves(std::slice::from_mut(points));
         }
-        InfectionRate::Library { rates, .. } => {
-            if rates.is_empty() {
-                return;
-            }
-            let total: f64 = rates
-                .iter()
-                .map(|r| empirical_cum_rate(r, empirical_curve_duration(r)))
-                .sum();
-            let mean = total / rates.len() as f64;
-            if !mean.is_finite() || mean <= 0.0 {
-                return;
-            }
-            for r in rates.iter_mut() {
-                for p in r.iter_mut() {
-                    p[1] /= mean;
-                }
-            }
+        InfectionRate::Library { rates, .. } => normalize_curves(rates),
+    }
+}
+
+/// Rescale every curve by the same factor so their mean area is 1. No-op if
+/// there are none or the mean area is not positive and finite.
+pub(crate) fn normalize_curves(curves: &mut [Vec<[f64; 2]>]) {
+    if curves.is_empty() {
+        return;
+    }
+    let total: f64 = curves
+        .iter()
+        .map(|curve| empirical_cum_rate(curve, empirical_curve_duration(curve)))
+        .sum();
+    let mean = total / curves.len() as f64;
+    if !mean.is_finite() || mean <= 0.0 {
+        return;
+    }
+    for curve in curves.iter_mut() {
+        for point in curve.iter_mut() {
+            point[1] /= mean;
         }
     }
 }

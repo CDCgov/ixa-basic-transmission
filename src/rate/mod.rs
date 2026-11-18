@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 
 pub mod normalize;
 pub mod parametric;
+pub mod resolved;
 
 // The rate functions themselves come from ixa's core_epi.
 pub use ixa::core_epi::rate::{
@@ -21,6 +22,7 @@ pub use ixa::core_epi::rate::{
 };
 pub use normalize::normalize_to_r0;
 pub use parametric::{materialize_parametric, ParametricDist, PARAMETRIC_GRID};
+pub use resolved::{RateDraw, ResolvedRate};
 
 /// Per-person infectiousness rate, indexed by time since the person became
 /// infectious (τ). Each variant carries its own duration since the two
@@ -29,7 +31,7 @@ pub use parametric::{materialize_parametric, ParametricDist, PARAMETRIC_GRID};
 /// curve (when its integrated infectiousness is exhausted).
 ///
 /// This enum is the configuration format only; the running model resolves it
-/// into [`AnyInfectionRate`] values (see `model::load_rate_library`).
+/// into [`AnyInfectionRate`] values (see [`ResolvedRate`]).
 ///
 /// - `Constant { value, duration }`: fixed rate over an exponential
 ///   infectious period with mean `duration` (`exp_mean_duration` in Rust),
