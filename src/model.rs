@@ -86,18 +86,14 @@ impl InfectionManager<BasicTransmission> for Context {
 
 impl TransmissionManager<BasicTransmission> for Context {
     /// The factor from the person's settings; 1 under global random mixing.
+    /// It is also the forecast, by default: membership is static and the one
+    /// thing that changes it, isolation, re-forecasts.
     fn contact_multiplier(&self, person: PersonId) -> f64 {
         if self.params().settings.is_empty() {
             1.0
         } else {
             self.current_setting_multiplier::<Setting>(person)
         }
-    }
-
-    /// The multiplier itself: membership is static and the one thing that
-    /// changes it, isolation, re-forecasts.
-    fn max_contact_multiplier(&self, person: PersonId) -> f64 {
-        self.contact_multiplier(person)
     }
 
     fn sample_contact(&self, person: PersonId) -> Option<(PersonId, ())> {

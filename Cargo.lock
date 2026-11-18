@@ -641,7 +641,7 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 [[package]]
 name = "ixa"
 version = "4.0.0"
-source = "git+https://github.com/CDCgov/ixa.git?branch=core-epi-draft#96b29ff5aaa0270bea6411ca50996e59aa0ea791"
+source = "git+https://github.com/CDCgov/ixa.git?branch=core-epi-draft#a7c8b460509a65c7fedbf265dedfe7d5d768a7bf"
 dependencies = [
  "approx",
  "bincode-next",
@@ -693,7 +693,7 @@ dependencies = [
 [[package]]
 name = "ixa-derive"
 version = "2.1.0"
-source = "git+https://github.com/CDCgov/ixa.git?branch=core-epi-draft#96b29ff5aaa0270bea6411ca50996e59aa0ea791"
+source = "git+https://github.com/CDCgov/ixa.git?branch=core-epi-draft#a7c8b460509a65c7fedbf265dedfe7d5d768a7bf"
 dependencies = [
  "proc-macro2",
  "quote",
