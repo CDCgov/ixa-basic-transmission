@@ -10,22 +10,17 @@
 
 use serde::{Deserialize, Serialize};
 
-pub mod constant_rate;
-pub mod empirical_rate;
 pub mod normalize;
 pub mod parametric;
-pub mod rate_fn;
-pub mod storage;
 
-pub use constant_rate::ConstantRateFn;
-pub use empirical_rate::{
+// The rate functions themselves come from ixa's core_epi.
+pub use ixa::core_epi::rate::{
     empirical_cum_rate, empirical_curve_duration, empirical_inverse_cum_rate,
-    empirical_support_end, EmpiricalRateFn,
+    empirical_support_end, AnyInfectionRate, ConstantRateFn, EmpiricalRateFn, InvertibleRate,
+    ScaledRateFn, TransformedInvertibleRateFn,
 };
 pub use normalize::normalize_to_r0;
 pub use parametric::{materialize_parametric, ParametricDist, PARAMETRIC_GRID};
-pub use rate_fn::{InvertibleRate, ScaledRateFn, TransformedInvertibleRateFn};
-pub use storage::{build_empirical_library, AssignedRate, InvertibleRateFn, RateStorage};
 
 /// Per-person infectiousness rate, indexed by time since the person became
 /// infectious (τ). Each variant carries its own duration since the two

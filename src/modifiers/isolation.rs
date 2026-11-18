@@ -29,8 +29,10 @@ use ixa::{define_rng, Context};
 use serde::{Deserialize, Serialize};
 
 use super::ModifierExt;
-use crate::person::{InfectionStatus, InfectionTime};
-use crate::settings::{SettingType, SettingsExt};
+use ixa::core_epi::InfectionManager;
+
+use crate::person::InfectionStatus;
+use crate::settings::{ModelSettingsExt, SettingType};
 
 define_rng!(IsolationRng);
 
@@ -99,7 +101,6 @@ pub fn register(ctx: &mut Context, config: Option<Isolation>, settings: &[Settin
     // single setting's rate, above their weighted mean). Without this, the
     // forecast uses the tight exact `current_mult` bound — see
     // `SettingsExt::settings_forecast_multiplier`.
-    ctx.settings_arm_restriction();
     let Isolation {
         coverage,
         delay,
@@ -112,8 +113,7 @@ pub fn register(ctx: &mut Context, config: Option<Isolation>, settings: &[Settin
             return;
         }
         let t_inf = c
-            .get_property::<_, InfectionTime>(person)
-            .0
+            .infection_time(person)
             .expect("infectious person has an infection time");
         let start = t_inf + delay;
         c.add_plan(start, move |context| {

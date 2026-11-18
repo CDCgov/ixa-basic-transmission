@@ -11,7 +11,6 @@ pub mod person;
 pub mod rate;
 pub mod settings;
 pub mod stats;
-pub mod transmission;
 
 use cfasim_model::{model_outputs, ModelOutput};
 use serde::Deserialize;

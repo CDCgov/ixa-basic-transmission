@@ -60,8 +60,20 @@ impl Parameters {
             ));
         }
         if !self.settings.is_empty() {
+            if self.settings.len() > ixa::core_epi::MAX_SETTINGS {
+                return Err(format!(
+                    "at most {} setting types are supported, got {}",
+                    ixa::core_epi::MAX_SETTINGS,
+                    self.settings.len()
+                ));
+            }
             for s in &self.settings {
                 s.validate()?;
+            }
+            for (i, s) in self.settings.iter().enumerate() {
+                if self.settings[..i].iter().any(|other| other.name == s.name) {
+                    return Err(format!("setting name {} is used more than once", s.name));
+                }
             }
             let total: f64 = self.settings.iter().map(|s| s.proportion).sum();
             if total <= 0.0 || !total.is_finite() {

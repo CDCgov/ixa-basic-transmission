@@ -1,22 +1,19 @@
+use ixa::core_epi::{InfectionManager, RateAssignment, SettingsExt as _, TransmissionManager};
 use ixa::prelude::*;
 use ixa::{define_data_plugin, define_global_property, define_rng, Context};
 use rand_distr::Exp;
 
-use crate::modifiers::intrinsic::IntrinsicModifierExt;
 use crate::modifiers::ModifierExt;
 use crate::parameters::Parameters;
-use crate::person::{InfectionStatus, InfectionTime, Person, PersonId};
+use crate::person::{InfectionStatus, Person, PersonId};
 use crate::rate::{
-    build_empirical_library, AssignedRate, ConstantRateFn, EmpiricalRateFn, InfectionRate,
-    InvertibleRate, InvertibleRateFn, RateStorage, TransformedInvertibleRateFn,
+    AnyInfectionRate, ConstantRateFn, EmpiricalRateFn, InfectionRate, InvertibleRate, ScaledRateFn,
 };
-use crate::settings::SettingsExt;
+use crate::settings::{ModelSettingsExt, Setting};
 use crate::stats::ModelStats;
-use crate::transmission::{ContactStructure, Infectiousness, Transmission};
 
 define_global_property!(Params, Parameters);
-
-define_rng!(InfectionRng);
+define_rng!(SeedRng);
 define_rng!(RateAssignmentRng);
 
 define_data_plugin!(ModelStatsPlugin, ModelStats, |context| {
@@ -24,86 +21,40 @@ define_data_plugin!(ModelStatsPlugin, ModelStats, |context| {
     ModelStats::new(params.initial_infections)
 });
 
-// The data container (`RateStorage`) lives in `crate::rate::storage`; the
-// plugin wrapper is defined here because `define_data_plugin!` produces a
-// private type and it's only read from this module's hot path.
-define_data_plugin!(RateStoragePlugin, RateStorage, |_context| RateStorage::new(
-));
+/// Marker type the `core_epi` traits are implemented for.
+pub struct BasicTransmission;
 
-/// Time since `person` was infected; `None` if they never were.
-fn time_since_infection(context: &Context, person: PersonId) -> Option<f64> {
-    let InfectionTime(t_inf) = context.get_property(person);
-    Some(context.get_current_time() - t_inf?)
-}
+impl InfectionManager<BasicTransmission> for Context {
+    type Entity = Person;
 
-// TO DO: refactor this, so that we store parameters and resolve them for individuals
-// TO DO: pick some better name than "base"
-/// Resolve the stored, untransformed rate function for `person`. The time scale is
-/// time since infection, not clock time.
-fn base_infectiousness_rate_fn(context: &Context, person: PersonId) -> &InvertibleRateFn {
-    match &context.get_params().infection_rate {
-        // Assigned per person at infection (see `Infection::assign_rate`).
-        InfectionRate::Constant { .. } => context
-            .get_data(RateStoragePlugin)
-            .assigned_fn(person)
-            .expect("no rate fn assigned to person; infect via `infect_person`"),
-        // Clone inside the closure so the points are only copied on first build.
-        InfectionRate::Empirical { points, scale } => {
-            context.get_data(RateStoragePlugin).single_or_build(|| {
-                InvertibleRateFn::Empirical(EmpiricalRateFn::new(points.clone(), *scale))
-            })
-        }
-        InfectionRate::Library { .. } => {
-            let idx = context
-                .get_property::<_, AssignedRate>(person)
-                .0
-                .expect("AssignedRate is None in Library mode");
-            context.get_data(RateStoragePlugin).library_fn(idx)
-        }
-        // Lowered to `Empirical` at `run`/`setup_only` entry; never seen here.
-        InfectionRate::Parametric { .. } => {
-            unreachable!("Parametric is materialized to Empirical before setup")
+    fn draw_infectiousness_rate_fn(&mut self, _person: PersonId) -> RateAssignment {
+        match &self.get_params().infection_rate {
+            // The infectious period is drawn per person.
+            InfectionRate::Constant {
+                value,
+                exp_mean_duration,
+            } => {
+                let duration = self.sample_distr(
+                    RateAssignmentRng,
+                    Exp::new(1.0 / exp_mean_duration).unwrap(),
+                );
+                ConstantRateFn::new(*value, duration).into()
+            }
+            // One shared curve, loaded as a library of one.
+            InfectionRate::Empirical { .. } => RateAssignment::Library(0),
+            // Uniform random assignment: each person draws independently.
+            InfectionRate::Library { .. } => {
+                let n = self.infectiousness_rate_library_len();
+                RateAssignment::Library(self.sample_range(RateAssignmentRng, 0..n))
+            }
+            InfectionRate::Parametric { .. } => {
+                unreachable!("Parametric is materialized to Empirical before setup")
+            }
         }
     }
-}
 
-impl ContactStructure<Person> for Context {
-    fn majorizing_contact_rate(&self, person: PersonId) -> f64 {
-        self.settings_forecast_multiplier(person)
-    }
-
-    fn contact_rate(&self, person: PersonId) -> Option<f64> {
-        Some(self.settings_current_multiplier(person))
-    }
-}
-
-impl Infectiousness<Person> for Context {
-    fn majorizing_infectiousness_rate_fn(&self, person: PersonId) -> impl InvertibleRate {
-        // The stored rate is in time since infection; shift it to time from now.
-        TransformedInvertibleRateFn::new(
-            base_infectiousness_rate_fn(self, person),
-            1.0,
-            time_since_infection(self, person).expect("person was never infected"),
-        )
-    }
-
-    // target rate is the stored rate now, times the infectiousness modification
-    fn infectiousness_rate(&self, person: PersonId) -> Option<f64> {
-        let rate =
-            base_infectiousness_rate_fn(self, person).rate(time_since_infection(self, person)?);
-        // TO DO: how to ensure that infectiousness modifier is in [0, 1]?
-        let scale = self.intrinsic_multiplier(person);
-        Some(scale * rate)
-    }
-}
-
-impl Transmission<Person> for Context {
-    fn select_infectee(&self, infector: PersonId) -> Option<PersonId> {
-        self.settings_sample_contact(infector)
-    }
-
-    fn susceptibility(&self, person: PersonId) -> f64 {
-        // TO DO: This should be a person property other than "InfectionStatus"?
+    /// Susceptibility follows the status, not whether they were ever infected.
+    fn base_susceptibility(&self, person: PersonId) -> f64 {
         if InfectionStatus::Susceptible == self.get_property(person) {
             1.0
         } else {
@@ -111,9 +62,46 @@ impl Transmission<Person> for Context {
         }
     }
 
-    fn transmit(&mut self, _infector: PersonId, infectee: PersonId) {
-        // TO DO: remove the need to pass the current time?
-        self.infect_person(infectee, Some(self.get_current_time()))
+    fn on_infected(&mut self, infector: Option<PersonId>, infectee: PersonId) {
+        self.set_property(infectee, InfectionStatus::Infectious);
+        // Seeds are counted when the stats are created.
+        if infector.is_some() {
+            let now = self.get_current_time();
+            self.get_data_mut(ModelStatsPlugin).record_infection(now);
+        }
+        let infectious_duration = self.schedule_recovery(infectee);
+        // Which interventions exist is decided once in `modifiers::register_all`.
+        self.run_activation_hooks(infectee, infectious_duration);
+    }
+}
+
+impl TransmissionManager<BasicTransmission> for Context {
+    fn forecast_total_infectiousness(&self, person: PersonId) -> impl InvertibleRate {
+        ScaledRateFn::new(
+            self.majorizing_infectiousness_rate_fn(person),
+            self.settings_forecast_multiplier(person),
+        )
+    }
+
+    fn evaluate_forecast(&self, person: PersonId, forecast: f64) -> Option<PersonId> {
+        if !self.settings_enabled() {
+            // Global random mixing: the intrinsic rate is the total.
+            let total = self.intrinsic_infectiousness(person)?;
+            if !self.accept_proposal(person, total, forecast) {
+                return None;
+            }
+            return self.sample_contact(person);
+        }
+        // Thin by the total over the person's settings, then draw where the
+        // attempt happens in proportion to each setting's share of it.
+        let total = self.intrinsic_infectiousness(person)?
+            * self.settings_rate_scale(person)
+            * self.current_setting_multiplier::<Setting>(person);
+        if !self.accept_proposal(person, total, forecast) {
+            return None;
+        }
+        let setting = self.sample_setting_by_rate::<Setting>(person)?;
+        self.sample_setting_contact(person, setting)
     }
 }
 
@@ -122,17 +110,17 @@ trait Infection {
     fn get_stats(&self) -> &ModelStats;
     #[cfg_attr(not(test), allow(dead_code))]
     fn infected_people(&self) -> usize;
+    /// Infect `p` if they are susceptible, recording it in the stats at time
+    /// `t` if given.
+    #[cfg_attr(not(test), allow(dead_code))]
     fn infect_person(&mut self, p: PersonId, t: Option<f64>);
     fn recover_person(&mut self, p: PersonId);
-    /// Assign `p` their own infectiousness rate function when they are
-    /// infected, drawing from `RateAssignmentRng`.
-    /// Redrawn on each infection, so a reinfected person gets a fresh draw.
-    fn assign_rate(&mut self, p: PersonId);
-    /// Schedule `p`'s recovery and return the assigned infectious-period
-    /// duration (the per-person `Exp` draw for `Constant`, the max-cumulative
-    /// reach time for empirical curves) so the caller can place a facemask
-    /// within that window.
+    /// Schedule `p`'s recovery for when their rate function runs out and
+    /// return the infectious-period duration, so interventions can place
+    /// themselves within that window.
     fn schedule_recovery(&mut self, p: PersonId) -> f64;
+    /// Load the shared rate functions `draw_infectiousness_rate_fn` indexes.
+    fn load_rate_library(&mut self);
     fn setup(&mut self);
 }
 
@@ -140,85 +128,61 @@ impl Infection for Context {
     fn get_params(&self) -> &Parameters {
         self.get_global_property_value(Params).unwrap()
     }
+
     fn get_stats(&self) -> &ModelStats {
         self.get_data(ModelStatsPlugin)
     }
+
     fn infected_people(&self) -> usize {
         self.query_entity_count(with!(Person, InfectionStatus::Infectious))
     }
+
     fn infect_person(&mut self, p: PersonId, t: Option<f64>) {
         if self.get_property::<_, InfectionStatus>(p) != InfectionStatus::Susceptible {
             return;
         }
-        // Record infection time before the status flip so the
-        // PropertyChangeEvent subscriber can read it on the same person.
-        let now = self.get_current_time();
-        self.set_property(p, InfectionTime(Some(now)));
-        self.assign_rate(p);
-        // setting the person to "Infectious" triggers the transmission loop via a subscription
-        self.set_property(p, InfectionStatus::Infectious);
-        // TO DO: Consider dropping this, and instead using `now`
+        self.transmit(None, p);
         if let Some(current_t) = t {
             self.get_data_mut(ModelStatsPlugin)
                 .record_infection(current_t);
         }
     }
+
     fn recover_person(&mut self, p: PersonId) {
         self.set_property(p, InfectionStatus::Recovered);
         self.get_data_mut(ModelStatsPlugin).record_recovery();
     }
-    fn assign_rate(&mut self, p: PersonId) {
-        match &self.get_params().infection_rate {
-            InfectionRate::Constant {
-                value,
-                exp_mean_duration,
-            } => {
-                let (value, mean) = (*value, *exp_mean_duration);
-                let dt = self.sample_distr(RateAssignmentRng, Exp::new(1.0 / mean).unwrap());
-                self.get_data_mut(RateStoragePlugin).set_assigned_fn(
-                    p,
-                    InvertibleRateFn::Constant(ConstantRateFn::new(value, dt)),
-                );
-            }
-            InfectionRate::Library { rates, scale } => {
-                // The shared curves are built once, on the first infection.
-                if self.get_data(RateStoragePlugin).library_len() == 0 {
-                    let rate_fns = build_empirical_library(rates, *scale);
-                    self.get_data_mut(RateStoragePlugin).set_library(rate_fns);
-                }
-                let n = self.get_data(RateStoragePlugin).library_len();
-                if n > 0 {
-                    // Uniform random assignment: each person draws independently.
-                    let idx: usize = self.sample_range(RateAssignmentRng, 0..n);
-                    self.set_property(p, AssignedRate(Some(idx)));
-                }
-            }
-            // One shared curve, built lazily by `RateStorage::single_or_build`.
-            InfectionRate::Empirical { .. } => {}
-            InfectionRate::Parametric { .. } => {
-                unreachable!("Parametric is materialized to Empirical before setup")
-            }
-        }
-    }
+
     fn schedule_recovery(&mut self, p: PersonId) -> f64 {
-        // Recovery is when the person's rate function exhausts its integrated
-        // infectiousness: the drawn period for a constant rate, the earliest τ
-        // at which the cumulative peaks for an empirical curve.
-        let t_inf = self
-            .get_property::<_, InfectionTime>(p)
-            .0
+        let recovery_time = self
+            .infectiousness_end_time(p)
             .expect("person was never infected");
-        let recovery_dt = match base_infectiousness_rate_fn(self, p) {
-            InvertibleRateFn::Constant(c) => c.duration(),
-            InvertibleRateFn::Empirical(e) => e.duration(),
-        };
-        let recovery_time = t_inf + recovery_dt;
         self.add_plan(recovery_time, move |context| {
             if context.get_property::<_, InfectionStatus>(p) == InfectionStatus::Infectious {
                 context.recover_person(p);
             }
         });
-        recovery_dt
+        self.infectiousness_duration(p)
+            .expect("person was never infected")
+    }
+
+    fn load_rate_library(&mut self) {
+        let library: Vec<AnyInfectionRate> = match &self.get_params().infection_rate {
+            InfectionRate::Constant { .. } => Vec::new(),
+            InfectionRate::Empirical { points, scale } => {
+                vec![EmpiricalRateFn::new(points.clone(), *scale).into()]
+            }
+            // All curves share `scale`; per-curve heterogeneity is preserved by
+            // the area normalization.
+            InfectionRate::Library { rates, scale } => rates
+                .iter()
+                .map(|curve| EmpiricalRateFn::new(curve.clone(), *scale).into())
+                .collect(),
+            InfectionRate::Parametric { .. } => {
+                unreachable!("Parametric is materialized to Empirical before setup")
+            }
+        };
+        self.load_infectiousness_rate_library(library);
     }
 
     fn setup(&mut self) {
@@ -231,26 +195,9 @@ impl Infection for Context {
         } = self.get_params();
         self.init_random(seed);
         self.index_property::<Person, InfectionStatus>();
-
-        // When someone becomes infectious, they schedule their own recovery
-        // and their own next infection attempt
-        self.subscribe_to_event(
-            |context, event: PropertyChangeEvent<Person, InfectionStatus>| {
-                if event.current != InfectionStatus::Infectious {
-                    return;
-                }
-                let p = event.entity_id;
-                let infectious_duration = context.schedule_recovery(p);
-                // Run every registered intervention hook generically. Which
-                // interventions exist is decided once in
-                // `modifiers::register_all`; this loop never changes when
-                // one is added (see `crate::modifiers`).
-                context.run_activation_hooks(p, infectious_duration);
-
-                // Begin the infection loop
-                context.schedule_next_transmission_attempt_proposal(p);
-            },
-        );
+        self.load_rate_library();
+        // Everyone assigned a rate function starts their own transmission loop.
+        self.setup_transmission_loop();
 
         // Register every enabled intervention's activation hook in one place,
         // before anyone is seeded infectious. Clone params once (cheap at
@@ -264,18 +211,9 @@ impl Infection for Context {
 
         // Optional settings-based contact structure. No-op when
         // `params.settings` is empty.
-        let settings_types = self.get_params().settings.clone();
-        self.settings_setup(&settings_types);
+        self.settings_setup(&params.settings);
 
-        // Generate and record initial infections
-        let sampled: Vec<PersonId> = self.sample_entities(
-            InfectionRng,
-            with!(Person, InfectionStatus::Susceptible),
-            initial_infections,
-        );
-        for p in sampled {
-            self.infect_person(p, None);
-        }
+        self.seed_infections(Person, initial_infections);
 
         self.add_plan(max_time, |context| {
             context.shutdown();
@@ -283,19 +221,23 @@ impl Infection for Context {
     }
 }
 
-pub fn run(params: Parameters) -> ModelStats {
+/// Validate and lower `params` to the forms setup and the hot path see.
+fn prepare(params: Parameters) -> Parameters {
     params.validate().expect("invalid Parameters");
-    // Rescale curve points so `scale` is the expected R₀ under random
-    // mixing — the model owns this contract so it holds for every
-    // caller (wasm UI, benchmarks, future external embedders).
     let mut params = params;
     // Lower a `Parametric` rate to its `Empirical` curve first, so the rest
     // of the pipeline (normalize, setup, hot path) only ever sees the three
-    // concrete variants. `normalize_to_r0` then makes `scale = R₀`.
+    // concrete variants. `normalize_to_r0` then makes `scale = R₀`: the model
+    // owns this contract so it holds for every caller.
     crate::rate::materialize_parametric(&mut params.infection_rate);
     crate::rate::normalize_to_r0(&mut params.infection_rate);
+    params
+}
+
+pub fn run(params: Parameters) -> ModelStats {
     let mut ctx = Context::new();
-    ctx.set_global_property_value(Params, params).unwrap();
+    ctx.set_global_property_value(Params, prepare(params))
+        .unwrap();
     ctx.setup();
     ctx.execute();
     ctx.get_stats().clone()
@@ -307,17 +249,19 @@ pub fn run(params: Parameters) -> ModelStats {
 /// loop's cost.
 #[doc(hidden)]
 pub fn setup_only(params: Parameters) {
-    params.validate().expect("invalid Parameters");
-    let mut params = params;
-    // Lower a `Parametric` rate to its `Empirical` curve first, so the rest
-    // of the pipeline (normalize, setup, hot path) only ever sees the three
-    // concrete variants. `normalize_to_r0` then makes `scale = R₀`.
-    crate::rate::materialize_parametric(&mut params.infection_rate);
-    crate::rate::normalize_to_r0(&mut params.infection_rate);
     let mut ctx = Context::new();
-    ctx.set_global_property_value(Params, params).unwrap();
+    ctx.set_global_property_value(Params, prepare(params))
+        .unwrap();
     ctx.setup();
     drop(ctx);
+}
+
+/// Make `person` infectious for `duration` from now, without parameters, a
+/// rate library or any activation hooks: for unit tests of interventions.
+#[cfg(test)]
+pub(crate) fn infect_for_test(ctx: &mut Context, person: PersonId, duration: f64) {
+    ctx.set_infectiousness_rate_fn(person, ConstantRateFn::new(1.0, duration));
+    ctx.set_property(person, InfectionStatus::Infectious);
 }
 
 #[cfg(test)]
@@ -671,6 +615,7 @@ mod tests {
             let mut ctx = Context::new();
             ctx.set_global_property_value(Params, params).unwrap();
             ctx.init_random(seed);
+            ctx.load_rate_library();
             let infector = ctx.add_entity(Person).unwrap();
             for _ in 0..n_contacts {
                 ctx.add_entity(Person).unwrap();
@@ -759,6 +704,7 @@ mod tests {
             let mut ctx = Context::new();
             ctx.set_global_property_value(Params, params).unwrap();
             ctx.init_random(seed);
+            ctx.load_rate_library();
             let infector = ctx.add_entity(Person).unwrap();
             for _ in 0..n_contacts {
                 ctx.add_entity(Person).unwrap();
@@ -820,6 +766,7 @@ mod tests {
             let mut ctx = Context::new();
             ctx.set_global_property_value(Params, params).unwrap();
             ctx.init_random(seed);
+            ctx.load_rate_library();
             let infector = ctx.add_entity(Person).unwrap();
             for _ in 0..n_contacts {
                 ctx.add_entity(Person).unwrap();
@@ -955,8 +902,7 @@ mod tests {
         ctx.setup();
         let assigned_count: usize = ctx
             .query_result_iterator(Person)
-            .map(|p| ctx.get_property::<_, AssignedRate>(p))
-            .filter(|a| a.0.is_some())
+            .filter(|&p| ctx.infectiousness_rate_fn(p).is_some())
             .count();
         assert_eq!(assigned_count, 20);
     }
@@ -1058,6 +1004,7 @@ mod tests {
             let mut ctx = Context::new();
             ctx.set_global_property_value(Params, params).unwrap();
             ctx.init_random(seed);
+            ctx.load_rate_library();
             let infector = ctx.add_entity(Person).unwrap();
             for _ in 0..n_contacts {
                 ctx.add_entity(Person).unwrap();
@@ -1098,19 +1045,17 @@ mod tests {
         ctx.set_global_property_value(Params, Parameters::default())
             .unwrap();
         ctx.init_random(1);
+        ctx.load_rate_library();
         let a = ctx.add_entity(Person).unwrap();
         let b = ctx.add_entity(Person).unwrap();
         ctx.infect_person(a, None);
         ctx.infect_person(b, None);
-        let period = |p| match base_infectiousness_rate_fn(&ctx, p) {
-            InvertibleRateFn::Constant(c) => c.duration(),
-            InvertibleRateFn::Empirical(_) => unreachable!(),
-        };
+        let period = |p| ctx.infectiousness_rate_fn(p).unwrap().duration();
         let (dt_a, dt_b) = (period(a), period(b));
         assert!(dt_a > 0.0 && dt_b > 0.0);
         assert_ne!(dt_a, dt_b, "each infected person draws their own period");
         // The stored rate function is truncated at exactly that period.
-        let fn_b = base_infectiousness_rate_fn(&ctx, b);
+        let fn_b = ctx.infectiousness_rate_fn(b).unwrap();
         assert_eq!(fn_b.max_cum_rate(), 0.5 * dt_b);
         assert_eq!(fn_b.inverse_cum_rate(0.5 * dt_b + 1e-9), None);
     }
@@ -1136,6 +1081,7 @@ mod tests {
         )
         .unwrap();
         ctx.init_random(1);
+        ctx.load_rate_library();
         let infector = ctx.add_entity(Person).unwrap();
         ctx.settings_setup(&[household]);
         ctx.infect_person(infector, None);
@@ -1285,6 +1231,7 @@ mod tests {
             let mut ctx = Context::new();
             ctx.set_global_property_value(Params, params).unwrap();
             ctx.init_random(seed);
+            ctx.load_rate_library();
             let infector = ctx.add_entity(Person).unwrap();
             for _ in 0..n_contacts {
                 ctx.add_entity(Person).unwrap();
@@ -1446,6 +1393,7 @@ mod tests {
             let mut ctx = Context::new();
             ctx.set_global_property_value(Params, params).unwrap();
             ctx.init_random(seed);
+            ctx.load_rate_library();
             let infector = ctx.add_entity(Person).unwrap();
             for _ in 0..n_contacts {
                 ctx.add_entity(Person).unwrap();
@@ -1670,7 +1618,7 @@ mod tests {
     fn isolation_and_facemask_compose() {
         // Total (isolation) and intrinsic (facemask) channels stack: together
         // at least as low as either alone, and below no intervention.
-        let base = isolation_base(5);
+        // Summed over a few seeds: the runs do not share random numbers.
         let iso = Some(Isolation {
             coverage: 1.0,
             restrict_to: "household".into(),
@@ -1681,33 +1629,32 @@ mod tests {
             coverage: 1.0,
             effectiveness: 0.6,
         });
+        let total = |modifiers: Modifiers| -> usize {
+            (5..15)
+                .map(|seed| {
+                    run(Parameters {
+                        modifiers: modifiers.clone(),
+                        ..isolation_base(seed)
+                    })
+                    .cum_incidence()
+                })
+                .sum()
+        };
 
-        let none = run(base.clone()).cum_incidence();
-        let iso_only = run(Parameters {
-            modifiers: Modifiers {
-                isolation: iso.clone(),
-                ..Default::default()
-            },
-            ..base.clone()
-        })
-        .cum_incidence();
-        let mask_only = run(Parameters {
-            modifiers: Modifiers {
-                facemask: mask,
-                ..Default::default()
-            },
-            ..base.clone()
-        })
-        .cum_incidence();
-        let both = run(Parameters {
-            modifiers: Modifiers {
-                isolation: iso,
-                facemask: mask,
-                ..Default::default()
-            },
-            ..base
-        })
-        .cum_incidence();
+        let none = total(Modifiers::default());
+        let iso_only = total(Modifiers {
+            isolation: iso.clone(),
+            ..Default::default()
+        });
+        let mask_only = total(Modifiers {
+            facemask: mask,
+            ..Default::default()
+        });
+        let both = total(Modifiers {
+            isolation: iso,
+            facemask: mask,
+            ..Default::default()
+        });
 
         assert!(both < none, "both ({both}) should be below none ({none})");
         assert!(
@@ -1720,12 +1667,10 @@ mod tests {
     fn isolation_to_peak_setting_keeps_forecast_bound_valid() {
         // Restricting to the *highest*-contact setting (work, M=19) raises an
         // isolating person's current multiplier above their weighted mean
-        // (current_mult = 0.5·2 + 0.5·19 = 10.5). This is exactly the case the
-        // loose forecast bound exists for: `isolation::register` arms
-        // restriction, so the forecast uses max_s M_s (= 19) and the
-        // `current ≤ forecasted` invariant in `evaluate_forecast` holds. Were
-        // arming dropped (tight bound 10.5), this run would trip that assert —
-        // unlike the household-restriction tests, which only restrict *down*.
+        // (0.5·2 + 0.5·19 = 10.5), which the forecast their pending proposal
+        // was drawn from does not cover. `settings_restrict_to` re-forecasts
+        // their loop, so the `total ≤ forecast` assert in `accept_proposal`
+        // holds; without that this run would trip it.
         let base = isolation_base(6);
         let to_work = run(Parameters {
             modifiers: Modifiers {
