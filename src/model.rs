@@ -6,7 +6,7 @@ use rand_distr::Exp;
 use crate::modifiers::ModifierExt;
 use crate::parameters::{Parameters, ParametersExt};
 use crate::person::{InfectionStatus, Person, PersonId};
-use crate::rate::{ConstantRateFn, InvertibleRate, RateDraw, ResolvedRate, ScaledRateFn};
+use crate::rate::{ConstantRateFn, RateDraw, ResolvedRate};
 use crate::settings::Setting;
 use crate::stats::{ModelStats, ModelStatsExt};
 
@@ -21,6 +21,7 @@ pub struct BasicTransmission;
 
 impl InfectionManager<BasicTransmission> for Context {
     type Entity = Person;
+    type Exposure = ();
 
     fn draw_infectiousness_rate_fn(&mut self, _person: PersonId) -> RateAssignment {
         match self
@@ -57,7 +58,7 @@ impl InfectionManager<BasicTransmission> for Context {
         }
     }
 
-    fn on_infected(&mut self, infector: Option<PersonId>, infectee: PersonId) {
+    fn on_infected(&mut self, infector: Option<PersonId>, infectee: PersonId, _exposure: ()) {
         self.set_property(infectee, InfectionStatus::Infectious);
         // Seeds are counted when the stats are created.
         if infector.is_some() {
@@ -84,39 +85,30 @@ impl InfectionManager<BasicTransmission> for Context {
 }
 
 impl TransmissionManager<BasicTransmission> for Context {
-    fn forecast_total_infectiousness(&self, person: PersonId) -> impl InvertibleRate {
-        ScaledRateFn::new(
-            self.majorizing_infectiousness_rate_fn(person),
-            settings_multiplier(self, person),
-        )
+    /// The factor from the person's settings; 1 under global random mixing.
+    fn contact_multiplier(&self, person: PersonId) -> f64 {
+        if self.params().settings.is_empty() {
+            1.0
+        } else {
+            self.current_setting_multiplier::<Setting>(person)
+        }
     }
 
-    fn evaluate_forecast(&self, person: PersonId, forecast: f64) -> Option<PersonId> {
-        // The forecast is the same product, so this only rejects when the
-        // intrinsic rate has dropped (a modifier, a falling curve).
-        let total = self.intrinsic_infectiousness(person)? * settings_multiplier(self, person);
-        if !self.accept_proposal(person, total, forecast) {
-            return None;
-        }
+    /// The multiplier itself: membership is static and the one thing that
+    /// changes it, isolation, re-forecasts.
+    fn max_contact_multiplier(&self, person: PersonId) -> f64 {
+        self.contact_multiplier(person)
+    }
+
+    fn sample_contact(&self, person: PersonId) -> Option<(PersonId, ())> {
         if self.params().settings.is_empty() {
             // Global random mixing.
-            return self.sample_contact(person);
+            return Some((self.sample_anyone_else(person)?, ()));
         }
         // Where the attempt happens, in proportion to each setting's share
         // of the total.
         let setting = self.sample_setting_by_rate::<Setting>(person)?;
-        self.sample_setting_contact(person, setting)
-    }
-}
-
-/// Factor on `person`'s intrinsic infectiousness from their settings; 1 under
-/// global random mixing. Membership is static and the one thing that changes
-/// it, isolation, re-forecasts, so it is also the forecast.
-fn settings_multiplier(context: &Context, person: PersonId) -> f64 {
-    if context.params().settings.is_empty() {
-        1.0
-    } else {
-        context.current_setting_multiplier::<Setting>(person)
+        Some((self.sample_setting_contact(person, setting)?, ()))
     }
 }
 
@@ -203,7 +195,7 @@ mod tests {
     use crate::modifiers::facemask::{Facemask, FacemaskExt};
     use crate::modifiers::isolation::Isolation;
     use crate::modifiers::Modifiers;
-    use crate::rate::InfectionRate;
+    use crate::rate::{InfectionRate, InvertibleRate};
     use crate::settings::SettingType;
     use ixa::assert_almost_eq;
     use std::cell::RefCell;
@@ -572,7 +564,7 @@ mod tests {
             for _ in 0..n_contacts {
                 ctx.add_entity(Person).unwrap();
             }
-            ctx.transmit(None, infector);
+            ctx.seed_infection(infector);
             ctx.reforecast_transmission(infector);
             ctx.add_plan(max_time, |c| c.shutdown());
             ctx.execute();
@@ -661,7 +653,7 @@ mod tests {
             for _ in 0..n_contacts {
                 ctx.add_entity(Person).unwrap();
             }
-            ctx.transmit(None, infector);
+            ctx.seed_infection(infector);
             ctx.reforecast_transmission(infector);
             ctx.add_plan(max_time, |c| c.shutdown());
             ctx.execute();
@@ -723,7 +715,7 @@ mod tests {
             for _ in 0..n_contacts {
                 ctx.add_entity(Person).unwrap();
             }
-            ctx.transmit(None, infector);
+            ctx.seed_infection(infector);
             ctx.reforecast_transmission(infector);
             ctx.add_plan(max_time, |c| c.shutdown());
             ctx.execute();
@@ -962,7 +954,7 @@ mod tests {
                 ctx.add_entity(Person).unwrap();
             }
             crate::settings::setup(&mut ctx, &[setting_type.clone()]);
-            ctx.transmit(None, infector);
+            ctx.seed_infection(infector);
             ctx.reforecast_transmission(infector);
             ctx.add_plan(max_time, |c| c.shutdown());
             ctx.execute();
@@ -999,8 +991,8 @@ mod tests {
         install_rate_as_written(&mut ctx);
         let a = ctx.add_entity(Person).unwrap();
         let b = ctx.add_entity(Person).unwrap();
-        ctx.transmit(None, a);
-        ctx.transmit(None, b);
+        ctx.seed_infection(a);
+        ctx.seed_infection(b);
         let period = |p| ctx.infectiousness_rate_fn(p).unwrap().duration();
         let (dt_a, dt_b) = (period(a), period(b));
         assert!(dt_a > 0.0 && dt_b > 0.0);
@@ -1031,7 +1023,7 @@ mod tests {
         install_rate_as_written(&mut ctx);
         let infector = ctx.add_entity(Person).unwrap();
         crate::settings::setup(&mut ctx, &[household]);
-        ctx.transmit(None, infector);
+        ctx.seed_infection(infector);
         ctx.reforecast_transmission(infector);
         ctx.execute();
     }
@@ -1183,7 +1175,7 @@ mod tests {
             for _ in 0..n_contacts {
                 ctx.add_entity(Person).unwrap();
             }
-            ctx.transmit(None, infector);
+            ctx.seed_infection(infector);
             // Mirror the activation hook for the index case only.
             let dt = ctx.infectiousness_duration(infector).unwrap();
             ctx.facemask_schedule(infector, facemask, dt);
@@ -1345,7 +1337,7 @@ mod tests {
             for _ in 0..n_contacts {
                 ctx.add_entity(Person).unwrap();
             }
-            ctx.transmit(None, infector);
+            ctx.seed_infection(infector);
             // Mirror the activation hook for the index case only.
             ctx.antiviral_schedule(infector, antiviral);
             ctx.reforecast_transmission(infector);
