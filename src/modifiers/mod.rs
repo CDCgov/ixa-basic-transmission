@@ -17,7 +17,7 @@
 //! Adding a modifier:
 //! 1. Give it a module that owns its per-person state + activation timing.
 //! 2. Have its activation apply to a channel — `schedule_infectiousness_modifier`
-//!    (intrinsic) or a `settings_*` call (total).
+//!    (intrinsic) or a core_epi itinerary change (total).
 //! 3. Register its activation hook in **one place** — [`register_all`].
 
 pub mod antiviral;

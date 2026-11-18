@@ -6,35 +6,29 @@
 //! Per-setting infectiousness multiplier is `(n − 1)^alpha` where `n`
 //! is the realized member count.
 //!
-//! At setup, every person is placed in exactly one `Setting` of every
-//! configured type (the last setting of a type may be undersized).
+//! This module only builds the population: [`setup`] adds each configured
+//! type as a [`Setting`] kind of ixa's `core_epi` settings, places every
+//! person in exactly one group of every type (the last group of a type may
+//! be undersized) and assigns everyone the itinerary given by the
+//! proportions. Membership, multipliers, the itinerary and contact sampling
+//! are then core_epi's; see `model::evaluate_forecast` for how the loop uses
+//! them.
 //!
-//! Membership, itineraries, multipliers and contact sampling are ixa's
-//! `core_epi` settings: each configured type is added as a [`Setting`] kind
-//! at setup (at most `MAX_SETTINGS`).
-//!
-//! Forecast / evaluation split (see `model::evaluate_forecast`):
-//!
-//! * The total multiplier is `Σ p_s · M_s`; the attempt's setting is drawn
-//!   by `p_s · M_s`, giving attempts in setting `s` at rate `r(τ) · p_s · M_s`.
-//! * `settings_multiplier(person)` is that total exactly, so no
-//!   proposal is rejected. Membership is static; the one thing that changes a
-//!   person's total is an itinerary restriction (isolation) starting or
-//!   ending, and both re-forecast their transmission loop.
+//! Proportions are shares of where a person's attempts happen, so only
+//! their ratios matter: the total multiplier is `Σ p_s · M_s / Σ p_s`.
 //!
 //! When `types` is empty the model falls back to global random mixing.
 
-use ixa::core_epi::{Itinerary, SettingsExt, TransmissionManager};
-use ixa::data_structures::entity_map::EntityMap;
+use ixa::core_epi::{Itinerary, SettingsExt};
 use ixa::prelude::*;
-use ixa::{define_data_plugin, define_rng, define_settings, Context};
+use ixa::{define_rng, define_settings, Context};
 use serde::{Deserialize, Serialize};
 
 use crate::person::{Person, PersonId};
 
 define_rng!(SettingsRng);
 
-// One kind per `SettingType` in the parameters, added at setup.
+// One kind per `SettingType` in the parameters, added by `setup`.
 define_settings!(pub Setting for Person);
 
 /// Single setting-type configuration entry. `proportion` is the
@@ -101,175 +95,52 @@ impl SettingType {
         }
         Ok(())
     }
+}
 
-    /// `(n − 1)^alpha`. Zero for `n ≤ 1` (no contacts possible).
-    #[inline]
-    pub fn multiplier(&self, size: usize) -> f64 {
-        if size <= 1 {
-            0.0
-        } else {
-            (size as f64 - 1.0).powf(self.alpha)
-        }
+/// Build the population's settings membership. Call exactly once from
+/// `model::setup` after all `Person` entities exist.
+pub fn setup(context: &mut Context, types: &[SettingType]) {
+    let people: Vec<PersonId> = context.query_result_iterator(Person).collect();
+    let pop_size = people.len();
+    if types.is_empty() || pop_size == 0 {
+        return;
     }
-}
 
-/// What the model keeps on top of core_epi's settings store.
-#[derive(Default)]
-pub struct SettingsData {
-    /// The kind of each configured type, in order; empty means settings
-    /// are disabled.
-    kinds: Vec<Setting>,
-    /// `Σ p_s`. core_epi normalizes an itinerary's proportions, and this
-    /// model's rate is `Σ p_s · M_s` with the proportions as given.
-    proportion_total: f64,
-    /// People whose itinerary is restricted to one setting (isolation).
-    restriction: EntityMap<Person, Setting>,
-}
+    let mut itinerary = Vec::with_capacity(types.len());
+    for st in types {
+        let kind = context.add_setting_kind::<Setting>(&st.name, st.alpha);
+        itinerary.push((kind, st.proportion));
 
-define_data_plugin!(SettingsPlugin, SettingsData, |_context| {
-    SettingsData::default()
-});
-
-pub trait ModelSettingsExt {
-    /// Build the population's settings membership. Call exactly once
-    /// from `model::setup` after all `Person` entities exist.
-    fn settings_setup(&mut self, types: &[SettingType]);
-
-    /// Whether any setting types are configured.
-    fn settings_enabled(&self) -> bool;
-
-    /// Factor on core_epi's (normalized) current multiplier in `person`'s
-    /// total rate: `Σ p_s`, or 1 while their itinerary is restricted.
-    fn settings_rate_scale(&self, person: PersonId) -> f64;
-
-    /// `person`'s total settings multiplier now,
-    /// `settings_rate_scale · current_setting_multiplier`. It is also the
-    /// forecast: it only changes when a restriction starts or ends, and both
-    /// re-forecast. Returns 1.0 when settings are disabled.
-    fn settings_multiplier(&self, person: PersonId) -> f64;
-
-    /// Restrict `person`'s current itinerary to their setting of type
-    /// `type_index` (isolation): attempts happen only there, at its full
-    /// multiplier. They stay a member of their other settings, so others can
-    /// still contact them. No-op when settings are disabled or `person` has
-    /// no setting of that type.
-    fn settings_restrict_to(&mut self, person: PersonId, type_index: usize);
-
-    /// Remove any itinerary restriction on `person`, restoring the full
-    /// itinerary. No-op if `person` wasn't restricted.
-    fn settings_clear_restriction(&mut self, person: PersonId);
-
-    /// Whether `person` currently has an itinerary restriction.
-    fn settings_is_restricted(&self, person: PersonId) -> bool;
-}
-
-impl ModelSettingsExt for Context {
-    fn settings_setup(&mut self, types: &[SettingType]) {
-        if types.is_empty() {
-            return;
+        // Random shuffle of the population for this type. Fisher–Yates
+        // via repeated `sample_range`; each call consumes one RNG draw.
+        let mut shuffled = people.clone();
+        for i in (1..pop_size).rev() {
+            let j: usize = context.sample_range(SettingsRng, 0..=i);
+            shuffled.swap(i, j);
         }
-        let people: Vec<PersonId> = self.query_result_iterator(Person).collect();
-        let pop_size = people.len();
-        if pop_size == 0 {
-            return;
-        }
-        self.get_data_mut(SettingsPlugin).proportion_total =
-            types.iter().map(|t| t.proportion).sum();
 
-        for st in types {
-            let kind = self.add_setting_kind::<Setting>(&st.name, st.alpha);
-            self.get_data_mut(SettingsPlugin).kinds.push(kind);
+        // Size weights stay constant across draws for this type.
+        let size_weights: Vec<f64> = st.sizes.iter().map(|&(_, p)| p).collect();
+        let size_values: Vec<usize> = st.sizes.iter().map(|&(s, _)| s).collect();
 
-            // Random shuffle of the population for this type. Fisher–Yates
-            // via repeated `sample_range`; each call consumes one RNG draw.
-            let mut shuffled = people.clone();
-            for i in (1..pop_size).rev() {
-                let j: usize = self.sample_range(SettingsRng, 0..=i);
-                shuffled.swap(i, j);
-            }
-
-            // Size weights stay constant across draws for this type.
-            let size_weights: Vec<f64> = st.sizes.iter().map(|&(_, p)| p).collect();
-            let size_values: Vec<usize> = st.sizes.iter().map(|&(s, _)| s).collect();
-
-            let mut cursor = 0;
-            while cursor < pop_size {
-                let size_idx = self.sample_weighted(SettingsRng, &size_weights);
-                // Last setting may be truncated to whatever's left.
-                let size = size_values[size_idx].min(pop_size - cursor);
-                if size == pop_size {
-                    // One setting holding everyone needs no member list.
-                    self.create_population_setting_group(kind);
-                } else {
-                    let group = self.create_setting_group(kind);
-                    for &person in &shuffled[cursor..cursor + size] {
-                        self.add_setting_member(group, person);
-                    }
+        let mut cursor = 0;
+        while cursor < pop_size {
+            let size_idx = context.sample_weighted(SettingsRng, &size_weights);
+            // Last setting may be truncated to whatever's left.
+            let size = size_values[size_idx].min(pop_size - cursor);
+            if size == pop_size {
+                // One setting holding everyone needs no member list.
+                context.create_population_setting_group(kind);
+            } else {
+                let group = context.create_setting_group(kind);
+                for &person in &shuffled[cursor..cursor + size] {
+                    context.add_setting_member(group, person);
                 }
-                cursor += size;
             }
-        }
-
-        let kinds = self.get_data(SettingsPlugin).kinds.clone();
-        let proportions = types.iter().map(|st| st.proportion);
-        let itinerary = Itinerary::new(kinds.into_iter().zip(proportions));
-        self.set_itinerary_assignment(itinerary);
-    }
-
-    fn settings_enabled(&self) -> bool {
-        !self.get_data(SettingsPlugin).kinds.is_empty()
-    }
-
-    fn settings_rate_scale(&self, person: PersonId) -> f64 {
-        let data = self.get_data(SettingsPlugin);
-        if data.restriction.contains_key(person) {
-            1.0
-        } else {
-            data.proportion_total
+            cursor += size;
         }
     }
-
-    fn settings_multiplier(&self, person: PersonId) -> f64 {
-        let data = self.get_data(SettingsPlugin);
-        if data.kinds.is_empty() {
-            return 1.0;
-        }
-        self.settings_rate_scale(person) * self.current_setting_multiplier::<Setting>(person)
-    }
-
-    fn settings_restrict_to(&mut self, person: PersonId, type_index: usize) {
-        let Some(&kind) = self.get_data(SettingsPlugin).kinds.get(type_index) else {
-            return;
-        };
-        if self.setting_group(person, kind).is_none() {
-            return;
-        }
-        self.set_itinerary(person, Itinerary::new([(kind, 1.0)]));
-        self.get_data_mut(SettingsPlugin)
-            .restriction
-            .insert(person, kind);
-        // Their total may now exceed the forecast their pending proposal
-        // was drawn from.
-        self.reforecast_transmission(person);
-    }
-
-    fn settings_clear_restriction(&mut self, person: PersonId) {
-        if self
-            .get_data_mut(SettingsPlugin)
-            .restriction
-            .remove(person)
-            .is_some()
-        {
-            self.clear_itinerary::<Setting>(person);
-            self.reforecast_transmission(person);
-        }
-    }
-
-    fn settings_is_restricted(&self, person: PersonId) -> bool {
-        self.get_data(SettingsPlugin)
-            .restriction
-            .contains_key(person)
-    }
+    context.set_itinerary_assignment(Itinerary::new(itinerary));
 }
 
 #[cfg(test)]
@@ -310,28 +181,13 @@ mod tests {
         assert!(empty_name.validate().is_err());
     }
 
-    #[test]
-    fn multiplier_formula() {
-        let st = make_type("a", 1.0, vec![(2, 1.0)], 1.0);
-        assert_eq!(st.multiplier(0), 0.0);
-        assert_eq!(st.multiplier(1), 0.0);
-        assert_eq!(st.multiplier(2), 1.0);
-        assert_eq!(st.multiplier(5), 4.0);
-
-        let st_half = make_type("b", 0.5, vec![(2, 1.0)], 1.0);
-        assert_almost_eq!(st_half.multiplier(5), 2.0, 1e-12);
-
-        let st_zero = make_type("c", 0.0, vec![(2, 1.0)], 1.0);
-        assert_eq!(st_zero.multiplier(5), 1.0); // (5-1)^0 = 1
-    }
-
     fn build_context_with(types: Vec<SettingType>, population: usize, seed: u64) -> Context {
         let mut ctx = Context::new();
         ctx.init_random(seed);
         for _ in 0..population {
             ctx.add_entity(Person).unwrap();
         }
-        ctx.settings_setup(&types);
+        setup(&mut ctx, &types);
         ctx
     }
 
@@ -349,12 +205,9 @@ mod tests {
     }
 
     #[test]
-    fn disabled_returns_neutral_values() {
+    fn no_types_adds_no_kinds() {
         let ctx = build_context_with(Vec::new(), 5, 0);
-        assert!(!ctx.settings_enabled());
-        for p in ctx.query_result_iterator(Person) {
-            assert_eq!(ctx.settings_multiplier(p), 1.0);
-        }
+        assert!(ctx.setting_kinds::<Setting>().is_empty());
     }
 
     #[test]
@@ -401,17 +254,23 @@ mod tests {
         let ctx = build_context_with(vec![t], 8, 0);
         for p in ctx.query_result_iterator(Person) {
             assert_almost_eq!(ctx.setting_multiplier(p, kind(&ctx, 0)), 3.0, 1e-12);
-            assert_almost_eq!(ctx.settings_multiplier(p), 3.0, 1e-12);
+            assert_almost_eq!(ctx.current_setting_multiplier::<Setting>(p), 3.0, 1e-12);
         }
     }
 
     #[test]
-    fn forecast_multiplier_is_the_exact_total() {
-        // 0.25·2 + 0.25·4 = 1.5.
-        let ctx = build_context_with(home_and_work(0.25, 0.25), 15, 0);
+    fn proportions_are_shares_of_the_total_multiplier() {
+        // home M=2, work M=4. Only the ratio of the proportions matters:
+        // 0.25/0.25 and 0.9/0.9 both give (2 + 4) / 2 = 3.
+        for proportion in [0.25, 0.9] {
+            let ctx = build_context_with(home_and_work(proportion, proportion), 15, 0);
+            let p = ctx.query_result_iterator(Person).next().unwrap();
+            assert_almost_eq!(ctx.current_setting_multiplier::<Setting>(p), 3.0, 1e-9);
+        }
+        // 0.75/0.25: 0.75·2 + 0.25·4 = 2.5.
+        let ctx = build_context_with(home_and_work(0.75, 0.25), 15, 0);
         let p = ctx.query_result_iterator(Person).next().unwrap();
-        assert_almost_eq!(ctx.settings_rate_scale(p), 0.5, 1e-12);
-        assert_almost_eq!(ctx.settings_multiplier(p), 1.5, 1e-9);
+        assert_almost_eq!(ctx.current_setting_multiplier::<Setting>(p), 2.5, 1e-9);
     }
 
     #[test]
@@ -452,49 +311,5 @@ mod tests {
             (p_home - 0.8).abs() < 0.02,
             "expected P(home) ≈ 0.8, observed {p_home}"
         );
-    }
-
-    #[test]
-    fn restrict_to_confines_the_itinerary_and_clears() {
-        let mut ctx = build_context_with(home_and_work(0.25, 0.25), 15, 7);
-        let p = ctx.query_result_iterator(Person).next().unwrap();
-
-        // Restrict to home (type index 0): attempts only there, at its full
-        // multiplier of 2.
-        ctx.settings_restrict_to(p, 0);
-        assert!(ctx.settings_is_restricted(p));
-        assert_eq!(ctx.settings_rate_scale(p), 1.0);
-        assert_almost_eq!(ctx.settings_multiplier(p), 2.0, 1e-9);
-        let home = ctx.setting_group(p, kind(&ctx, 0));
-        for _ in 0..200 {
-            assert_eq!(
-                ctx.sample_setting_by_rate::<Setting>(p),
-                Some(kind(&ctx, 0))
-            );
-            let c = ctx
-                .sample_setting_contact(p, kind(&ctx, 0))
-                .expect("home setting has other members");
-            assert_ne!(c, p);
-            assert_eq!(ctx.setting_group(c, kind(&ctx, 0)), home);
-        }
-        // Still a member of work, so others can contact them there.
-        assert!(ctx.setting_group(p, kind(&ctx, 1)).is_some());
-
-        // Clearing restores the full itinerary.
-        ctx.settings_clear_restriction(p);
-        assert!(!ctx.settings_is_restricted(p));
-        assert_eq!(ctx.settings_rate_scale(p), 0.5);
-        let drew_work =
-            (0..200).any(|_| ctx.sample_setting_by_rate::<Setting>(p) == Some(kind(&ctx, 1)));
-        assert!(drew_work, "work is back in the itinerary");
-    }
-
-    #[test]
-    fn restrict_is_noop_when_disabled() {
-        let mut ctx = build_context_with(Vec::new(), 5, 0);
-        let p = ctx.query_result_iterator(Person).next().unwrap();
-        ctx.settings_restrict_to(p, 0);
-        assert!(!ctx.settings_is_restricted(p));
-        assert_eq!(ctx.settings_multiplier(p), 1.0);
     }
 }

@@ -9,7 +9,7 @@ use crate::person::{InfectionStatus, Person, PersonId};
 use crate::rate::{
     AnyInfectionRate, ConstantRateFn, EmpiricalRateFn, InfectionRate, InvertibleRate, ScaledRateFn,
 };
-use crate::settings::{ModelSettingsExt, Setting};
+use crate::settings::Setting;
 use crate::stats::ModelStats;
 
 define_global_property!(Params, Parameters);
@@ -78,18 +78,18 @@ impl TransmissionManager<BasicTransmission> for Context {
     fn forecast_total_infectiousness(&self, person: PersonId) -> impl InvertibleRate {
         ScaledRateFn::new(
             self.majorizing_infectiousness_rate_fn(person),
-            self.settings_multiplier(person),
+            settings_multiplier(self, person),
         )
     }
 
     fn evaluate_forecast(&self, person: PersonId, forecast: f64) -> Option<PersonId> {
         // The forecast is the same product, so this only rejects when the
         // intrinsic rate has dropped (a modifier, a falling curve).
-        let total = self.intrinsic_infectiousness(person)? * self.settings_multiplier(person);
+        let total = self.intrinsic_infectiousness(person)? * settings_multiplier(self, person);
         if !self.accept_proposal(person, total, forecast) {
             return None;
         }
-        if !self.settings_enabled() {
+        if self.get_params().settings.is_empty() {
             // Global random mixing.
             return self.sample_contact(person);
         }
@@ -97,6 +97,17 @@ impl TransmissionManager<BasicTransmission> for Context {
         // of the total.
         let setting = self.sample_setting_by_rate::<Setting>(person)?;
         self.sample_setting_contact(person, setting)
+    }
+}
+
+/// Factor on `person`'s intrinsic infectiousness from their settings; 1 under
+/// global random mixing. Membership is static and the one thing that changes
+/// it, isolation, re-forecasts, so it is also the forecast.
+fn settings_multiplier(context: &Context, person: PersonId) -> f64 {
+    if context.get_params().settings.is_empty() {
+        1.0
+    } else {
+        context.current_setting_multiplier::<Setting>(person)
     }
 }
 
@@ -206,7 +217,7 @@ impl Infection for Context {
 
         // Optional settings-based contact structure. No-op when
         // `params.settings` is empty.
-        self.settings_setup(&params.settings);
+        crate::settings::setup(self, &params.settings);
 
         self.seed_infections(Person, initial_infections);
 
@@ -1004,7 +1015,7 @@ mod tests {
             for _ in 0..n_contacts {
                 ctx.add_entity(Person).unwrap();
             }
-            ctx.settings_setup(&[setting_type.clone()]);
+            crate::settings::setup(&mut ctx, &[setting_type.clone()]);
             ctx.infect_person(infector, None);
             ctx.reforecast_transmission(infector);
             ctx.add_plan(max_time, |c| c.shutdown());
@@ -1078,7 +1089,7 @@ mod tests {
         ctx.init_random(1);
         ctx.load_rate_library();
         let infector = ctx.add_entity(Person).unwrap();
-        ctx.settings_setup(&[household]);
+        crate::settings::setup(&mut ctx, &[household]);
         ctx.infect_person(infector, None);
         ctx.reforecast_transmission(infector);
         ctx.execute();
@@ -1663,7 +1674,7 @@ mod tests {
         // Restricting to the *highest*-contact setting (work, M=19) raises an
         // isolating person's current multiplier above their weighted mean
         // (0.5·2 + 0.5·19 = 10.5), which the forecast their pending proposal
-        // was drawn from does not cover. `settings_restrict_to` re-forecasts
+        // was drawn from does not cover. Isolation re-forecasts
         // their loop, so the `total ≤ forecast` assert in `accept_proposal`
         // holds; without that this run would trip it.
         let base = isolation_base(6);

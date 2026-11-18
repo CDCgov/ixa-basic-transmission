@@ -3,9 +3,9 @@
 //
 // `sizes` is a discrete distribution of `(size, probability)` pairs;
 // probabilities should sum to 1 (the Rust side validates).
-// `proportion` is the itinerary weight across SettingTypes; selection
-// inside the model is `proportion * (n-1)^alpha`, so proportions don't
-// have to normalize to 1 exactly.
+// `proportion` is the itinerary weight across SettingTypes; the model
+// normalizes the proportions, so only their ratios matter and they don't
+// have to sum to 1.
 export type SettingType = {
   name: string;
   alpha: number;
