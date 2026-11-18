@@ -27,7 +27,7 @@ impl InfectionManager<BasicTransmission> for Context {
     type Entity = Person;
 
     fn draw_infectiousness_rate_fn(&mut self, _person: PersonId) -> RateAssignment {
-        match &self.get_params().infection_rate {
+        match &params(self).infection_rate {
             // The infectious period is drawn per person.
             InfectionRate::Constant {
                 value,
@@ -68,8 +68,21 @@ impl InfectionManager<BasicTransmission> for Context {
             let now = self.get_current_time();
             self.get_data_mut(ModelStatsPlugin).record_infection(now);
         }
-        let infectious_duration = self.schedule_recovery(infectee);
+        // They recover when their rate function runs out.
+        let recovery_time = self
+            .infectiousness_end_time(infectee)
+            .expect("infectee has a rate function");
+        self.add_plan(recovery_time, move |context| {
+            if context.get_property::<_, InfectionStatus>(infectee) == InfectionStatus::Infectious {
+                context.set_property(infectee, InfectionStatus::Recovered);
+                context.get_data_mut(ModelStatsPlugin).record_recovery();
+            }
+        });
         // Which interventions exist is decided once in `modifiers::register_all`.
+        // They get the infectious period to place themselves within it.
+        let infectious_duration = self
+            .infectiousness_duration(infectee)
+            .expect("infectee has a rate function");
         self.run_activation_hooks(infectee, infectious_duration);
     }
 }
@@ -89,7 +102,7 @@ impl TransmissionManager<BasicTransmission> for Context {
         if !self.accept_proposal(person, total, forecast) {
             return None;
         }
-        if self.get_params().settings.is_empty() {
+        if params(self).settings.is_empty() {
             // Global random mixing.
             return self.sample_contact(person);
         }
@@ -104,127 +117,67 @@ impl TransmissionManager<BasicTransmission> for Context {
 /// global random mixing. Membership is static and the one thing that changes
 /// it, isolation, re-forecasts, so it is also the forecast.
 fn settings_multiplier(context: &Context, person: PersonId) -> f64 {
-    if context.get_params().settings.is_empty() {
+    if params(context).settings.is_empty() {
         1.0
     } else {
         context.current_setting_multiplier::<Setting>(person)
     }
 }
 
-trait Infection {
-    fn get_params(&self) -> &Parameters;
-    fn get_stats(&self) -> &ModelStats;
-    #[cfg_attr(not(test), allow(dead_code))]
-    fn infected_people(&self) -> usize;
-    /// Infect `p` if they are susceptible, recording it in the stats at time
-    /// `t` if given.
-    #[cfg_attr(not(test), allow(dead_code))]
-    fn infect_person(&mut self, p: PersonId, t: Option<f64>);
-    fn recover_person(&mut self, p: PersonId);
-    /// Schedule `p`'s recovery for when their rate function runs out and
-    /// return the infectious-period duration, so interventions can place
-    /// themselves within that window.
-    fn schedule_recovery(&mut self, p: PersonId) -> f64;
-    /// Load the shared rate functions `draw_infectiousness_rate_fn` indexes.
-    fn load_rate_library(&mut self);
-    fn setup(&mut self);
+fn params(context: &Context) -> &Parameters {
+    context.get_global_property_value(Params).unwrap()
 }
 
-impl Infection for Context {
-    fn get_params(&self) -> &Parameters {
-        self.get_global_property_value(Params).unwrap()
-    }
+fn stats(context: &Context) -> &ModelStats {
+    context.get_data(ModelStatsPlugin)
+}
 
-    fn get_stats(&self) -> &ModelStats {
-        self.get_data(ModelStatsPlugin)
-    }
-
-    fn infected_people(&self) -> usize {
-        self.query_entity_count(with!(Person, InfectionStatus::Infectious))
-    }
-
-    fn infect_person(&mut self, p: PersonId, t: Option<f64>) {
-        if self.get_property::<_, InfectionStatus>(p) != InfectionStatus::Susceptible {
-            return;
+/// Load the shared rate functions `draw_infectiousness_rate_fn` indexes.
+fn load_rate_library(context: &mut Context) {
+    let library: Vec<AnyInfectionRate> = match &params(context).infection_rate {
+        InfectionRate::Constant { .. } => Vec::new(),
+        InfectionRate::Empirical { points, scale } => {
+            vec![EmpiricalRateFn::new(points.clone(), *scale).into()]
         }
-        self.transmit(None, p);
-        if let Some(current_t) = t {
-            self.get_data_mut(ModelStatsPlugin)
-                .record_infection(current_t);
+        // All curves share `scale`; per-curve heterogeneity is preserved by
+        // the area normalization.
+        InfectionRate::Library { rates, scale } => rates
+            .iter()
+            .map(|curve| EmpiricalRateFn::new(curve.clone(), *scale).into())
+            .collect(),
+        InfectionRate::Parametric { .. } => {
+            unreachable!("Parametric is materialized to Empirical before setup")
         }
+    };
+    context.load_infectiousness_rate_library(library);
+}
+
+fn setup(context: &mut Context) {
+    // Clone once (cheap at setup) so `context` is free to be mutated.
+    let params = params(context).clone();
+    context.init_random(params.seed);
+    context.index_property::<Person, InfectionStatus>();
+    load_rate_library(context);
+    // Everyone assigned a rate function starts their own transmission loop.
+    context.setup_transmission_loop();
+
+    // Register every enabled intervention's activation hook in one place,
+    // before anyone is seeded infectious.
+    crate::modifiers::register_all(context, &params);
+
+    for _ in 0..params.population {
+        context.add_entity(Person).unwrap();
     }
 
-    fn recover_person(&mut self, p: PersonId) {
-        self.set_property(p, InfectionStatus::Recovered);
-        self.get_data_mut(ModelStatsPlugin).record_recovery();
-    }
+    // Optional settings-based contact structure. No-op when
+    // `params.settings` is empty.
+    crate::settings::setup(context, &params.settings);
 
-    fn schedule_recovery(&mut self, p: PersonId) -> f64 {
-        let recovery_time = self
-            .infectiousness_end_time(p)
-            .expect("person was never infected");
-        self.add_plan(recovery_time, move |context| {
-            if context.get_property::<_, InfectionStatus>(p) == InfectionStatus::Infectious {
-                context.recover_person(p);
-            }
-        });
-        self.infectiousness_duration(p)
-            .expect("person was never infected")
-    }
+    context.seed_infections(Person, params.initial_infections);
 
-    fn load_rate_library(&mut self) {
-        let library: Vec<AnyInfectionRate> = match &self.get_params().infection_rate {
-            InfectionRate::Constant { .. } => Vec::new(),
-            InfectionRate::Empirical { points, scale } => {
-                vec![EmpiricalRateFn::new(points.clone(), *scale).into()]
-            }
-            // All curves share `scale`; per-curve heterogeneity is preserved by
-            // the area normalization.
-            InfectionRate::Library { rates, scale } => rates
-                .iter()
-                .map(|curve| EmpiricalRateFn::new(curve.clone(), *scale).into())
-                .collect(),
-            InfectionRate::Parametric { .. } => {
-                unreachable!("Parametric is materialized to Empirical before setup")
-            }
-        };
-        self.load_infectiousness_rate_library(library);
-    }
-
-    fn setup(&mut self) {
-        let &Parameters {
-            population,
-            initial_infections,
-            seed,
-            max_time,
-            ..
-        } = self.get_params();
-        self.init_random(seed);
-        self.index_property::<Person, InfectionStatus>();
-        self.load_rate_library();
-        // Everyone assigned a rate function starts their own transmission loop.
-        self.setup_transmission_loop();
-
-        // Register every enabled intervention's activation hook in one place,
-        // before anyone is seeded infectious. Clone params once (cheap at
-        // setup) to avoid borrowing `self` across the `&mut` registration.
-        let params = self.get_params().clone();
-        crate::modifiers::register_all(self, &params);
-
-        for _ in 0..population {
-            self.add_entity(Person).unwrap();
-        }
-
-        // Optional settings-based contact structure. No-op when
-        // `params.settings` is empty.
-        crate::settings::setup(self, &params.settings);
-
-        self.seed_infections(Person, initial_infections);
-
-        self.add_plan(max_time, |context| {
-            context.shutdown();
-        });
-    }
+    context.add_plan(params.max_time, |context| {
+        context.shutdown();
+    });
 }
 
 /// Validate and lower `params` to the forms setup and the hot path see.
@@ -244,9 +197,9 @@ pub fn run(params: Parameters) -> ModelStats {
     let mut ctx = Context::new();
     ctx.set_global_property_value(Params, prepare(params))
         .unwrap();
-    ctx.setup();
+    setup(&mut ctx);
     ctx.execute();
-    ctx.get_stats().clone()
+    stats(&ctx).clone()
 }
 
 /// Bench-only helper: build a `Context` and run `setup` but **not**
@@ -258,7 +211,7 @@ pub fn setup_only(params: Parameters) {
     let mut ctx = Context::new();
     ctx.set_global_property_value(Params, prepare(params))
         .unwrap();
-    ctx.setup();
+    setup(&mut ctx);
     drop(ctx);
 }
 
@@ -282,13 +235,17 @@ mod tests {
     use std::cell::RefCell;
     use std::rc::Rc;
 
+    fn infected_people(ctx: &Context) -> usize {
+        ctx.query_entity_count(with!(Person, InfectionStatus::Infectious))
+    }
+
     #[test]
     fn seeds_initial_infections() {
         let mut ctx = Context::new();
         ctx.set_global_property_value(Params, Parameters::default())
             .unwrap();
-        ctx.setup();
-        assert_eq!(ctx.infected_people(), 5);
+        setup(&mut ctx);
+        assert_eq!(infected_people(&ctx), 5);
     }
 
     #[test]
@@ -397,7 +354,7 @@ mod tests {
                     }
                 },
             );
-            ctx.setup();
+            setup(&mut ctx);
             ctx.execute();
         }
 
@@ -473,7 +430,7 @@ mod tests {
                     }
                 },
             );
-            ctx.setup();
+            setup(&mut ctx);
             ctx.execute();
         }
 
@@ -536,7 +493,7 @@ mod tests {
                 }
             },
         );
-        ctx.setup();
+        setup(&mut ctx);
         ctx.execute();
 
         let mut samples = recovery_times.borrow().clone();
@@ -621,16 +578,16 @@ mod tests {
             let mut ctx = Context::new();
             ctx.set_global_property_value(Params, params).unwrap();
             ctx.init_random(seed);
-            ctx.load_rate_library();
+            load_rate_library(&mut ctx);
             let infector = ctx.add_entity(Person).unwrap();
             for _ in 0..n_contacts {
                 ctx.add_entity(Person).unwrap();
             }
-            ctx.infect_person(infector, None);
+            ctx.transmit(None, infector);
             ctx.reforecast_transmission(infector);
             ctx.add_plan(max_time, |c| c.shutdown());
             ctx.execute();
-            total += ctx.get_stats().cum_incidence() as f64;
+            total += stats(&ctx).cum_incidence() as f64;
         }
         let observed = total / num_sims as f64;
         assert_almost_eq!(observed, expected_cases, 0.02);
@@ -661,8 +618,8 @@ mod tests {
             };
             let mut ctx = Context::new();
             ctx.set_global_property_value(Params, params).unwrap();
-            ctx.setup();
-            let count = ctx.infected_people();
+            setup(&mut ctx);
+            let count = infected_people(&ctx);
             assert_eq!(
                 count, initial_infections,
                 "seed {seed}: expected {initial_infections} initial infections, got {count}"
@@ -710,16 +667,16 @@ mod tests {
             let mut ctx = Context::new();
             ctx.set_global_property_value(Params, params).unwrap();
             ctx.init_random(seed);
-            ctx.load_rate_library();
+            load_rate_library(&mut ctx);
             let infector = ctx.add_entity(Person).unwrap();
             for _ in 0..n_contacts {
                 ctx.add_entity(Person).unwrap();
             }
-            ctx.infect_person(infector, None);
+            ctx.transmit(None, infector);
             ctx.reforecast_transmission(infector);
             ctx.add_plan(max_time, |c| c.shutdown());
             ctx.execute();
-            total += ctx.get_stats().cum_incidence() as f64;
+            total += stats(&ctx).cum_incidence() as f64;
         }
         let observed = total / num_sims as f64;
         assert_almost_eq!(observed, expected_cases, 0.02);
@@ -772,16 +729,16 @@ mod tests {
             let mut ctx = Context::new();
             ctx.set_global_property_value(Params, params).unwrap();
             ctx.init_random(seed);
-            ctx.load_rate_library();
+            load_rate_library(&mut ctx);
             let infector = ctx.add_entity(Person).unwrap();
             for _ in 0..n_contacts {
                 ctx.add_entity(Person).unwrap();
             }
-            ctx.infect_person(infector, None);
+            ctx.transmit(None, infector);
             ctx.reforecast_transmission(infector);
             ctx.add_plan(max_time, |c| c.shutdown());
             ctx.execute();
-            total += ctx.get_stats().cum_incidence() as f64;
+            total += stats(&ctx).cum_incidence() as f64;
         }
         let observed = total / num_sims as f64;
         assert_almost_eq!(observed, expected_cases, 0.04);
@@ -823,7 +780,7 @@ mod tests {
                 }
             },
         );
-        ctx.setup();
+        setup(&mut ctx);
         ctx.execute();
 
         let times = infection_times.borrow();
@@ -905,7 +862,7 @@ mod tests {
         };
         let mut ctx = Context::new();
         ctx.set_global_property_value(Params, params).unwrap();
-        ctx.setup();
+        setup(&mut ctx);
         let assigned_count: usize = ctx
             .query_result_iterator(Person)
             .filter(|&p| ctx.infectiousness_rate_fn(p).is_some())
@@ -948,7 +905,7 @@ mod tests {
                 }
             },
         );
-        ctx.setup();
+        setup(&mut ctx);
         ctx.execute();
 
         let times = recovery_times.borrow().clone();
@@ -1010,17 +967,17 @@ mod tests {
             let mut ctx = Context::new();
             ctx.set_global_property_value(Params, params).unwrap();
             ctx.init_random(seed);
-            ctx.load_rate_library();
+            load_rate_library(&mut ctx);
             let infector = ctx.add_entity(Person).unwrap();
             for _ in 0..n_contacts {
                 ctx.add_entity(Person).unwrap();
             }
             crate::settings::setup(&mut ctx, &[setting_type.clone()]);
-            ctx.infect_person(infector, None);
+            ctx.transmit(None, infector);
             ctx.reforecast_transmission(infector);
             ctx.add_plan(max_time, |c| c.shutdown());
             ctx.execute();
-            total += ctx.get_stats().cum_incidence() as f64;
+            total += stats(&ctx).cum_incidence() as f64;
         }
         let observed = total / num_sims as f64;
         assert_almost_eq!(observed, expected_cases, 0.03);
@@ -1051,11 +1008,11 @@ mod tests {
         ctx.set_global_property_value(Params, Parameters::default())
             .unwrap();
         ctx.init_random(1);
-        ctx.load_rate_library();
+        load_rate_library(&mut ctx);
         let a = ctx.add_entity(Person).unwrap();
         let b = ctx.add_entity(Person).unwrap();
-        ctx.infect_person(a, None);
-        ctx.infect_person(b, None);
+        ctx.transmit(None, a);
+        ctx.transmit(None, b);
         let period = |p| ctx.infectiousness_rate_fn(p).unwrap().duration();
         let (dt_a, dt_b) = (period(a), period(b));
         assert!(dt_a > 0.0 && dt_b > 0.0);
@@ -1087,10 +1044,10 @@ mod tests {
         )
         .unwrap();
         ctx.init_random(1);
-        ctx.load_rate_library();
+        load_rate_library(&mut ctx);
         let infector = ctx.add_entity(Person).unwrap();
         crate::settings::setup(&mut ctx, &[household]);
-        ctx.infect_person(infector, None);
+        ctx.transmit(None, infector);
         ctx.reforecast_transmission(infector);
         ctx.execute();
     }
@@ -1237,19 +1194,19 @@ mod tests {
             let mut ctx = Context::new();
             ctx.set_global_property_value(Params, params).unwrap();
             ctx.init_random(seed);
-            ctx.load_rate_library();
+            load_rate_library(&mut ctx);
             let infector = ctx.add_entity(Person).unwrap();
             for _ in 0..n_contacts {
                 ctx.add_entity(Person).unwrap();
             }
-            ctx.infect_person(infector, None);
-            // Mirror the setup() subscriber for the index case only.
-            let dt = ctx.schedule_recovery(infector);
+            ctx.transmit(None, infector);
+            // Mirror the activation hook for the index case only.
+            let dt = ctx.infectiousness_duration(infector).unwrap();
             ctx.facemask_schedule(infector, facemask, dt);
             ctx.reforecast_transmission(infector);
             ctx.add_plan(d, |c| c.shutdown());
             ctx.execute();
-            total += ctx.get_stats().cum_incidence() as f64;
+            total += stats(&ctx).cum_incidence() as f64;
         }
         let observed = total / num_sims as f64;
         assert_almost_eq!(observed, expected_cases, 0.05);
@@ -1399,19 +1356,18 @@ mod tests {
             let mut ctx = Context::new();
             ctx.set_global_property_value(Params, params).unwrap();
             ctx.init_random(seed);
-            ctx.load_rate_library();
+            load_rate_library(&mut ctx);
             let infector = ctx.add_entity(Person).unwrap();
             for _ in 0..n_contacts {
                 ctx.add_entity(Person).unwrap();
             }
-            ctx.infect_person(infector, None);
-            // Mirror the setup() subscriber for the index case only.
-            ctx.schedule_recovery(infector);
+            ctx.transmit(None, infector);
+            // Mirror the activation hook for the index case only.
             ctx.antiviral_schedule(infector, antiviral);
             ctx.reforecast_transmission(infector);
             ctx.add_plan(d, |c| c.shutdown());
             ctx.execute();
-            total += ctx.get_stats().cum_incidence() as f64;
+            total += stats(&ctx).cum_incidence() as f64;
         }
         let observed = total / num_sims as f64;
         assert_almost_eq!(observed, expected_cases, 0.05);
