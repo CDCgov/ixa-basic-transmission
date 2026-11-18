@@ -17,7 +17,7 @@
 //!
 //! * The total multiplier is `Σ p_s · M_s`; the attempt's setting is drawn
 //!   by `p_s · M_s`, giving attempts in setting `s` at rate `r(τ) · p_s · M_s`.
-//! * `settings_forecast_multiplier(person)` is that total exactly, so no
+//! * `settings_multiplier(person)` is that total exactly, so no
 //!   proposal is rejected. Membership is static; the one thing that changes a
 //!   person's total is an itinerary restriction (isolation) starting or
 //!   ending, and both re-forecast their transmission loop.
@@ -143,10 +143,10 @@ pub trait ModelSettingsExt {
     fn settings_rate_scale(&self, person: PersonId) -> f64;
 
     /// `person`'s total settings multiplier now,
-    /// `settings_rate_scale · current_setting_multiplier`, which is also the
+    /// `settings_rate_scale · current_setting_multiplier`. It is also the
     /// forecast: it only changes when a restriction starts or ends, and both
     /// re-forecast. Returns 1.0 when settings are disabled.
-    fn settings_forecast_multiplier(&self, person: PersonId) -> f64;
+    fn settings_multiplier(&self, person: PersonId) -> f64;
 
     /// Restrict `person`'s current itinerary to their setting of type
     /// `type_index` (isolation): attempts happen only there, at its full
@@ -229,7 +229,7 @@ impl ModelSettingsExt for Context {
         }
     }
 
-    fn settings_forecast_multiplier(&self, person: PersonId) -> f64 {
+    fn settings_multiplier(&self, person: PersonId) -> f64 {
         let data = self.get_data(SettingsPlugin);
         if data.kinds.is_empty() {
             return 1.0;
@@ -353,7 +353,7 @@ mod tests {
         let ctx = build_context_with(Vec::new(), 5, 0);
         assert!(!ctx.settings_enabled());
         for p in ctx.query_result_iterator(Person) {
-            assert_eq!(ctx.settings_forecast_multiplier(p), 1.0);
+            assert_eq!(ctx.settings_multiplier(p), 1.0);
         }
     }
 
@@ -401,7 +401,7 @@ mod tests {
         let ctx = build_context_with(vec![t], 8, 0);
         for p in ctx.query_result_iterator(Person) {
             assert_almost_eq!(ctx.setting_multiplier(p, kind(&ctx, 0)), 3.0, 1e-12);
-            assert_almost_eq!(ctx.settings_forecast_multiplier(p), 3.0, 1e-12);
+            assert_almost_eq!(ctx.settings_multiplier(p), 3.0, 1e-12);
         }
     }
 
@@ -411,7 +411,7 @@ mod tests {
         let ctx = build_context_with(home_and_work(0.25, 0.25), 15, 0);
         let p = ctx.query_result_iterator(Person).next().unwrap();
         assert_almost_eq!(ctx.settings_rate_scale(p), 0.5, 1e-12);
-        assert_almost_eq!(ctx.settings_forecast_multiplier(p), 1.5, 1e-9);
+        assert_almost_eq!(ctx.settings_multiplier(p), 1.5, 1e-9);
     }
 
     #[test]
@@ -464,7 +464,7 @@ mod tests {
         ctx.settings_restrict_to(p, 0);
         assert!(ctx.settings_is_restricted(p));
         assert_eq!(ctx.settings_rate_scale(p), 1.0);
-        assert_almost_eq!(ctx.settings_forecast_multiplier(p), 2.0, 1e-9);
+        assert_almost_eq!(ctx.settings_multiplier(p), 2.0, 1e-9);
         let home = ctx.setting_group(p, kind(&ctx, 0));
         for _ in 0..200 {
             assert_eq!(
@@ -495,6 +495,6 @@ mod tests {
         let p = ctx.query_result_iterator(Person).next().unwrap();
         ctx.settings_restrict_to(p, 0);
         assert!(!ctx.settings_is_restricted(p));
-        assert_eq!(ctx.settings_forecast_multiplier(p), 1.0);
+        assert_eq!(ctx.settings_multiplier(p), 1.0);
     }
 }

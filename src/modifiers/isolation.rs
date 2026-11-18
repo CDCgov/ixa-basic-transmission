@@ -96,11 +96,6 @@ pub fn register(ctx: &mut Context, config: Option<Isolation>, settings: &[Settin
         // No matching setting (or none configured) → nothing to restrict to.
         return;
     };
-    // A restriction can now occur this run, so the transmission forecast must
-    // use the loose `max_s M_s` bound (a restricted person may transmit at a
-    // single setting's rate, above their weighted mean). Without this, the
-    // forecast uses the tight exact `current_mult` bound — see
-    // `SettingsExt::settings_forecast_multiplier`.
     let Isolation {
         coverage,
         delay,

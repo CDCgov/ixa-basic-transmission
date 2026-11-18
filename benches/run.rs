@@ -3,9 +3,9 @@
 //!   1. **end_to_end** — full `model::run`. Wall-clock for an identical
 //!      workload across Constant / Empirical-5pt / Empirical-Npt / Library.
 //!
-//!   2. **setup_only** — `model::setup_only`: build Context, register
-//!      Rate entities (Library only), create Person entities, assign
-//!      AssignedRate (Library only), and place every person in a Setting
+//!   2. **setup_only** — `model::setup_only`: build Context, load the
+//!      rate library, create Person entities, assign the initial
+//!      infections their rate functions, and place every person in a Setting
 //!      of each configured type. Does NOT execute. Isolates the per-person
 //!      assignment + entity-creation overhead from the transmission loop.
 //!
@@ -27,8 +27,7 @@
 //! How to read the output:
 //!
 //!   - end_to_end(library) − end_to_end(empirical_long) ≈ Library
-//!     dispatch overhead (the extra AssignedRate property lookup +
-//!     RateStorage lookup per event).
+//!     dispatch overhead (the library index lookup per event).
 //!   - end_to_end(empirical_long) − end_to_end(empirical_short) ≈ cost
 //!     of walking long curves on every event.
 //!   - setup_only(library) − setup_only(constant) ≈ per-person

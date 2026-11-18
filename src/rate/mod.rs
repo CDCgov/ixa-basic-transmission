@@ -2,11 +2,11 @@
 //!
 //! The [`InfectionRate`] enum is the **config / wire format** (serde-tagged,
 //! consumed by the wasm args, calibration, presets, and the frontend). At model
-//! entry it is resolved into [`InvertibleRateFn`] values (a static-dispatch enum that
-//! implements [`InvertibleRate`], held in [`storage::RateStorage`]) that
-//! the transmission loop dispatches through. Concrete rate functions live in
-//! the submodules: [`ConstantRateFn`], [`EmpiricalRateFn`], and the [`parametric`]
-//! lowering.
+//! entry it is resolved into ixa `core_epi` rate functions
+//! ([`AnyInfectionRate`]: a [`ConstantRateFn`] per person, or
+//! [`EmpiricalRateFn`] curves loaded once as a library), which the
+//! transmission loop evaluates. The [`parametric`] lowering and the R₀
+//! normalization stay here.
 
 use serde::{Deserialize, Serialize};
 
@@ -29,7 +29,7 @@ pub use parametric::{materialize_parametric, ParametricDist, PARAMETRIC_GRID};
 /// curve (when its integrated infectiousness is exhausted).
 ///
 /// This enum is the configuration format only; the running model resolves it
-/// into [`InvertibleRateFn`] values via [`storage`].
+/// into [`AnyInfectionRate`] values (see `model::load_rate_library`).
 ///
 /// - `Constant { value, duration }`: fixed rate over an exponential
 ///   infectious period with mean `duration` (`exp_mean_duration` in Rust),

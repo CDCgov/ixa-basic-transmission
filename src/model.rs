@@ -13,7 +13,6 @@ use crate::settings::{ModelSettingsExt, Setting};
 use crate::stats::ModelStats;
 
 define_global_property!(Params, Parameters);
-define_rng!(SeedRng);
 define_rng!(RateAssignmentRng);
 
 define_data_plugin!(ModelStatsPlugin, ModelStats, |context| {
@@ -79,27 +78,23 @@ impl TransmissionManager<BasicTransmission> for Context {
     fn forecast_total_infectiousness(&self, person: PersonId) -> impl InvertibleRate {
         ScaledRateFn::new(
             self.majorizing_infectiousness_rate_fn(person),
-            self.settings_forecast_multiplier(person),
+            self.settings_multiplier(person),
         )
     }
 
     fn evaluate_forecast(&self, person: PersonId, forecast: f64) -> Option<PersonId> {
-        if !self.settings_enabled() {
-            // Global random mixing: the intrinsic rate is the total.
-            let total = self.intrinsic_infectiousness(person)?;
-            if !self.accept_proposal(person, total, forecast) {
-                return None;
-            }
-            return self.sample_contact(person);
-        }
-        // Thin by the total over the person's settings, then draw where the
-        // attempt happens in proportion to each setting's share of it.
-        let total = self.intrinsic_infectiousness(person)?
-            * self.settings_rate_scale(person)
-            * self.current_setting_multiplier::<Setting>(person);
+        // The forecast is the same product, so this only rejects when the
+        // intrinsic rate has dropped (a modifier, a falling curve).
+        let total = self.intrinsic_infectiousness(person)? * self.settings_multiplier(person);
         if !self.accept_proposal(person, total, forecast) {
             return None;
         }
+        if !self.settings_enabled() {
+            // Global random mixing.
+            return self.sample_contact(person);
+        }
+        // Where the attempt happens, in proportion to each setting's share
+        // of the total.
         let setting = self.sample_setting_by_rate::<Setting>(person)?;
         self.sample_setting_contact(person, setting)
     }
@@ -621,7 +616,7 @@ mod tests {
                 ctx.add_entity(Person).unwrap();
             }
             ctx.infect_person(infector, None);
-            ctx.schedule_next_transmission_attempt_proposal(infector);
+            ctx.reforecast_transmission(infector);
             ctx.add_plan(max_time, |c| c.shutdown());
             ctx.execute();
             total += ctx.get_stats().cum_incidence() as f64;
@@ -710,7 +705,7 @@ mod tests {
                 ctx.add_entity(Person).unwrap();
             }
             ctx.infect_person(infector, None);
-            ctx.schedule_next_transmission_attempt_proposal(infector);
+            ctx.reforecast_transmission(infector);
             ctx.add_plan(max_time, |c| c.shutdown());
             ctx.execute();
             total += ctx.get_stats().cum_incidence() as f64;
@@ -772,7 +767,7 @@ mod tests {
                 ctx.add_entity(Person).unwrap();
             }
             ctx.infect_person(infector, None);
-            ctx.schedule_next_transmission_attempt_proposal(infector);
+            ctx.reforecast_transmission(infector);
             ctx.add_plan(max_time, |c| c.shutdown());
             ctx.execute();
             total += ctx.get_stats().cum_incidence() as f64;
@@ -883,7 +878,7 @@ mod tests {
     #[test]
     fn library_assigns_a_rate_to_each_infected_person() {
         // Assignment happens at infection: after seeding, exactly the initially
-        // infected carry a Some(_) AssignedRate pointing into the library.
+        // infected have a rate function.
         let library = vec![vec![[0.0, 0.5], [3.0, 0.5]], vec![[0.0, 1.5], [3.0, 1.5]]];
         let params = Parameters {
             infection_rate: InfectionRate::Library {
@@ -1011,7 +1006,7 @@ mod tests {
             }
             ctx.settings_setup(&[setting_type.clone()]);
             ctx.infect_person(infector, None);
-            ctx.schedule_next_transmission_attempt_proposal(infector);
+            ctx.reforecast_transmission(infector);
             ctx.add_plan(max_time, |c| c.shutdown());
             ctx.execute();
             total += ctx.get_stats().cum_incidence() as f64;
@@ -1085,7 +1080,7 @@ mod tests {
         let infector = ctx.add_entity(Person).unwrap();
         ctx.settings_setup(&[household]);
         ctx.infect_person(infector, None);
-        ctx.schedule_next_transmission_attempt_proposal(infector);
+        ctx.reforecast_transmission(infector);
         ctx.execute();
     }
 
@@ -1240,7 +1235,7 @@ mod tests {
             // Mirror the setup() subscriber for the index case only.
             let dt = ctx.schedule_recovery(infector);
             ctx.facemask_schedule(infector, facemask, dt);
-            ctx.schedule_next_transmission_attempt_proposal(infector);
+            ctx.reforecast_transmission(infector);
             ctx.add_plan(d, |c| c.shutdown());
             ctx.execute();
             total += ctx.get_stats().cum_incidence() as f64;
@@ -1402,7 +1397,7 @@ mod tests {
             // Mirror the setup() subscriber for the index case only.
             ctx.schedule_recovery(infector);
             ctx.antiviral_schedule(infector, antiviral);
-            ctx.schedule_next_transmission_attempt_proposal(infector);
+            ctx.reforecast_transmission(infector);
             ctx.add_plan(d, |c| c.shutdown());
             ctx.execute();
             total += ctx.get_stats().cum_incidence() as f64;
