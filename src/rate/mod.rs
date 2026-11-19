@@ -16,9 +16,7 @@ pub mod resolved;
 
 // The rate functions themselves come from ixa's core_epi.
 pub use ixa::core_epi::rate::{
-    empirical_cum_rate, empirical_curve_duration, empirical_inverse_cum_rate,
-    empirical_support_end, AnyInfectionRate, ConstantRateFn, EmpiricalRateFn, InvertibleRate,
-    ScaledRateFn, TransformedInvertibleRateFn,
+    AnyInfectionRate, ConstantRateFn, EmpiricalRateFn, InvertibleRate, TransformedInvertibleRateFn,
 };
 pub use normalize::normalize_to_r0;
 pub use parametric::{materialize_parametric, ParametricDist, PARAMETRIC_GRID};

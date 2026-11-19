@@ -36,8 +36,7 @@ impl InfectionManager<BasicTransmission> for Context {
                     self.sample_distr(RateAssignmentRng, Exp::new(1.0 / mean_duration).unwrap());
                 ConstantRateFn::new(value, duration).into()
             }
-            RateDraw::Library => {
-                let curves = self.infectiousness_rate_library_len();
+            RateDraw::Library { curves } => {
                 // Uniform random assignment: each person draws independently.
                 let index = if curves == 1 {
                     0
@@ -995,7 +994,7 @@ mod tests {
         assert_ne!(dt_a, dt_b, "each infected person draws their own period");
         // The stored rate function is truncated at exactly that period.
         let fn_b = ctx.infectiousness_rate_fn(b).unwrap();
-        assert_eq!(fn_b.max_cum_rate(), 0.5 * dt_b);
+        assert_eq!(fn_b.cum_rate(f64::INFINITY), 0.5 * dt_b);
         assert_eq!(fn_b.inverse_cum_rate(0.5 * dt_b + 1e-9), None);
     }
 

@@ -13,8 +13,8 @@ pub enum RateDraw {
     /// A constant rate over an infectious period drawn per person from an
     /// exponential with this mean.
     Constant { value: f64, mean_duration: f64 },
-    /// A curve drawn uniformly from the library.
-    Library,
+    /// A curve drawn uniformly from the `curves` in the library.
+    Library { curves: usize },
 }
 
 pub struct ResolvedRate {
@@ -63,12 +63,15 @@ impl ResolvedRate {
         }
         // All curves share `scale`; per-curve heterogeneity is preserved by
         // the area normalization.
+        let library: Vec<AnyInfectionRate> = curves
+            .into_iter()
+            .map(|curve| EmpiricalRateFn::new(curve, scale).into())
+            .collect();
         Self {
-            library: curves
-                .into_iter()
-                .map(|curve| EmpiricalRateFn::new(curve, scale).into())
-                .collect(),
-            draw: RateDraw::Library,
+            draw: RateDraw::Library {
+                curves: library.len(),
+            },
+            library,
         }
     }
 }
@@ -79,7 +82,7 @@ mod tests {
     use crate::rate::{InvertibleRate, ParametricDist};
 
     fn total(rate_fn: &AnyInfectionRate) -> f64 {
-        rate_fn.max_cum_rate()
+        rate_fn.cum_rate(f64::INFINITY)
     }
 
     #[test]
@@ -106,7 +109,7 @@ mod tests {
             scale: 1.5,
         };
         let resolved = ResolvedRate::try_from(&empirical).unwrap();
-        assert_eq!(resolved.draw, RateDraw::Library);
+        assert_eq!(resolved.draw, RateDraw::Library { curves: 1 });
         assert_eq!(resolved.library.len(), 1);
         assert!((total(&resolved.library[0]) - 1.5).abs() < 1e-9);
 

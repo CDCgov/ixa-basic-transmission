@@ -12,7 +12,7 @@
 //! - **Constant**: no-op — R₀ is already `value · duration` and the
 //!   user controls both directly.
 
-use super::{empirical_cum_rate, empirical_curve_duration, InfectionRate};
+use super::InfectionRate;
 
 /// See module docs. Idempotent; no-op on degenerate (empty / zero-area)
 /// inputs — those hit `cum_rate`'s exhausted-curve path during setup
@@ -30,16 +30,24 @@ pub fn normalize_to_r0(rate: &mut InfectionRate) {
     }
 }
 
+/// Area under a piecewise-linear curve of `[time, rate]` points.
+fn curve_area(points: &[[f64; 2]]) -> f64 {
+    let mut area = 0.0;
+    for segment in points.windows(2) {
+        let [start_time, start_rate] = segment[0];
+        let [end_time, end_rate] = segment[1];
+        area += 0.5 * (start_rate + end_rate) * (end_time - start_time);
+    }
+    area
+}
+
 /// Rescale every curve by the same factor so their mean area is 1. No-op if
 /// there are none or the mean area is not positive and finite.
 pub(crate) fn normalize_curves(curves: &mut [Vec<[f64; 2]>]) {
     if curves.is_empty() {
         return;
     }
-    let total: f64 = curves
-        .iter()
-        .map(|curve| empirical_cum_rate(curve, empirical_curve_duration(curve)))
-        .sum();
+    let total: f64 = curves.iter().map(|curve| curve_area(curve)).sum();
     let mean = total / curves.len() as f64;
     if !mean.is_finite() || mean <= 0.0 {
         return;
@@ -280,7 +288,7 @@ mod tests {
             InfectionRate::Empirical { points, scale } => (points.clone(), *scale),
             _ => panic!(),
         };
-        let total = EmpiricalRateFn::new(points, scale).max_cum_rate();
+        let total = EmpiricalRateFn::new(points, scale).cum_rate(f64::INFINITY);
         assert!(
             (total - scale).abs() < 1e-12,
             "total = {total}, scale = {scale}"
@@ -308,7 +316,9 @@ mod tests {
         };
         assert!((trapezoid_area(&points) - 1.0).abs() < 1e-12);
         // And the integrated effective hazard equals `scale` (= R₀).
-        assert!((EmpiricalRateFn::new(points, scale).max_cum_rate() - scale).abs() < 1e-12);
+        assert!(
+            (EmpiricalRateFn::new(points, scale).cum_rate(f64::INFINITY) - scale).abs() < 1e-12
+        );
     }
 
     #[test]
@@ -330,7 +340,7 @@ mod tests {
         };
         let mean_total: f64 = rates
             .iter()
-            .map(|c| EmpiricalRateFn::new(c.clone(), scale).max_cum_rate())
+            .map(|c| EmpiricalRateFn::new(c.clone(), scale).cum_rate(f64::INFINITY))
             .sum::<f64>()
             / rates.len() as f64;
         assert!(
