@@ -135,7 +135,7 @@ fn restrict_itinerary(context: &mut Context, person: PersonId, kind: Setting) ->
     if context.setting_group(person, kind).is_none() {
         return false;
     }
-    context.set_itinerary(person, Itinerary::new([(kind, 1.0)]));
+    context.override_itinerary(person, Itinerary::new([(kind, 1.0)]));
     // Their total may now exceed the forecast their pending proposal was
     // drawn from.
     context.reforecast_transmission(person);
@@ -144,7 +144,7 @@ fn restrict_itinerary(context: &mut Context, person: PersonId, kind: Setting) ->
 
 /// Give `person` back the itinerary everyone has.
 fn restore_itinerary(context: &mut Context, person: PersonId) {
-    context.clear_itinerary::<Setting>(person);
+    context.clear_itinerary_override::<Setting>(person);
     context.reforecast_transmission(person);
 }
 

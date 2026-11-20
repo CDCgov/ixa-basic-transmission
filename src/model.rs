@@ -21,9 +21,9 @@ pub struct BasicTransmission;
 
 impl InfectionManager<BasicTransmission> for Context {
     type Entity = Person;
-    type Exposure = ();
+    type Details = ();
 
-    fn draw_infectiousness_rate_fn(&mut self, _person: PersonId) -> RateAssignment {
+    fn draw_infectiousness_rate_fn(&mut self, _person: PersonId, _details: &()) -> RateAssignment {
         match self
             .get_data(RateDrawPlugin)
             .expect("no infection rate installed")
@@ -49,7 +49,7 @@ impl InfectionManager<BasicTransmission> for Context {
     }
 
     /// Susceptibility follows the status, not whether they were ever infected.
-    fn base_susceptibility(&self, person: PersonId) -> f64 {
+    fn base_susceptibility(&self, person: PersonId, _details: &()) -> f64 {
         if InfectionStatus::Susceptible == self.get_property(person) {
             1.0
         } else {
@@ -57,7 +57,7 @@ impl InfectionManager<BasicTransmission> for Context {
         }
     }
 
-    fn on_infected(&mut self, infector: Option<PersonId>, infectee: PersonId, _exposure: ()) {
+    fn on_infected(&mut self, infector: Option<PersonId>, infectee: PersonId, _details: ()) {
         self.set_property(infectee, InfectionStatus::Infectious);
         // Seeds are counted when the stats are created.
         if infector.is_some() {
@@ -179,7 +179,7 @@ pub fn setup_only(params: Parameters) {
 /// rate library or any activation hooks: for unit tests of interventions.
 #[cfg(test)]
 pub(crate) fn infect_for_test(ctx: &mut Context, person: PersonId, duration: f64) {
-    ctx.set_infectiousness_rate_fn(person, ConstantRateFn::new(1.0, duration));
+    ctx.set_infectiousness_rate_fn(person, ConstantRateFn::new(1.0, duration), ());
     ctx.set_property(person, InfectionStatus::Infectious);
 }
 
