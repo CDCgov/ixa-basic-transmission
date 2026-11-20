@@ -49,7 +49,12 @@ impl InfectionManager<BasicTransmission> for Context {
     }
 
     /// Susceptibility follows the status, not whether they were ever infected.
-    fn base_susceptibility(&self, person: PersonId, _details: &()) -> f64 {
+    fn base_susceptibility(
+        &self,
+        person: PersonId,
+        _infector: Option<PersonId>,
+        _details: &(),
+    ) -> f64 {
         if InfectionStatus::Susceptible == self.get_property(person) {
             1.0
         } else {
