@@ -953,7 +953,7 @@ mod tests {
             for _ in 0..n_contacts {
                 ctx.add_entity(Person).unwrap();
             }
-            crate::settings::setup(&mut ctx, &[setting_type.clone()]);
+            crate::settings::setup(&mut ctx, std::slice::from_ref(&setting_type));
             ctx.seed_infection(infector);
             ctx.reforecast_transmission(infector);
             ctx.add_plan(max_time, |c| c.shutdown());

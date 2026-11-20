@@ -122,8 +122,8 @@ fn load_bundled_library() -> Vec<Vec<[f64; 2]>> {
         groups.entry(id).or_default().push([t, v]);
     }
     groups
-        .into_iter()
-        .map(|(_, mut pts)| {
+        .into_values()
+        .map(|mut pts| {
             pts.sort_by(|a, b| a[0].partial_cmp(&b[0]).unwrap());
             pts
         })

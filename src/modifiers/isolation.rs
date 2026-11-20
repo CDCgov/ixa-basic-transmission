@@ -6,9 +6,10 @@
 //! infectiousness), isolation is a **structural / total** effect on the
 //! contact mixing: it gives the person an itinerary of their own that
 //! confines their attempts to one setting, at that setting's full
-//! multiplier. They stay a member of their other settings, so others can
-//! still contact them. Their total changes when isolation starts and ends,
-//! so both re-forecast their transmission loop.
+//! multiplier. The override also takes them out of their other settings'
+//! groups, so nobody contacts them there. Their total changes when isolation
+//! starts and ends, so both re-forecast their transmission loop; ending it
+//! also re-forecasts the groups they rejoin, whose multipliers rise.
 //!
 //! Models case isolation — only infected individuals, gated here by
 //! `coverage` — by restricting the current itinerary to a single setting.
@@ -144,8 +145,27 @@ fn restrict_itinerary(context: &mut Context, person: PersonId, kind: Setting) ->
 
 /// Give `person` back the itinerary everyone has.
 fn restore_itinerary(context: &mut Context, person: PersonId) {
+    let kinds = context.setting_kinds::<Setting>();
+    let mut left = Vec::new();
+    for &kind in &kinds {
+        if context.setting_group(person, kind).is_none() {
+            left.push(kind);
+        }
+    }
     context.clear_itinerary_override::<Setting>(person);
     context.reforecast_transmission(person);
+    // A group they rejoin grows, raising its members' totals above the
+    // forecasts drawn while it was smaller.
+    for kind in left {
+        let Some(group) = context.setting_group(person, kind) else {
+            continue;
+        };
+        for member in context.setting_group_members(group) {
+            if member != person {
+                context.reforecast_transmission(member);
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -222,10 +242,11 @@ mod tests {
             assert_ne!(contact, person);
             assert_eq!(ctx.setting_group(contact, home), household);
         }
-        // Still a member at work, so others can contact them there.
-        assert!(ctx.setting_group(person, work).is_some());
+        // Out of their workplace, so nobody contacts them there.
+        assert!(ctx.setting_group(person, work).is_none());
 
         restore_itinerary(&mut ctx, person);
+        assert!(ctx.setting_group(person, work).is_some());
         assert!((ctx.current_setting_multiplier::<Setting>(person) - 3.0).abs() < 1e-9);
         let drew_work =
             (0..200).any(|_| ctx.sample_setting_by_rate::<Setting>(person) == Some(work));
