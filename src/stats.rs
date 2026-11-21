@@ -1,5 +1,9 @@
 use std::collections::BTreeMap;
 
+use ixa::{define_data_plugin, Context};
+
+use crate::parameters::Params;
+
 #[derive(Clone, Debug)]
 pub struct ModelStats {
     cum_incidence: usize,
@@ -67,6 +71,27 @@ impl ModelStats {
             values.push(current as f64);
         }
         (time, values)
+    }
+}
+
+define_data_plugin!(ModelStatsPlugin, ModelStats, |context| {
+    let params = context.get_global_property_value(Params).unwrap();
+    ModelStats::new(params.initial_infections)
+});
+
+/// The run's statistics, created from the parameters on first use.
+pub trait ModelStatsExt {
+    fn stats(&self) -> &ModelStats;
+    fn stats_mut(&mut self) -> &mut ModelStats;
+}
+
+impl ModelStatsExt for Context {
+    fn stats(&self) -> &ModelStats {
+        self.get_data(ModelStatsPlugin)
+    }
+
+    fn stats_mut(&mut self) -> &mut ModelStats {
+        self.get_data_mut(ModelStatsPlugin)
     }
 }
 

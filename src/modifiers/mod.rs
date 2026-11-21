@@ -8,20 +8,20 @@
 //! agnostic** — it only knows *when* effects fire, not *what* they do.
 //!
 //! Effects land in one of two channels:
-//! * **Intrinsic** ([`intrinsic`]) — scales the per-person shedding rate
-//!   λ(τ) via a cached multiplier. Used by [`facemask`] / [`antiviral`].
+//! * **Intrinsic** — scales the per-person shedding rate λ(τ) via ixa
+//!   `core_epi`'s keyed infectiousness modifiers. Used by [`facemask`] /
+//!   [`antiviral`].
 //! * **Total / contact** — restructures contact mixing via the settings-layer
 //!   itinerary restriction (`crate::settings`). Used by [`isolation`].
 //!
 //! Adding a modifier:
 //! 1. Give it a module that owns its per-person state + activation timing.
-//! 2. Have its activation apply to a channel — `apply_intrinsic_modifier`
-//!    (intrinsic) or a `settings_*` call (total).
+//! 2. Have its activation apply to a channel — `schedule_infectiousness_modifier`
+//!    (intrinsic) or a core_epi itinerary change (total).
 //! 3. Register its activation hook in **one place** — [`register_all`].
 
 pub mod antiviral;
 pub mod facemask;
-pub mod intrinsic;
 pub mod isolation;
 
 use ixa::{define_data_plugin, Context};
@@ -122,7 +122,7 @@ impl ModifierExt for Context {
 /// here; the transmission loop stays generic.
 pub fn register_all(ctx: &mut Context, params: &Parameters) {
     let m = &params.modifiers;
-    // Intrinsic-channel modifiers (scale λ(τ) via the intrinsic cache).
+    // Intrinsic-channel modifiers (scale λ(τ) via core_epi modifiers).
     facemask::register(ctx, m.facemask);
     antiviral::register(ctx, m.antiviral);
     // Total/contact-channel modifier (settings-layer itinerary restriction).
@@ -132,26 +132,32 @@ pub fn register_all(ctx: &mut Context, params: &Parameters) {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
     use super::*;
-    use crate::modifiers::intrinsic::IntrinsicModifierExt;
     use crate::person::Person;
     use ixa::prelude::*;
 
     #[test]
     fn activation_hooks_run_in_order_and_persist() {
         // Hooks registered once are run (in registration order) on every
-        // `run_activation_hooks` call and restored afterward. We observe via
-        // the intrinsic cache for convenience — the registry itself is
-        // channel-agnostic.
+        // `run_activation_hooks` call and restored afterward.
         let mut ctx = Context::new();
         ctx.init_random(0);
         let p = ctx.add_entity(Person).unwrap();
-        ctx.register_on_infectious(|c, person, _dur| c.apply_intrinsic_modifier(person, 0.5));
-        ctx.register_on_infectious(|c, person, _dur| c.apply_intrinsic_modifier(person, 0.2));
+        let calls = Rc::new(RefCell::new(Vec::new()));
+
+        let first = Rc::clone(&calls);
+        ctx.register_on_infectious(move |_c, _person, dur| first.borrow_mut().push((1, dur)));
+        let second = Rc::clone(&calls);
+        ctx.register_on_infectious(move |_c, _person, dur| second.borrow_mut().push((2, dur)));
+
         ctx.run_activation_hooks(p, 1.0);
-        assert!((ctx.intrinsic_multiplier(p) - 0.1).abs() < 1e-12);
-        // Hooks restored: a second activation applies them again.
-        ctx.run_activation_hooks(p, 1.0);
-        assert!((ctx.intrinsic_multiplier(p) - 0.01).abs() < 1e-12);
+        assert_eq!(*calls.borrow(), vec![(1, 1.0), (2, 1.0)]);
+
+        // Hooks restored: a second activation runs them again.
+        ctx.run_activation_hooks(p, 2.0);
+        assert_eq!(calls.borrow().len(), 4);
     }
 }

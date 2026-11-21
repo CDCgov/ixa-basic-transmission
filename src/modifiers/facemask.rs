@@ -24,9 +24,10 @@ use ixa::prelude::*;
 use ixa::{define_rng, Context};
 use serde::{Deserialize, Serialize};
 
-use super::intrinsic::IntrinsicModifierExt;
 use super::ModifierExt;
-use crate::person::{InfectionStatus, InfectionTime, PersonId};
+use ixa::core_epi::InfectionManager;
+
+use crate::person::PersonId;
 
 define_rng!(FacemaskRng);
 
@@ -94,25 +95,21 @@ impl FacemaskExt for Context {
             return;
         }
         let t_inf = self
-            .get_property::<_, InfectionTime>(person)
-            .0
+            .infection_time(person)
             .expect("infectious person has an infection time");
         let u: f64 = self.sample_range(FacemaskRng, 0.0..1.0);
         let don_time = t_inf + u * infectious_duration;
         let factor = 1.0 - facemask.effectiveness;
-        self.add_plan(don_time, move |context| {
-            // Only mask the still-infectious; a person who recovered before
-            // their (independently drawn, for `Constant`) mask time never dons.
-            if context.get_property::<_, InfectionStatus>(person) == InfectionStatus::Infectious {
-                context.apply_intrinsic_modifier(person, factor);
-            }
-        });
+        // Only mask the still-infectious: the modifier applies only if they
+        // are infectious with this infection at that time.
+        self.schedule_infectiousness_modifier::<Facemask>(person, factor, don_time, None);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::infect_for_test;
     use crate::person::Person;
 
     #[test]
@@ -175,8 +172,7 @@ mod tests {
         let mut people = Vec::with_capacity(n);
         for _ in 0..n {
             let p = ctx.add_entity(Person).unwrap();
-            ctx.set_property(p, InfectionTime(Some(0.0)));
-            ctx.set_property(p, InfectionStatus::Infectious);
+            infect_for_test(&mut ctx, p, 100.0);
             ctx.facemask_schedule(p, fm, duration);
             people.push(p);
         }
@@ -184,7 +180,7 @@ mod tests {
         ctx.execute();
         people
             .iter()
-            .map(|&p| ctx.intrinsic_multiplier(p))
+            .map(|&p| ctx.infectiousness_multiplier(p))
             .collect()
     }
 

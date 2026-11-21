@@ -66,6 +66,11 @@ impl ParametricDist {
         }
     }
 
+    /// The kernel as a curve over the auto-derived support.
+    pub(crate) fn curve(&self) -> Vec<[f64; 2]> {
+        self.points(self.effective_support())
+    }
+
     /// Sample the kernel on `PARAMETRIC_GRID` anchors over `[0, support]`.
     fn points(&self, support: f64) -> Vec<[f64; 2]> {
         let n = PARAMETRIC_GRID;
@@ -182,7 +187,7 @@ impl ParametricDist {
 /// `Empirical`.
 pub fn materialize_parametric(rate: &mut InfectionRate) {
     if let InfectionRate::Parametric { dist, scale } = rate {
-        let points = dist.points(dist.effective_support());
+        let points = dist.curve();
         let scale = *scale;
         *rate = InfectionRate::Empirical { points, scale };
     }

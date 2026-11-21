@@ -145,7 +145,7 @@ function sizeChartData(s: SettingType) {
       </p>
       <p v-else-if="Math.abs(proportionTotal - 1) > 0.01" class="warn">
         Itinerary proportions sum to {{ proportionTotal.toFixed(3) }} (the model
-        rate-weights them internally, but a sum of 1 is conventional).
+        normalizes them, so only their ratios matter).
       </p>
     </div>
 

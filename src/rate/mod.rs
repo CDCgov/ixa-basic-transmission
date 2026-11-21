@@ -2,30 +2,25 @@
 //!
 //! The [`InfectionRate`] enum is the **config / wire format** (serde-tagged,
 //! consumed by the wasm args, calibration, presets, and the frontend). At model
-//! entry it is resolved into [`InvertibleRateFn`] values (a static-dispatch enum that
-//! implements [`InvertibleRate`], held in [`storage::RateStorage`]) that
-//! the transmission loop dispatches through. Concrete rate functions live in
-//! the submodules: [`ConstantRateFn`], [`EmpiricalRateFn`], and the [`parametric`]
-//! lowering.
+//! entry it is resolved into ixa `core_epi` rate functions
+//! ([`AnyInfectionRate`]: a [`ConstantRateFn`] per person, or
+//! [`EmpiricalRateFn`] curves loaded once as a library), which the
+//! transmission loop evaluates. The [`parametric`] lowering and the R₀
+//! normalization stay here.
 
 use serde::{Deserialize, Serialize};
 
-pub mod constant_rate;
-pub mod empirical_rate;
 pub mod normalize;
 pub mod parametric;
-pub mod rate_fn;
-pub mod storage;
+pub mod resolved;
 
-pub use constant_rate::ConstantRateFn;
-pub use empirical_rate::{
-    empirical_cum_rate, empirical_curve_duration, empirical_inverse_cum_rate,
-    empirical_support_end, EmpiricalRateFn,
+// The rate functions themselves come from ixa's core_epi.
+pub use ixa::core_epi::rate::{
+    AnyInfectionRate, ConstantRateFn, EmpiricalRateFn, InvertibleRate, TransformedInvertibleRateFn,
 };
 pub use normalize::normalize_to_r0;
 pub use parametric::{materialize_parametric, ParametricDist, PARAMETRIC_GRID};
-pub use rate_fn::{InvertibleRate, ScaledRateFn, TransformedInvertibleRateFn};
-pub use storage::{build_empirical_library, AssignedRate, InvertibleRateFn, RateStorage};
+pub use resolved::{RateDraw, ResolvedRate};
 
 /// Per-person infectiousness rate, indexed by time since the person became
 /// infectious (τ). Each variant carries its own duration since the two
@@ -34,7 +29,7 @@ pub use storage::{build_empirical_library, AssignedRate, InvertibleRateFn, RateS
 /// curve (when its integrated infectiousness is exhausted).
 ///
 /// This enum is the configuration format only; the running model resolves it
-/// into [`InvertibleRateFn`] values via [`storage`].
+/// into [`AnyInfectionRate`] values (see [`ResolvedRate`]).
 ///
 /// - `Constant { value, duration }`: fixed rate over an exponential
 ///   infectious period with mean `duration` (`exp_mean_duration` in Rust),
