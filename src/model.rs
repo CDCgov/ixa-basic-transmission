@@ -3,7 +3,6 @@ use ixa::prelude::*;
 use ixa::{define_data_plugin, define_rng, Context};
 use rand_distr::Exp;
 
-use crate::modifiers::ModifierExt;
 use crate::parameters::{Parameters, ParametersExt};
 use crate::person::{InfectionStatus, Person, PersonId};
 use crate::rate::{ConstantRateFn, RateDraw, ResolvedRate};
@@ -79,12 +78,6 @@ impl InfectionManager<BasicTransmission> for Context {
                 context.stats_mut().record_recovery();
             }
         });
-        // Which interventions exist is decided once in `modifiers::register_all`.
-        // They get the infectious period to place themselves within it.
-        let infectious_duration = self
-            .infectiousness_duration(infectee)
-            .expect("infectee has a rate function");
-        self.run_activation_hooks(infectee, infectious_duration);
     }
 }
 
@@ -128,10 +121,6 @@ fn setup(context: &mut Context, rate: ResolvedRate) {
     // Everyone assigned a rate function starts their own transmission loop.
     context.setup_transmission_loop();
 
-    // Register every enabled intervention's activation hook in one place,
-    // before anyone is seeded infectious.
-    crate::modifiers::register_all(context, &params);
-
     for _ in 0..params.population {
         context.add_entity(Person).unwrap();
     }
@@ -139,6 +128,10 @@ fn setup(context: &mut Context, rate: ResolvedRate) {
     // Optional settings-based contact structure. No-op when
     // `params.settings` is empty.
     crate::settings::setup(context, &params.settings);
+
+    // After the settings, which isolation looks up, and before anyone is
+    // infected.
+    crate::modifiers::register_all(context, &params.modifiers);
 
     context.seed_infections(Person, params.initial_infections);
 
@@ -191,8 +184,8 @@ pub(crate) fn infect_for_test(ctx: &mut Context, person: PersonId, duration: f64
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::modifiers::antiviral::{Antiviral, AntiviralExt};
-    use crate::modifiers::facemask::{Facemask, FacemaskExt};
+    use crate::modifiers::antiviral::{self, Antiviral};
+    use crate::modifiers::facemask::{self, Facemask};
     use crate::modifiers::isolation::Isolation;
     use crate::modifiers::Modifiers;
     use crate::rate::{InfectionRate, InvertibleRate};
@@ -1176,9 +1169,8 @@ mod tests {
                 ctx.add_entity(Person).unwrap();
             }
             ctx.seed_infection(infector);
-            // Mirror the activation hook for the index case only.
-            let dt = ctx.infectiousness_duration(infector).unwrap();
-            ctx.facemask_schedule(infector, facemask, dt);
+            // Without `setup` nothing masks the infected: do the index case.
+            facemask::schedule(&mut ctx, infector, facemask);
             ctx.reforecast_transmission(infector);
             ctx.add_plan(d, |c| c.shutdown());
             ctx.execute();
@@ -1338,8 +1330,8 @@ mod tests {
                 ctx.add_entity(Person).unwrap();
             }
             ctx.seed_infection(infector);
-            // Mirror the activation hook for the index case only.
-            ctx.antiviral_schedule(infector, antiviral);
+            // Without `setup` nothing treats the infected: do the index case.
+            antiviral::schedule(&mut ctx, infector, antiviral);
             ctx.reforecast_transmission(infector);
             ctx.add_plan(d, |c| c.shutdown());
             ctx.execute();
@@ -1469,27 +1461,6 @@ mod tests {
     }
 
     #[test]
-    fn isolation_unknown_setting_is_noop() {
-        // A restrictTo that matches no configured setting registers nothing,
-        // so the run matches no-isolation exactly.
-        let base = isolation_base(2);
-        let no_iso = run(base.clone());
-        let bad = run(Parameters {
-            modifiers: Modifiers {
-                isolation: Some(Isolation {
-                    coverage: 1.0,
-                    restrict_to: "spaceship".into(),
-                    delay: 0.0,
-                    duration: None,
-                }),
-                ..Default::default()
-            },
-            ..base
-        });
-        assert_eq!(no_iso.cum_incidence(), bad.cum_incidence());
-    }
-
-    #[test]
     fn isolation_reduces_epidemic_incidence() {
         // Full-coverage isolation to the small household (M=2) instead of the
         // large workplace (M=19) must strictly cut the epidemic.
@@ -1599,6 +1570,37 @@ mod tests {
             both <= iso_only && both <= mask_only,
             "both ({both}) should not exceed either alone (iso {iso_only}, mask {mask_only})"
         );
+    }
+
+    #[test]
+    fn isolation_until_recovery_ends_at_recovery() {
+        // Without a duration, isolation lasts until recovery: afterwards the
+        // person is back in their workplace, so it keeps its size.
+        let mut ctx = context_for(Parameters {
+            modifiers: Modifiers {
+                isolation: Some(Isolation {
+                    coverage: 1.0,
+                    restrict_to: "household".into(),
+                    delay: 0.0,
+                    duration: None,
+                }),
+                ..Default::default()
+            },
+            ..isolation_base(4)
+        });
+        ctx.execute();
+        let work = ctx.setting_kind_by_name::<Setting>("work").unwrap();
+        let mut recovered = 0;
+        for person in ctx.query_result_iterator(Person) {
+            if ctx.get_property::<_, InfectionStatus>(person) == InfectionStatus::Recovered {
+                recovered += 1;
+                assert!(
+                    ctx.setting_group(person, work).is_some(),
+                    "{person:?} recovered but is still out of their workplace"
+                );
+            }
+        }
+        assert!(recovered > 0, "nobody recovered, so nothing was checked");
     }
 
     #[test]

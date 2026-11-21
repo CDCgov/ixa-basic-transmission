@@ -611,8 +611,9 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
 name = "ixa"
-version = "4.1.0"
-source = "git+https://github.com/CDCgov/ixa.git?branch=core-epi-draft#f5b6df747563a2610dabc95ff9057fbc2e6f3eb3"
+version = "5.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "97316e606c0bb38b6fef47ac09415a04a08155db145c24465de2f0412980a6ec"
 dependencies = [
  "approx",
  "bincode-next",
@@ -662,8 +663,9 @@ dependencies = [
 
 [[package]]
 name = "ixa-derive"
-version = "2.1.0"
-source = "git+https://github.com/CDCgov/ixa.git?branch=core-epi-draft#f5b6df747563a2610dabc95ff9057fbc2e6f3eb3"
+version = "3.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cecf4d0eebe70c95cf4c4ca25615f6ac80080323134d4d396771cadc69702583"
 dependencies = [
  "proc-macro2",
  "quote",

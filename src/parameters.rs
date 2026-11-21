@@ -112,6 +112,14 @@ impl Parameters {
             }
         }
         self.modifiers.validate()?;
+        if let Some(isolation) = &self.modifiers.isolation {
+            let target = &isolation.restrict_to;
+            if !self.settings.iter().any(|setting| &setting.name == target) {
+                return Err(format!(
+                    "isolation restrictTo must name a configured setting, got {target}"
+                ));
+            }
+        }
         Ok(())
     }
 }
@@ -123,6 +131,35 @@ mod tests {
     #[test]
     fn default_is_valid() {
         Parameters::default().validate().unwrap();
+    }
+
+    #[test]
+    fn isolation_must_restrict_to_a_configured_setting() {
+        let isolation = |name: &str| crate::modifiers::isolation::Isolation {
+            coverage: 1.0,
+            restrict_to: name.into(),
+            delay: 0.0,
+            duration: None,
+        };
+        let with = |name: &str, settings: Vec<crate::settings::SettingType>| Parameters {
+            settings,
+            modifiers: Modifiers {
+                isolation: Some(isolation(name)),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let household = crate::settings::SettingType {
+            name: "household".into(),
+            alpha: 1.0,
+            sizes: vec![(3, 1.0)],
+            proportion: 1.0,
+        };
+        with("household", vec![household.clone()])
+            .validate()
+            .unwrap();
+        assert!(with("spaceship", vec![household]).validate().is_err());
+        assert!(with("household", vec![]).validate().is_err());
     }
 
     #[test]

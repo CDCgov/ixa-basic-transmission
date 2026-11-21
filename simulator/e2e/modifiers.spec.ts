@@ -141,4 +141,39 @@ test.describe("Transmission modifiers", () => {
     });
     await expect(page.locator(".error")).toHaveCount(0);
   });
+
+  test("isolation follows its setting when it is renamed or removed", async ({
+    page,
+  }) => {
+    const errors: string[] = [];
+    page.on("pageerror", (e) => errors.push(e.message));
+    await page.goto("/");
+    await page.getByRole("button", { name: "+ Add setting" }).click();
+    const isolation = page.getByRole("switch", { name: "Isolation" });
+    await isolation.click();
+    const restrictTo = page.getByRole("combobox", { name: "Restrict to" });
+    await expect(restrictTo).toHaveText(/household/);
+
+    // Rename the setting: isolation keeps targeting it, and the model
+    // (which rejects an unknown target) still runs.
+    const name = page.getByRole("textbox", { name: "Name" });
+    await name.fill("home");
+    await name.blur();
+    await expect(restrictTo).toHaveText(/home/);
+    await expect(page).toHaveURL(/restrictTo%22:%22home/);
+    await expect(page.getByText(/Ran \d+ simulations/)).toBeVisible({
+      timeout: 60_000,
+    });
+    await expect(page.locator(".error")).toHaveCount(0);
+
+    // Remove it: nothing is left to restrict to, so isolation turns off.
+    await page.getByRole("button", { name: "Remove setting" }).click();
+    await expect(isolation).not.toBeChecked();
+    await expect(isolation).toBeDisabled();
+    await expect(page.getByText(/Ran \d+ simulations/)).toBeVisible({
+      timeout: 60_000,
+    });
+    await expect(page.locator(".error")).toHaveCount(0);
+    expect(errors).toEqual([]);
+  });
 });

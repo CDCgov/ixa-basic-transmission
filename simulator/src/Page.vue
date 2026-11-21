@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { shallowReactive, computed, ref, toRef } from "vue";
+import { shallowReactive, computed, ref, toRef, watch } from "vue";
 import { useRouter, useRoute } from "vue-router";
 import {
   NumberInput,
@@ -35,7 +35,11 @@ import {
   normalizeInfectionRate,
 } from "./composables/infectionRate";
 import type { SettingType } from "./composables/settings";
-import { type Modifiers, DEFAULT_MODIFIERS } from "./composables/modifiers";
+import {
+  type Modifiers,
+  DEFAULT_MODIFIERS,
+  reconcileIsolation,
+} from "./composables/modifiers";
 import { useSimulationRunner } from "./composables/useSimulationRunner";
 import { useChartData } from "./composables/useChartData";
 
@@ -303,6 +307,24 @@ function applyParamUpdate(next: ParamEditorValue) {
 const LARGE_WORKLOAD = 20_000;
 const live = computed(
   () => params.nSimulations * params.population <= LARGE_WORKLOAD,
+);
+
+// The model rejects an isolation target that is not a configured setting.
+// `flush: "sync"` so params are consistent before the runner serializes them.
+// URL hydration and presets assign keys in `defaults` order, so `settings`
+// must stay ahead of `modifiers` there or a loaded isolation is reconciled
+// against the old settings.
+watch(
+  [() => params.settings, () => params.modifiers],
+  ([settings, modifiers], [previousSettings]) => {
+    const next = reconcileIsolation(
+      modifiers,
+      settings.map((s) => s.name),
+      previousSettings?.map((s) => s.name),
+    );
+    if (next !== modifiers) setParam("modifiers", next);
+  },
+  { flush: "sync", immediate: true },
 );
 
 const { outputs, error, loading, statusMessage } = useSimulationRunner(params, {

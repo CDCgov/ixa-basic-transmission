@@ -9,7 +9,7 @@ edition = "2021"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-ixa = { git = "https://github.com/CDCgov/ixa.git", branch = "core-epi-draft" }
+ixa = "5.0.0"
 wasm-bindgen = "0.2"
 cfasim-model = "0.4"
 serde = { version = "1", features = ["derive"] }
