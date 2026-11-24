@@ -5,8 +5,9 @@
 //! Unlike [`super::facemask`] and [`super::antiviral`], which scale a
 //! person's infectiousness, isolation changes who they meet: it gives them an
 //! itinerary of their own with only that setting in it, at that setting's
-//! full multiplier. The override also takes them out of their other
-//! settings' groups, so nobody contacts them there. Their total changes when
+//! full multiplier. The override also takes them out of their other list
+//! settings' groups, so nobody contacts them there (population groups are
+//! unaffected by itinerary overrides in `core_epi`). Their total changes when
 //! isolation starts and ends, so both re-forecast their transmission loop;
 //! ending it also re-forecasts the groups they rejoin, whose multipliers rise.
 //!
@@ -23,10 +24,10 @@
 
 use ixa::core_epi::{InfectionManager, Itinerary, SettingsExt, TransmissionManager};
 use ixa::prelude::*;
-use ixa::{define_rng, Context};
+use ixa::{define_rng, Context, HashSet};
 use serde::{Deserialize, Serialize};
 
-use crate::person::{InfectionStatus, PersonId};
+use crate::person::PersonId;
 use crate::settings::Setting;
 
 define_rng!(IsolationRng);
@@ -100,9 +101,9 @@ pub fn register(context: &mut Context, config: Option<&Isolation>) {
         let infection_time = context
             .infection_time(person)
             .expect("infected person has an infection time");
-        context.add_plan(infection_time + delay, move |context| {
+        context.add_passive_plan(infection_time + delay, move |context| {
             // Only isolate the still-infectious.
-            if context.get_property::<_, InfectionStatus>(person) != InfectionStatus::Infectious {
+            if !context.is_infectious(person) {
                 return;
             }
             if !restrict_itinerary(context, person, kind) {
@@ -116,7 +117,7 @@ pub fn register(context: &mut Context, config: Option<&Isolation>) {
                     .infectiousness_end_time(person)
                     .expect("infectious person has a rate function"),
             };
-            context.add_plan(end, move |context| restore_itinerary(context, person));
+            context.add_passive_plan(end, move |context| restore_itinerary(context, person));
         });
     });
 }
@@ -146,17 +147,21 @@ fn restore_itinerary(context: &mut Context, person: PersonId) {
     context.clear_itinerary_override::<Setting>(person);
     // A group they rejoin grows, raising its members' totals above the
     // forecasts drawn while it was smaller. Only the infectious have a
-    // forecast to redraw, the person included.
-    let mut stale = vec![person];
+    // forecast to redraw, the person included; track who we've already
+    // reforecast so someone shared across multiple rejoined groups is only
+    // reforecast once.
+    let mut seen = HashSet::default();
+    seen.insert(person);
+    if context.is_infectious(person) {
+        context.reforecast_transmission(person);
+    }
     for kind in left {
         if let Some(group) = context.setting_group(person, kind) {
-            let members = context.setting_group_members(group);
-            stale.extend(members.into_iter().filter(|&member| member != person));
-        }
-    }
-    for member in stale {
-        if context.is_infectious(member) {
-            context.reforecast_transmission(member);
+            for member in context.setting_group_members(group) {
+                if seen.insert(member) && context.is_infectious(member) {
+                    context.reforecast_transmission(member);
+                }
+            }
         }
     }
 }

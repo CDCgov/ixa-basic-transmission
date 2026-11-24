@@ -15,11 +15,10 @@ pub mod parametric;
 pub mod resolved;
 
 // The rate functions themselves come from ixa's core_epi.
-pub use ixa::core_epi::rate::{
-    AnyInfectionRate, ConstantRateFn, EmpiricalRateFn, InvertibleRate, TransformedInvertibleRateFn,
-};
-pub use normalize::normalize_to_r0;
-pub use parametric::{materialize_parametric, ParametricDist, PARAMETRIC_GRID};
+pub use ixa::core_epi::rate::{AnyInfectionRate, ConstantRateFn, EmpiricalRateFn, InvertibleRate};
+#[cfg(test)]
+pub(crate) use parametric::materialize_parametric;
+pub use parametric::{ParametricDist, PARAMETRIC_GRID};
 pub use resolved::{RateDraw, ResolvedRate};
 
 /// Per-person infectiousness rate, indexed by time since the person became
@@ -41,11 +40,11 @@ pub use resolved::{RateDraw, ResolvedRate};
 ///   multiplication. Defaults to 1.0 so simple curves act as absolute rates
 ///   if the modeler hasn't calibrated.
 /// - `Library { rates, scale }`: population of empirical curves with a
-///   single shared scale. Each person gets one curve assigned at setup
+///   single shared scale. Each person draws one curve at infection
 ///   and keeps it for their whole infectious period (per-person
 ///   heterogeneity). Empty curve list is rejected.
-/// - `Parametric { dist, duration, scale }`: distribution-based shape,
-///   **lowered to `Empirical`** at model entry (see [`materialize_parametric`]).
+/// - `Parametric { dist, scale }`: distribution-based shape,
+///   **lowered to `Empirical`** at model entry (see [`ResolvedRate`]).
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(
     tag = "type",

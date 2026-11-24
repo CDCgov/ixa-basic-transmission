@@ -12,12 +12,14 @@
 //! - **Constant**: no-op — R₀ is already `value · duration` and the
 //!   user controls both directly.
 
+#[cfg(test)]
 use super::InfectionRate;
 
 /// See module docs. Idempotent; no-op on degenerate (empty / zero-area)
 /// inputs — those hit `cum_rate`'s exhausted-curve path during setup
 /// and produce no transmission, which is the right behavior.
-pub fn normalize_to_r0(rate: &mut InfectionRate) {
+#[cfg(test)]
+pub(crate) fn normalize_to_r0(rate: &mut InfectionRate) {
     match rate {
         InfectionRate::Constant { .. } => {}
         // `Parametric` has no points until it is lowered to a curve; the

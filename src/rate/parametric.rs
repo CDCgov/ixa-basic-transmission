@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+#[cfg(test)]
 use super::InfectionRate;
 
 /// Number of grid anchors `materialize_parametric` samples the kernel at over
@@ -185,7 +186,8 @@ impl ParametricDist {
 /// once at model entry, **before** `normalize_to_r0` (which then makes the curve
 /// area 1, so `scale = R₀`). Idempotent in effect — once lowered the rate is
 /// `Empirical`.
-pub fn materialize_parametric(rate: &mut InfectionRate) {
+#[cfg(test)]
+pub(crate) fn materialize_parametric(rate: &mut InfectionRate) {
     if let InfectionRate::Parametric { dist, scale } = rate {
         let points = dist.curve();
         let scale = *scale;

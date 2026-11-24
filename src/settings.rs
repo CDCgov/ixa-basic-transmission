@@ -11,8 +11,8 @@
 //! person in exactly one group of every type (the last group of a type may
 //! be undersized) and assigns everyone the itinerary given by the
 //! proportions. Membership, multipliers, the itinerary and contact sampling
-//! are then core_epi's; see `model::evaluate_forecast` for how the loop uses
-//! them.
+//! are then core_epi's; see `model::BasicTransmission`'s `TransmissionManager`
+//! implementation for how the loop uses them.
 //!
 //! Proportions are shares of where a person's attempts happen, so only
 //! their ratios matter: the total multiplier is `Σ p_s · M_s / Σ p_s`.

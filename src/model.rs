@@ -116,7 +116,6 @@ fn setup(context: &mut Context, rate: ResolvedRate) {
     // Clone once (cheap at setup) so `context` is free to be mutated.
     let params = context.params().clone();
     context.init_random(params.seed);
-    context.index_property::<Person, InfectionStatus>();
     install_rate(context, rate);
     // Everyone assigned a rate function starts their own transmission loop.
     context.setup_transmission_loop();
