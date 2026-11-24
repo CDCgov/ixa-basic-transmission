@@ -279,8 +279,7 @@ function pct(fraction: number): string {
         </div>
         <p class="effect">
           Isolated people contact only their
-          <strong>{{ modifiers.isolation.restrictTo }}</strong
-          >{{
+          <strong>{{ modifiers.isolation.restrictTo }}</strong>{{
             modifiers.isolation.duration !== null
               ? ` for ${modifiers.isolation.duration} days`
               : ""

@@ -41,9 +41,10 @@
 //!     (all share the same household+work base).
 
 use std::fs;
+use std::hint::black_box;
 use std::path::PathBuf;
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 
 use ixa_basic_transmission::model;
 use ixa_basic_transmission::modifiers::antiviral::Antiviral;

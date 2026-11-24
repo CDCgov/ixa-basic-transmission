@@ -806,8 +806,7 @@ const timelinesVisible = computed(
           thinningOk ? ", for each method. Both approach" : ". They approach"
         }}
         the modified rate <strong>f·r(t)</strong>; expected infections per
-        individual = the shaded area <strong>{{ fmt(modified.total) }}</strong
-        >.
+        individual = the shaded area <strong>{{ fmt(modified.total) }}</strong>.
       </p>
       <template v-if="hasSamples">
         <BarChart
