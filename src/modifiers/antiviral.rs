@@ -1,39 +1,29 @@
-//! Antiviral treatment intervention: a treated infectious person's
-//! **intrinsic** infectiousness λ(τ) is scaled by `(1 − efficacy)` starting
-//! a fixed `delay` after infection (a proxy for symptom onset + care-
-//! seeking), modeling reduced viral shedding under treatment.
+//! Antiviral treatment: a treated person's infectiousness is scaled by
+//! `1 - efficacy` from a fixed `delay` after infection (a proxy for symptom
+//! onset and care seeking) until it ends.
 //!
-//! Three knobs (`Antiviral`):
-//! * `coverage` — fraction of infections that get treated. Drawn as an
-//!   independent `Bernoulli(coverage)` at infection.
-//! * `efficacy` — proportional reduction in intrinsic infectiousness while
-//!   treated. `0` = no effect, `1` = fully blocks shedding.
-//! * `delay` — time from infection to treatment start (≥ 0).
+//! Three knobs ([`Antiviral`]):
+//! * `coverage`: fraction of infections that get treated, an independent
+//!   `Bernoulli(coverage)` draw each.
+//! * `efficacy`: proportional reduction in infectiousness while treated.
+//!   `0` = no effect, `1` = fully blocks shedding.
+//! * `delay`: time from infection to treatment start (`>= 0`).
 //!
-//! Like [`super::facemask`], this is a consumer of the [`crate::modifiers`]
-//! registry: at treatment start it composes its `1 − efficacy` factor into
-//! the person's cached intrinsic multiplier. Because modifiers compose
-//! multiplicatively, a person who is both treated and masked sheds at
-//! `(1 − efficacy) · (1 − mask_effectiveness)`.
-//!
-//! Contrast with the facemask: treatment fires at a **fixed delay** after
-//! infection, a different activation pattern on the same registry (the
-//! facemask dons at a uniform time within the infectious window). When
-//! `Parameters::antiviral` is `None` the module is inert — no RNG drawn.
+//! Like [`super::facemask`] it is an ixa `core_epi` infectiousness modifier,
+//! so a person who is both treated and masked sheds at
+//! `(1 - efficacy) * (1 - effectiveness)`. When it is off no RNG is drawn.
 
+use ixa::core_epi::InfectionManager;
 use ixa::prelude::*;
 use ixa::{define_rng, Context};
 use serde::{Deserialize, Serialize};
 
-use super::intrinsic::IntrinsicModifierExt;
-use super::ModifierExt;
-use crate::person::{InfectionStatus, InfectionTime, PersonId};
+use crate::person::PersonId;
 
 define_rng!(AntiviralRng);
+ixa::define_modifier!(AntiviralModifier);
 
-/// Antiviral treatment configuration. `Copy` so the model loop can pull it
-/// out of `Parameters` by value and avoid holding a borrow across the
-/// `&mut self` scheduling call.
+/// Antiviral treatment configuration.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Antiviral {
@@ -70,50 +60,34 @@ impl Antiviral {
     }
 }
 
-/// Register the antiviral's activation hook when enabled. Called from
-/// [`super::register_all`] — the single intervention-registration point.
-/// `None` registers nothing.
-pub fn register(ctx: &mut Context, config: Option<Antiviral>) {
-    if let Some(av) = config {
-        ctx.register_on_infectious(move |c, p, _infectious_duration| {
-            c.antiviral_schedule(p, av);
+/// Treat people as they are infected, if enabled.
+pub fn register(context: &mut Context, config: Option<Antiviral>) {
+    if let Some(antiviral) = config {
+        super::subscribe_to_infections(context, move |context, person| {
+            schedule(context, person, antiviral);
         });
     }
 }
 
-pub trait AntiviralExt {
-    /// Decide whether `person` is treated and, if so, schedule treatment to
-    /// start at `t_inf + delay`. Call once when `person` becomes infectious.
-    /// At treatment start the antiviral composes its factor into the
-    /// person's intrinsic multiplier (see [`crate::modifiers`]).
-    fn antiviral_schedule(&mut self, person: PersonId, antiviral: Antiviral);
-}
-
-impl AntiviralExt for Context {
-    fn antiviral_schedule(&mut self, person: PersonId, antiviral: Antiviral) {
-        // Coverage gate: is this person treated at all?
-        if !self.sample_bool(AntiviralRng, antiviral.coverage) {
-            return;
-        }
-        let t_inf = self
-            .get_property::<_, InfectionTime>(person)
-            .0
-            .expect("infectious person has an infection time");
-        let start = t_inf + antiviral.delay;
-        let factor = 1.0 - antiviral.efficacy;
-        self.add_plan(start, move |context| {
-            // Only treat the still-infectious; a person who recovered before
-            // treatment would start never gets the modifier.
-            if context.get_property::<_, InfectionStatus>(person) == InfectionStatus::Infectious {
-                context.apply_intrinsic_modifier(person, factor);
-            }
-        });
+/// Decide whether the newly infected `person` is treated and, if so,
+/// schedule it.
+pub(crate) fn schedule(context: &mut Context, person: PersonId, antiviral: Antiviral) {
+    if !context.sample_bool(AntiviralRng, antiviral.coverage) {
+        return;
     }
+    let infection_time = context
+        .infection_time(person)
+        .expect("infected person has an infection time");
+    let start = infection_time + antiviral.delay;
+    let factor = 1.0 - antiviral.efficacy;
+    // Applies only if they are still infectious with this infection then.
+    context.schedule_infectiousness_modifier(person, AntiviralModifier, factor, start, None);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::infect_for_test;
     use crate::person::Person;
 
     #[test]
@@ -166,8 +140,8 @@ mod tests {
         .is_err());
     }
 
-    /// Seed `n` infectious people, schedule treatment, run until `run_until`,
-    /// and return each person's resulting intrinsic multiplier.
+    /// Infect 300 people, schedule their treatment, run until `run_until`,
+    /// and return each one's infectiousness multiplier.
     fn run_schedule(seed: u64, av: Antiviral, run_until: f64) -> Vec<f64> {
         let mut ctx = Context::new();
         ctx.init_random(seed);
@@ -175,16 +149,15 @@ mod tests {
         let mut people = Vec::with_capacity(n);
         for _ in 0..n {
             let p = ctx.add_entity(Person).unwrap();
-            ctx.set_property(p, InfectionTime(Some(0.0)));
-            ctx.set_property(p, InfectionStatus::Infectious);
-            ctx.antiviral_schedule(p, av);
+            infect_for_test(&mut ctx, p, 100.0);
+            schedule(&mut ctx, p, av);
             people.push(p);
         }
         ctx.add_plan(run_until, |c| c.shutdown());
         ctx.execute();
         people
             .iter()
-            .map(|&p| ctx.intrinsic_multiplier(p))
+            .map(|&p| ctx.infectiousness_multiplier(p))
             .collect()
     }
 

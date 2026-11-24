@@ -1,42 +1,38 @@
-//! Isolation intervention: a treated infectious person restricts their
-//! contacts to a single setting (their household, say) a fixed `delay` after
-//! infection, optionally resuming normal contact after a `duration`.
+//! Isolation intervention: an infected person may confine their contacts to
+//! one setting (their household, say) from a fixed `delay` after infection,
+//! until they recover or for a set `duration`.
 //!
-//! Unlike [`super::facemask`] / [`super::antiviral`] (which scale **intrinsic**
-//! infectiousness via the multiply-in cache), isolation is a **structural /
-//! total** effect on the contact mixing: it confines the person's *current*
-//! itinerary to one setting via the settings-layer override
-//! ([`crate::settings::SettingsExt::settings_restrict_to`]). The forecast
-//! upper bound (`settings_max_multiplier`) is left unrestricted, so the
-//! existing thinning accepts at the reduced rate for free.
+//! Unlike [`super::facemask`] and [`super::antiviral`], which scale a
+//! person's infectiousness, isolation changes who they meet: it gives them an
+//! itinerary of their own with only that setting in it, at that setting's
+//! full multiplier. The override also takes them out of their other list
+//! settings' groups, so nobody contacts them there (population groups are
+//! unaffected by itinerary overrides in `core_epi`). Their total changes when
+//! isolation starts and ends, so both re-forecast their transmission loop;
+//! ending it also re-forecasts the groups they rejoin, whose multipliers rise.
 //!
-//! Models case isolation — only infected individuals, gated here by
-//! `coverage` — by restricting the current itinerary to a single setting.
-//! Three knobs:
-//! * `coverage` — fraction of infections that isolate (`Bernoulli` at infection).
-//! * `restrict_to` — the **name** of the setting type to confine to. Resolved
-//!   once to a type index at registration; the hot path only sees handles.
-//! * `delay` — time from infection to isolation onset.
-//! * `duration` — `None` = isolate until recovery; `Some(d)` = a finite
-//!   window, then resume the full itinerary.
+//! Four knobs ([`Isolation`]):
+//! * `coverage`: fraction of infections that isolate, an independent
+//!   `Bernoulli(coverage)` draw each.
+//! * `restrict_to`: the **name** of the setting type to confine to. It must
+//!   be one of the configured settings, so isolation needs settings.
+//! * `delay`: time from infection to isolation onset.
+//! * `duration`: `None` = isolate until recovery; `Some(d)` = for `d`, then
+//!   resume the full itinerary.
 //!
-//! Requires settings to be configured (there's no household to restrict to
-//! under global random mixing); with no matching setting it registers
-//! nothing. When `Parameters::isolation` is `None` the module is inert.
+//! When it is off no RNG is drawn.
 
+use ixa::core_epi::{InfectionManager, Itinerary, SettingsExt, TransmissionManager};
 use ixa::prelude::*;
-use ixa::{define_rng, Context};
+use ixa::{define_rng, Context, HashSet};
 use serde::{Deserialize, Serialize};
 
-use super::ModifierExt;
-use crate::person::{InfectionStatus, InfectionTime};
-use crate::settings::{SettingType, SettingsExt};
+use crate::person::PersonId;
+use crate::settings::Setting;
 
 define_rng!(IsolationRng);
 
-/// Isolation intervention configuration. Not `Copy` (`restrict_to` is a
-/// `String`); the name is resolved to a type index once at registration so
-/// the per-person path never touches it.
+/// Isolation intervention configuration.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Isolation {
@@ -81,59 +77,99 @@ impl Isolation {
     }
 }
 
-/// Register the isolation activation hook when enabled. Called from
-/// [`super::register_all`] — the single intervention-registration point.
-/// `restrict_to` is resolved against `settings` to a type index **once**
-/// here; a `None` config or a name that matches no configured setting
-/// registers nothing (the latter is a no-op — isolation needs a target).
-pub fn register(ctx: &mut Context, config: Option<Isolation>, settings: &[SettingType]) {
-    let Some(iso) = config else {
+/// Isolate people as they are infected, if enabled. Call after the settings
+/// are set up: the setting to confine to is looked up by name once, here.
+pub fn register(context: &mut Context, config: Option<&Isolation>) {
+    let Some(isolation) = config else {
         return;
     };
-    let Some(type_index) = settings.iter().position(|s| s.name == iso.restrict_to) else {
-        // No matching setting (or none configured) → nothing to restrict to.
+    // Validation rejects a name that is not a configured setting, so the
+    // kind is missing only when there were no people to place in settings.
+    let Some(kind) = context.setting_kind_by_name::<Setting>(&isolation.restrict_to) else {
         return;
     };
-    // A restriction can now occur this run, so the transmission forecast must
-    // use the loose `max_s M_s` bound (a restricted person may transmit at a
-    // single setting's rate, above their weighted mean). Without this, the
-    // forecast uses the tight exact `current_mult` bound — see
-    // `SettingsExt::settings_forecast_multiplier`.
-    ctx.settings_arm_restriction();
     let Isolation {
         coverage,
         delay,
         duration,
         ..
-    } = iso;
-    ctx.register_on_infectious(move |c, person, _infectious_duration| {
-        // Coverage gate: does this person isolate at all?
-        if !c.sample_bool(IsolationRng, coverage) {
+    } = *isolation;
+    super::subscribe_to_infections(context, move |context, person| {
+        if !context.sample_bool(IsolationRng, coverage) {
             return;
         }
-        let t_inf = c
-            .get_property::<_, InfectionTime>(person)
-            .0
-            .expect("infectious person has an infection time");
-        let start = t_inf + delay;
-        c.add_plan(start, move |context| {
-            // Only isolate the still-infectious; recovered-first → no-op.
-            if context.get_property::<_, InfectionStatus>(person) == InfectionStatus::Infectious {
-                context.settings_restrict_to(person, type_index);
+        let infection_time = context
+            .infection_time(person)
+            .expect("infected person has an infection time");
+        context.add_passive_plan(infection_time + delay, move |context| {
+            // Only isolate the still-infectious.
+            if !context.is_infectious(person) {
+                return;
             }
+            if !restrict_itinerary(context, person, kind) {
+                return;
+            }
+            // Without a duration they isolate until they recover, then go
+            // back to their groups like anyone else.
+            let end = match duration {
+                Some(d) => context.get_current_time() + d,
+                None => context
+                    .infectiousness_end_time(person)
+                    .expect("infectious person has a rate function"),
+            };
+            context.add_passive_plan(end, move |context| restore_itinerary(context, person));
         });
-        if let Some(d) = duration {
-            c.add_plan(start + d, move |context| {
-                // Resume the full itinerary (harmless no-op if already recovered).
-                context.settings_clear_restriction(person);
-            });
-        }
     });
+}
+
+/// Confine `person`'s attempts to their setting of `kind`. Returns whether
+/// they have one.
+fn restrict_itinerary(context: &mut Context, person: PersonId, kind: Setting) -> bool {
+    if context.setting_group(person, kind).is_none() {
+        return false;
+    }
+    context.override_itinerary(person, Itinerary::new([(kind, 1.0)]));
+    // Their total may now exceed the forecast their pending proposal was
+    // drawn from.
+    context.reforecast_transmission(person);
+    true
+}
+
+/// Give `person` back the itinerary everyone has.
+fn restore_itinerary(context: &mut Context, person: PersonId) {
+    let kinds = context.setting_kinds::<Setting>();
+    let mut left = Vec::new();
+    for &kind in &kinds {
+        if context.setting_group(person, kind).is_none() {
+            left.push(kind);
+        }
+    }
+    context.clear_itinerary_override::<Setting>(person);
+    // A group they rejoin grows, raising its members' totals above the
+    // forecasts drawn while it was smaller. Only the infectious have a
+    // forecast to redraw, the person included; track who we've already
+    // reforecast so someone shared across multiple rejoined groups is only
+    // reforecast once.
+    let mut seen = HashSet::default();
+    seen.insert(person);
+    if context.is_infectious(person) {
+        context.reforecast_transmission(person);
+    }
+    for kind in left {
+        if let Some(group) = context.setting_group(person, kind) {
+            for member in context.setting_group_members(group) {
+                if seen.insert(member) && context.is_infectious(member) {
+                    context.reforecast_transmission(member);
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::settings::SettingType;
 
     fn iso(coverage: f64, delay: f64, duration: Option<f64>) -> Isolation {
         Isolation {
@@ -164,5 +200,63 @@ mod tests {
         }
         .validate()
         .is_err());
+    }
+
+    fn home_and_work_context() -> (Context, PersonId, Setting, Setting) {
+        // home: size 3, alpha 1 → M=2; work: size 5, alpha 1 → M=4.
+        let types = [("home", 3), ("work", 5)].map(|(name, size)| SettingType {
+            name: name.into(),
+            alpha: 1.0,
+            sizes: vec![(size, 1.0)],
+            proportion: 0.5,
+        });
+        let mut ctx = Context::new();
+        ctx.init_random(7);
+        for _ in 0..15 {
+            ctx.add_entity(crate::person::Person).unwrap();
+        }
+        crate::settings::setup(&mut ctx, &types);
+        let person = ctx
+            .query_result_iterator(crate::person::Person)
+            .next()
+            .unwrap();
+        let kinds = ctx.setting_kinds::<Setting>();
+        (ctx, person, kinds[0], kinds[1])
+    }
+
+    #[test]
+    fn restriction_confines_attempts_to_one_setting_and_restores() {
+        let (mut ctx, person, home, work) = home_and_work_context();
+        assert!((ctx.current_setting_multiplier::<Setting>(person) - 3.0).abs() < 1e-9);
+
+        // Restricted to home: attempts only there, at its full multiplier.
+        assert!(restrict_itinerary(&mut ctx, person, home));
+        assert!((ctx.current_setting_multiplier::<Setting>(person) - 2.0).abs() < 1e-9);
+        let household = ctx.setting_group(person, home);
+        for _ in 0..200 {
+            assert_eq!(ctx.sample_setting_by_rate::<Setting>(person), Some(home));
+            let contact = ctx
+                .sample_setting_contact(person, home)
+                .expect("home has other members");
+            assert_ne!(contact, person);
+            assert_eq!(ctx.setting_group(contact, home), household);
+        }
+        // Out of their workplace, so nobody contacts them there.
+        assert!(ctx.setting_group(person, work).is_none());
+
+        restore_itinerary(&mut ctx, person);
+        assert!(ctx.setting_group(person, work).is_some());
+        assert!((ctx.current_setting_multiplier::<Setting>(person) - 3.0).abs() < 1e-9);
+        let drew_work =
+            (0..200).any(|_| ctx.sample_setting_by_rate::<Setting>(person) == Some(work));
+        assert!(drew_work, "work is back in the itinerary");
+    }
+
+    #[test]
+    fn restriction_needs_a_setting_of_that_kind() {
+        let (mut ctx, person, _, _) = home_and_work_context();
+        let school = ctx.add_setting_kind::<Setting>("school", 1.0);
+        assert!(!restrict_itinerary(&mut ctx, person, school));
+        assert!((ctx.current_setting_multiplier::<Setting>(person) - 3.0).abs() < 1e-9);
     }
 }

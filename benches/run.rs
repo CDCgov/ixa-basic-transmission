@@ -3,15 +3,15 @@
 //!   1. **end_to_end** — full `model::run`. Wall-clock for an identical
 //!      workload across Constant / Empirical-5pt / Empirical-Npt / Library.
 //!
-//!   2. **setup_only** — `model::setup_only`: build Context, register
-//!      Rate entities (Library only), create Person entities, assign
-//!      AssignedRate (Library only), and place every person in a Setting
+//!   2. **setup_only** — `model::setup_only`: build Context, load the
+//!      rate library, create Person entities, assign the initial
+//!      infections their rate functions, and place every person in a Setting
 //!      of each configured type. Does NOT execute. Isolates the per-person
 //!      assignment + entity-creation overhead from the transmission loop.
 //!
 //!   3. **curve_eval** — pure hot-path math: a tight loop calling
-//!      `empirical_cum_rate` + `empirical_inverse_cum_rate` on a curve
-//!      of a given length. Isolates curve-walk cost per event.
+//!      `cum_rate` + `inverse_cum_rate` on an `EmpiricalRateFn` of a given
+//!      length. Isolates curve-walk cost per event.
 //!
 //!   4. **settings** — full `model::run` with a fixed Constant rate and
 //!      modifiers off, varying the contact structure: global random mixing
@@ -27,8 +27,7 @@
 //! How to read the output:
 //!
 //!   - end_to_end(library) − end_to_end(empirical_long) ≈ Library
-//!     dispatch overhead (the extra AssignedRate property lookup +
-//!     RateStorage lookup per event).
+//!     dispatch overhead (the library index lookup per event).
 //!   - end_to_end(empirical_long) − end_to_end(empirical_short) ≈ cost
 //!     of walking long curves on every event.
 //!   - setup_only(library) − setup_only(constant) ≈ per-person
@@ -52,9 +51,7 @@ use ixa_basic_transmission::modifiers::facemask::Facemask;
 use ixa_basic_transmission::modifiers::isolation::Isolation;
 use ixa_basic_transmission::modifiers::Modifiers;
 use ixa_basic_transmission::parameters::Parameters;
-use ixa_basic_transmission::rate::{
-    empirical_cum_rate, empirical_inverse_cum_rate, EmpiricalRateFn, InfectionRate, InvertibleRate,
-};
+use ixa_basic_transmission::rate::{EmpiricalRateFn, InfectionRate, InvertibleRate};
 use ixa_basic_transmission::settings::SettingType;
 
 const POPULATION: usize = 2_000;
@@ -125,8 +122,8 @@ fn load_bundled_library() -> Vec<Vec<[f64; 2]>> {
         groups.entry(id).or_default().push([t, v]);
     }
     groups
-        .into_iter()
-        .map(|(_, mut pts)| {
+        .into_values()
+        .map(|mut pts| {
             pts.sort_by(|a, b| a[0].partial_cmp(&b[0]).unwrap());
             pts
         })
@@ -253,11 +250,8 @@ fn bench_curve_eval(c: &mut Criterion) {
         .expect("library has at least one curve")
         .clone();
     let short_points = short_curve();
-    // Pre-build the EmpiricalRates (with precomputed cum) once — same shape as
-    // the model's hot path, which holds `&dyn InvertibleRate` borrowed
-    // from a data plugin populated at setup. Scale 1.0 so the cum/inverse math
-    // matches the slice-based reference path below bit-for-bit.
-    let short = EmpiricalRateFn::new(short_points.clone(), 1.0);
+    // Built once, as the model does when it loads its rate library at setup.
+    let short = EmpiricalRateFn::new(short_points, 1.0);
     let long_curve = EmpiricalRateFn::new(long_points.clone(), 1.0);
     let long_len = long_points.len();
 
@@ -282,31 +276,6 @@ fn bench_curve_eval(c: &mut Criterion) {
             b.iter(|| {
                 let cum = black_box(&long_curve).cum_rate(black_box(elapsed));
                 black_box(black_box(&long_curve).inverse_cum_rate(black_box(cum + e_sample)));
-            });
-        },
-    );
-
-    // Reference path (no precomputed cum) — same math the slice-based
-    // helpers use. Lets the diff measure the precompute savings on its own.
-    g.bench_function(BenchmarkId::from_parameter("short_5pt_no_cum"), |b| {
-        b.iter(|| {
-            let cum = empirical_cum_rate(black_box(&short_points), black_box(elapsed));
-            black_box(empirical_inverse_cum_rate(
-                black_box(&short_points),
-                black_box(cum + e_sample),
-            ));
-        });
-    });
-
-    g.bench_function(
-        BenchmarkId::from_parameter(format!("long_{long_len}pt_no_cum")),
-        |b| {
-            b.iter(|| {
-                let cum = empirical_cum_rate(black_box(&long_points), black_box(elapsed));
-                black_box(empirical_inverse_cum_rate(
-                    black_box(&long_points),
-                    black_box(cum + e_sample),
-                ));
             });
         },
     );

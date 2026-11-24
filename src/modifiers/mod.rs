@@ -1,36 +1,30 @@
-//! Intervention registry — activation machinery shared by all transmission
-//! modifiers, plus the single registration point ([`register_all`]).
+//! Transmission modifiers: interventions that act on a person once they are
+//! infected. [`register_all`] is the one place that lists them.
 //!
-//! An intervention schedules its effect when a person becomes infectious via
-//! [`ModifierExt::register_on_infectious`]; the transmission loop runs every
-//! registered hook generically ([`ModifierExt::run_activation_hooks`]), so
-//! the loop never changes when one is added. This module is **channel-
-//! agnostic** — it only knows *when* effects fire, not *what* they do.
-//!
-//! Effects land in one of two channels:
-//! * **Intrinsic** ([`intrinsic`]) — scales the per-person shedding rate
-//!   λ(τ) via a cached multiplier. Used by [`facemask`] / [`antiviral`].
-//! * **Total / contact** — restructures contact mixing via the settings-layer
-//!   itinerary restriction (`crate::settings`). Used by [`isolation`].
+//! An intervention changes transmission in one of two ways:
+//! * **Infectiousness**: scales the person's own rate with an ixa `core_epi`
+//!   infectiousness modifier. Used by [`facemask`] and [`antiviral`].
+//! * **Contacts**: changes who the person meets by overriding their settings
+//!   itinerary. Used by [`isolation`].
 //!
 //! Adding a modifier:
-//! 1. Give it a module that owns its per-person state + activation timing.
-//! 2. Have its activation apply to a channel — `apply_intrinsic_modifier`
-//!    (intrinsic) or a `settings_*` call (total).
-//! 3. Register its activation hook in **one place** — [`register_all`].
+//! 1. Give it a module with its config, its own RNG and a `register` that
+//!    calls [`subscribe_to_infections`] with what to do for each infected
+//!    person.
+//! 2. Add its config to [`Modifiers`] and a line to [`register_all`].
 
 pub mod antiviral;
 pub mod facemask;
-pub mod intrinsic;
 pub mod isolation;
 
-use ixa::{define_data_plugin, Context};
+use ixa::core_epi::InfectiousnessAssignedEvent;
+use ixa::Context;
 use serde::{Deserialize, Serialize};
 
+use crate::model::BasicTransmission;
 use crate::modifiers::antiviral::Antiviral;
 use crate::modifiers::facemask::Facemask;
 use crate::modifiers::isolation::Isolation;
-use crate::parameters::Parameters;
 use crate::person::PersonId;
 
 /// The transmission-modifier set, grouped as one `Parameters` subsection so
@@ -61,97 +55,54 @@ impl Modifiers {
     }
 }
 
-/// A hook run once when a person becomes infectious, with that person's
-/// realized infectious-period duration. Interventions register one via
-/// [`ModifierExt::register_on_infectious`]; the transmission loop runs them
-/// all (in registration order) from a single subscriber.
-type ActivationHook = Box<dyn Fn(&mut Context, PersonId, f64)>;
-
-/// Registry of intervention activation hooks. Populated once at setup
-/// ([`register_all`]); read whenever a person turns infectious.
-#[derive(Default)]
-struct ModifierActivation {
-    on_infectious: Vec<ActivationHook>,
+/// Run `hook` for each person from now on, once they are infected: their
+/// rate function is assigned and the model's `on_infected` has run.
+fn subscribe_to_infections(context: &mut Context, hook: impl Fn(&mut Context, PersonId) + 'static) {
+    context.subscribe_to_event(
+        move |context, event: InfectiousnessAssignedEvent<BasicTransmission>| {
+            hook(context, event.person);
+        },
+    );
 }
 
-define_data_plugin!(ModifierActivationPlugin, ModifierActivation, |_context| {
-    ModifierActivation::default()
-});
-
-pub trait ModifierExt {
-    /// Register a hook to run when any person becomes infectious. Called
-    /// once per active intervention at setup (see [`register_all`]).
-    fn register_on_infectious<F>(&mut self, hook: F)
-    where
-        F: Fn(&mut Context, PersonId, f64) + 'static;
-
-    /// Run every registered activation hook for `person`, in registration
-    /// order, passing their realized infectious-period duration. Called once
-    /// from the transmission loop's infectious-event subscriber.
-    fn run_activation_hooks(&mut self, person: PersonId, infectious_duration: f64);
-}
-
-impl ModifierExt for Context {
-    fn register_on_infectious<F>(&mut self, hook: F)
-    where
-        F: Fn(&mut Context, PersonId, f64) + 'static,
-    {
-        self.get_data_mut(ModifierActivationPlugin)
-            .on_infectious
-            .push(Box::new(hook));
-    }
-
-    fn run_activation_hooks(&mut self, person: PersonId, infectious_duration: f64) {
-        // Take the hook list out so we can pass `&mut self` to each hook
-        // without a borrow conflict, then put it back (membership is static
-        // for the run). Hooks only schedule *future* plans — they never
-        // synchronously re-infect anyone — so there is no re-entrancy on
-        // this list while it is taken.
-        let hooks = std::mem::take(&mut self.get_data_mut(ModifierActivationPlugin).on_infectious);
-        for hook in &hooks {
-            hook(self, person, infectious_duration);
-        }
-        self.get_data_mut(ModifierActivationPlugin).on_infectious = hooks;
-    }
-}
-
-/// Register every enabled intervention's activation hook. Call once from
-/// `model::setup`, after the core infectious-event subscriber is installed
-/// and before any person is seeded infectious. This is the **single place**
-/// that lists the interventions — adding one is a new submodule plus a line
-/// here; the transmission loop stays generic.
-pub fn register_all(ctx: &mut Context, params: &Parameters) {
-    let m = &params.modifiers;
-    // Intrinsic-channel modifiers (scale λ(τ) via the intrinsic cache).
-    facemask::register(ctx, m.facemask);
-    antiviral::register(ctx, m.antiviral);
-    // Total/contact-channel modifier (settings-layer itinerary restriction).
-    // Needs the settings list to resolve `restrictTo` to a type index.
-    isolation::register(ctx, m.isolation.clone(), &params.settings);
+/// Register every enabled intervention. Call once from `model::setup`, after
+/// the settings exist (isolation looks its setting up) and before anyone is
+/// infected.
+pub fn register_all(context: &mut Context, modifiers: &Modifiers) {
+    facemask::register(context, modifiers.facemask);
+    antiviral::register(context, modifiers.antiviral);
+    isolation::register(context, modifiers.isolation.as_ref());
 }
 
 #[cfg(test)]
 mod tests {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
     use super::*;
-    use crate::modifiers::intrinsic::IntrinsicModifierExt;
+    use crate::model::infect_for_test;
     use crate::person::Person;
     use ixa::prelude::*;
 
     #[test]
-    fn activation_hooks_run_in_order_and_persist() {
-        // Hooks registered once are run (in registration order) on every
-        // `run_activation_hooks` call and restored afterward. We observe via
-        // the intrinsic cache for convenience — the registry itself is
-        // channel-agnostic.
+    fn every_subscriber_runs_for_each_infection() {
         let mut ctx = Context::new();
         ctx.init_random(0);
-        let p = ctx.add_entity(Person).unwrap();
-        ctx.register_on_infectious(|c, person, _dur| c.apply_intrinsic_modifier(person, 0.5));
-        ctx.register_on_infectious(|c, person, _dur| c.apply_intrinsic_modifier(person, 0.2));
-        ctx.run_activation_hooks(p, 1.0);
-        assert!((ctx.intrinsic_multiplier(p) - 0.1).abs() < 1e-12);
-        // Hooks restored: a second activation applies them again.
-        ctx.run_activation_hooks(p, 1.0);
-        assert!((ctx.intrinsic_multiplier(p) - 0.01).abs() < 1e-12);
+        let calls = Rc::new(RefCell::new(Vec::new()));
+        for hook in [1, 2] {
+            let calls = Rc::clone(&calls);
+            subscribe_to_infections(&mut ctx, move |_context, person| {
+                calls.borrow_mut().push((hook, person));
+            });
+        }
+        let first = ctx.add_entity(Person).unwrap();
+        let second = ctx.add_entity(Person).unwrap();
+        infect_for_test(&mut ctx, first, 1.0);
+        infect_for_test(&mut ctx, second, 1.0);
+        ctx.execute();
+        assert_eq!(
+            *calls.borrow(),
+            vec![(1, first), (2, first), (1, second), (2, second)]
+        );
     }
 }

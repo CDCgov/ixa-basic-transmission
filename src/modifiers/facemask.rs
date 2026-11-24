@@ -1,38 +1,28 @@
-//! Facemask intervention: an infectious person dons a mask once, at a
-//! uniformly random time within their infectious period, after which their
-//! **intrinsic** infectiousness λ(τ) is scaled by `(1 − effectiveness)` for
-//! the rest of their infectious period.
+//! Facemask intervention: an infected person may put on a mask at a uniformly
+//! random time within their infectious period, after which their
+//! infectiousness is scaled by `1 - effectiveness` until it ends.
 //!
-//! Two knobs (`Facemask`):
-//! * `coverage` — fraction of infectious people who ever mask. Each
-//!   infectious person draws an independent `Bernoulli(coverage)` when they
-//!   become infectious.
-//! * `effectiveness` — proportional reduction in intrinsic infectiousness
-//!   while masked. `0` = no effect, `1` = fully blocks shedding.
+//! Two knobs ([`Facemask`]):
+//! * `coverage`: fraction of infected people who ever mask, an independent
+//!   `Bernoulli(coverage)` draw each.
+//! * `effectiveness`: proportional reduction in infectiousness while masked.
+//!   `0` = no effect, `1` = fully blocks shedding.
 //!
-//! This is one consumer of the [`crate::modifiers`] registry: at don time
-//! it composes its `1 − effectiveness` factor into the person's cached
-//! intrinsic multiplier via `apply_intrinsic_modifier`. The registry — not
-//! this module — is what the transmission loop reads. Because the factor is
-//! ≤ 1, the forecast upper bound stays valid and thinning handles the rest
-//! (see `modifiers` + `model::evaluate_forecast`).
-//!
-//! When `Parameters::facemask` is `None` the module is inert: no RNG is
-//! drawn and the intrinsic multiplier stays `1.0`.
+//! The mask is an ixa `core_epi` infectiousness modifier, so it multiplies
+//! with any other modifier on the person and the transmission loop needs to
+//! know nothing about it. When it is off no RNG is drawn.
 
+use ixa::core_epi::InfectionManager;
 use ixa::prelude::*;
 use ixa::{define_rng, Context};
 use serde::{Deserialize, Serialize};
 
-use super::intrinsic::IntrinsicModifierExt;
-use super::ModifierExt;
-use crate::person::{InfectionStatus, InfectionTime, PersonId};
+use crate::person::PersonId;
 
 define_rng!(FacemaskRng);
+ixa::define_modifier!(FacemaskModifier);
 
-/// Facemask intervention configuration. `Copy` so the model loop can pull
-/// it out of `Parameters` by value and avoid holding a borrow across the
-/// `&mut self` scheduling call.
+/// Facemask intervention configuration.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Facemask {
@@ -61,58 +51,37 @@ impl Facemask {
     }
 }
 
-/// Register the facemask's activation hook when enabled. Called from
-/// [`super::register_all`] — the single intervention-registration point.
-/// `None` registers nothing.
-pub fn register(ctx: &mut Context, config: Option<Facemask>) {
-    if let Some(fm) = config {
-        ctx.register_on_infectious(move |c, p, infectious_duration| {
-            c.facemask_schedule(p, fm, infectious_duration);
+/// Mask people as they are infected, if enabled.
+pub fn register(context: &mut Context, config: Option<Facemask>) {
+    if let Some(facemask) = config {
+        super::subscribe_to_infections(context, move |context, person| {
+            schedule(context, person, facemask);
         });
     }
 }
 
-pub trait FacemaskExt {
-    /// Decide whether `person` masks and, if so, schedule the don-mask plan
-    /// at a uniformly random time in `[t_inf, t_inf + infectious_duration]`.
-    /// Call once when `person` becomes infectious. `infectious_duration` is
-    /// that person's realized infectious period, so the mask lands inside
-    /// their actual window. At don time the mask composes its factor into
-    /// the person's intrinsic multiplier (see [`crate::modifiers`]).
-    fn facemask_schedule(&mut self, person: PersonId, facemask: Facemask, infectious_duration: f64);
-}
-
-impl FacemaskExt for Context {
-    fn facemask_schedule(
-        &mut self,
-        person: PersonId,
-        facemask: Facemask,
-        infectious_duration: f64,
-    ) {
-        // Coverage gate: does this person mask at all?
-        if !self.sample_bool(FacemaskRng, facemask.coverage) {
-            return;
-        }
-        let t_inf = self
-            .get_property::<_, InfectionTime>(person)
-            .0
-            .expect("infectious person has an infection time");
-        let u: f64 = self.sample_range(FacemaskRng, 0.0..1.0);
-        let don_time = t_inf + u * infectious_duration;
-        let factor = 1.0 - facemask.effectiveness;
-        self.add_plan(don_time, move |context| {
-            // Only mask the still-infectious; a person who recovered before
-            // their (independently drawn, for `Constant`) mask time never dons.
-            if context.get_property::<_, InfectionStatus>(person) == InfectionStatus::Infectious {
-                context.apply_intrinsic_modifier(person, factor);
-            }
-        });
+/// Decide whether the newly infected `person` masks and, if so, when.
+pub(crate) fn schedule(context: &mut Context, person: PersonId, facemask: Facemask) {
+    if !context.sample_bool(FacemaskRng, facemask.coverage) {
+        return;
     }
+    let infection_time = context
+        .infection_time(person)
+        .expect("infected person has an infection time");
+    let infectious_duration = context
+        .infectiousness_duration(person)
+        .expect("infected person has a rate function");
+    let u: f64 = context.sample_range(FacemaskRng, 0.0..1.0);
+    let don_time = infection_time + u * infectious_duration;
+    let factor = 1.0 - facemask.effectiveness;
+    // Applies only if they are still infectious with this infection then.
+    context.schedule_infectiousness_modifier(person, FacemaskModifier, factor, don_time, None);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::infect_for_test;
     use crate::person::Person;
 
     #[test]
@@ -165,9 +134,8 @@ mod tests {
         .is_err());
     }
 
-    /// Seed an infectious person and run `facemask_schedule`, then execute
-    /// any scheduled don-mask plan. Returns the person's resulting intrinsic
-    /// multiplier.
+    /// Infect 300 people for `duration`, schedule their masks, and return
+    /// each one's infectiousness multiplier at the end of that period.
     fn run_schedule(seed: u64, fm: Facemask, duration: f64) -> Vec<f64> {
         let mut ctx = Context::new();
         ctx.init_random(seed);
@@ -175,16 +143,15 @@ mod tests {
         let mut people = Vec::with_capacity(n);
         for _ in 0..n {
             let p = ctx.add_entity(Person).unwrap();
-            ctx.set_property(p, InfectionTime(Some(0.0)));
-            ctx.set_property(p, InfectionStatus::Infectious);
-            ctx.facemask_schedule(p, fm, duration);
+            infect_for_test(&mut ctx, p, duration);
+            schedule(&mut ctx, p, fm);
             people.push(p);
         }
         ctx.add_plan(duration, |c| c.shutdown());
         ctx.execute();
         people
             .iter()
-            .map(|&p| ctx.intrinsic_multiplier(p))
+            .map(|&p| ctx.infectiousness_multiplier(p))
             .collect()
     }
 

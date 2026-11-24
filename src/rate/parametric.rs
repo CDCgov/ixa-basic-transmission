@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+#[cfg(test)]
 use super::InfectionRate;
 
 /// Number of grid anchors `materialize_parametric` samples the kernel at over
@@ -64,6 +65,11 @@ impl ParametricDist {
         } else {
             0.0
         }
+    }
+
+    /// The kernel as a curve over the auto-derived support.
+    pub(crate) fn curve(&self) -> Vec<[f64; 2]> {
+        self.points(self.effective_support())
     }
 
     /// Sample the kernel on `PARAMETRIC_GRID` anchors over `[0, support]`.
@@ -180,9 +186,10 @@ impl ParametricDist {
 /// once at model entry, **before** `normalize_to_r0` (which then makes the curve
 /// area 1, so `scale = R₀`). Idempotent in effect — once lowered the rate is
 /// `Empirical`.
-pub fn materialize_parametric(rate: &mut InfectionRate) {
+#[cfg(test)]
+pub(crate) fn materialize_parametric(rate: &mut InfectionRate) {
     if let InfectionRate::Parametric { dist, scale } = rate {
-        let points = dist.points(dist.effective_support());
+        let points = dist.curve();
         let scale = *scale;
         *rate = InfectionRate::Empirical { points, scale };
     }

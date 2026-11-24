@@ -83,6 +83,29 @@ export const DEFAULT_MODIFIERS: Modifiers = {
   isolation: null,
 };
 
+/// Keep isolation pointed at a configured setting: the model rejects any
+/// other `restrictTo`. A renamed setting is followed, a removed one falls
+/// back to the first setting, and with no settings left isolation is turned
+/// off. Returns `modifiers` itself when nothing needs to change.
+export function reconcileIsolation(
+  modifiers: Modifiers,
+  settingNames: string[],
+  previousNames: string[] = [],
+): Modifiers {
+  const isolation = modifiers.isolation;
+  if (!isolation || settingNames.includes(isolation.restrictTo)) {
+    return modifiers;
+  }
+  if (settingNames.length === 0) {
+    return { ...modifiers, isolation: null };
+  }
+  const previousIndex = previousNames.indexOf(isolation.restrictTo);
+  const renamed =
+    previousNames.length === settingNames.length && previousIndex >= 0;
+  const restrictTo = renamed ? settingNames[previousIndex] : settingNames[0];
+  return { ...modifiers, isolation: { ...isolation, restrictTo } };
+}
+
 /// Fraction of intrinsic infectiousness that *remains* once a modifier is
 /// active — the multiplicative factor the model applies (`1 - reduction`),
 /// clamped to [0, 1]. Mirrors the Rust `1 - effectiveness` / `1 - efficacy`.
